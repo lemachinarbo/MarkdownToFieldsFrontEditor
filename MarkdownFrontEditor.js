@@ -3,6 +3,7 @@
   let activeEditor = null;
   let activeHost = null;
   let activeTarget = null;
+  let activeOriginalHtml = null; // Store original HTML before browser modifies it
 
   function createHost(nextTo) {
     const host = document.createElement("div");
@@ -19,240 +20,45 @@
   let allowedCommands = null;
   let allowedBlocks = null;
 
+  function allowMultiBlockFor(el) {
+    if (!el) return false;
+    const metaEl =
+      el && typeof el.closest === "function"
+        ? el.closest(".fe-editable") || el
+        : el;
+    if (!metaEl || !metaEl.dataset) return false;
+    if (typeof metaEl.dataset.allowMultiBlock !== "undefined") {
+      return (
+        metaEl.dataset.allowMultiBlock === "true" ||
+        metaEl.dataset.allowMultiBlock === "1"
+      );
+    }
+    const config = window.MarkdownFrontEditorConfig;
+    if (config && typeof config.allowMultiBlock !== "undefined") {
+      return !!config.allowMultiBlock;
+    }
+    return false;
+  }
+
   function getFieldMeta(el) {
     if (!el || !el.dataset) return null;
     const typeRaw = (el.dataset.fieldType || "").toLowerCase();
-    const isContainer =
-      el.dataset.isContainer === "true" || el.dataset.isContainer === "1";
     return {
       type: typeRaw || "block",
-      isContainer,
+      allowMultiBlock: allowMultiBlockFor(el),
     };
-  }
-
-  /**
-   * Parse toolbar config string into commands and blocks
-   * Config format: "bold,italic,strike,code,paragraph,h1,h2,h3,h4,h5,h6,bulletList,orderedList,blockquote,link"
-   */
-  function parseToolbarConfig(configString) {
-    if (!configString) return null;
-
-    const items = configString
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const commands = new Set();
-    const blocks = new Set();
-    const headingLevels = new Set();
-
-    const cmdMap = {
-      bold: "bold",
-      italic: "italic",
-      strike: "strike",
-      code: "code",
-      link: "link",
-      save: "save",
-      clear: "clear",
-      paragraph: "paragraph",
-      ul: "ul",
-      bulletlist: "ul",
-      orderedlist: "ol",
-      ol: "ol",
-      blockquote: "blockquote",
-      h1: "h1",
-      h2: "h2",
-      h3: "h3",
-      h4: "h4",
-      h5: "h5",
-      h6: "h6",
-    };
-
-    const blockMap = {
-      paragraph: "paragraph",
-      bulletlist: "list",
-      orderedlist: "list",
-      blockquote: "quote",
-      quote: "quote",
-      hr: "hr",
-      horizontalrule: "hr",
-    };
-
-    items.forEach((item) => {
-      const lower = item.toLowerCase();
-
-      // Check if it's a heading level
-      if (/^h[1-6]$/.test(lower)) {
-        commands.add(lower);
-        blocks.add("heading");
-        headingLevels.add(parseInt(lower.charAt(1)));
-      }
-      // Check if it's a command
-      if (cmdMap[lower]) {
-        commands.add(cmdMap[lower]);
-      }
-      // Check if it's a block type
-      if (blockMap[lower]) {
-        blocks.add(blockMap[lower]);
-      }
-    });
-
-    return { commands, blocks, headingLevels: Array.from(headingLevels) };
-  }
-
-  function resolveConstraints(meta) {
-    if (!meta) return null;
-
-    // For containers, use module config if available
-    if (meta.isContainer) {
-      const config = window.MarkdownFrontEditorConfig;
-      if (config && config.containerToolbar) {
-        const parsed = parseToolbarConfig(config.containerToolbar);
-        if (parsed) {
-          // Always include save
-          parsed.commands.add("save");
-          return parsed;
-        }
-      }
-      // Fallback to default container config
-      return {
-        commands: new Set([
-          "bold",
-          "italic",
-          "strike",
-          "code",
-          "paragraph",
-          "h1",
-          "h2",
-          "h3",
-          "h4",
-          "h5",
-          "h6",
-          "ul",
-          "ol",
-          "blockquote",
-          "link",
-          "clear",
-          "save",
-        ]),
-        blocks: new Set(["paragraph", "heading", "list", "quote", "hr"]),
-        headingLevels: [1, 2, 3, 4, 5, 6],
-      };
-    }
-
-    // Non-container fields use hardcoded constraints
-    // Block-count enforcement happens at runtime (Enter guard, paste guard, post-command undo)
-    // UI shows all available buttons - runtime guards prevent violations
-    switch (meta.type) {
-      case "heading":
-        return {
-          commands: new Set([
-            "bold",
-            "italic",
-            "strike",
-            "code",
-            "h1",
-            "h2",
-            "h3",
-            "h4",
-            "h5",
-            "h6",
-            "ul",
-            "ol",
-            "blockquote",
-            "link",
-            "clear",
-            "save",
-          ]),
-          blocks: new Set(["heading", "paragraph", "list", "quote"]),
-          headingLevels: [1, 2, 3, 4, 5, 6],
-        };
-      case "paragraph":
-        return {
-          commands: new Set([
-            "bold",
-            "italic",
-            "strike",
-            "code",
-            "h1",
-            "h2",
-            "h3",
-            "h4",
-            "h5",
-            "h6",
-            "ul",
-            "ol",
-            "blockquote",
-            "link",
-            "clear",
-            "save",
-          ]),
-          blocks: new Set(["paragraph", "heading", "list", "quote"]),
-          headingLevels: [1, 2, 3, 4, 5, 6],
-        };
-      case "list":
-        return {
-          commands: new Set([
-            "bold",
-            "italic",
-            "strike",
-            "code",
-            "h1",
-            "h2",
-            "h3",
-            "h4",
-            "h5",
-            "h6",
-            "ul",
-            "ol",
-            "blockquote",
-            "link",
-            "clear",
-            "save",
-          ]),
-          blocks: new Set(["list", "paragraph", "heading", "quote"]),
-          headingLevels: [1, 2, 3, 4, 5, 6],
-        };
-      default:
-        return {
-          commands: new Set([
-            "bold",
-            "italic",
-            "strike",
-            "code",
-            "h1",
-            "h2",
-            "h3",
-            "h4",
-            "h5",
-            "h6",
-            "ul",
-            "ol",
-            "blockquote",
-            "link",
-            "clear",
-            "save",
-          ]),
-          blocks: new Set(["paragraph", "heading", "list", "quote", "hr"]),
-          headingLevels: [1, 2, 3, 4, 5, 6],
-        };
-    }
   }
 
   function applyToolbarConstraints(meta) {
-    const constraints = resolveConstraints(meta);
-    allowedCommands = constraints ? constraints.commands : null;
-    allowedBlocks = constraints ? constraints.blocks : null;
+    // All field types support all commands - constraints are managed via module config
+    allowedCommands = null; // null = all commands allowed
+    allowedBlocks = null;
 
     if (!toolbarEl) return;
     const buttons = toolbarEl.querySelectorAll("button[data-cmd]");
     buttons.forEach((btn) => {
-      const cmd = btn.getAttribute("data-cmd");
-      if (!allowedCommands || allowedCommands.has(cmd)) {
-        btn.style.display = "";
-        btn.disabled = false;
-      } else {
-        btn.style.display = "none";
-      }
+      btn.style.display = "";
+      btn.disabled = false;
     });
   }
 
@@ -269,26 +75,43 @@
     el.style.position = "absolute";
     el.style.display = "none";
 
-    // All possible toolbar buttons (will be shown/hidden based on constraints)
-    el.innerHTML = `
-      <button data-cmd="bold" title="Bold"><strong>B</strong></button>
-      <button data-cmd="italic" title="Italic"><em>I</em></button>
-      <button data-cmd="strike" title="Strikethrough"><s>S</s></button>
-      <button data-cmd="code" title="Code"><code>C</code></button>
-      <button data-cmd="paragraph" title="Paragraph">¶</button>
-      <button data-cmd="h1" title="Heading 1">H1</button>
-      <button data-cmd="h2" title="Heading 2">H2</button>
-      <button data-cmd="h3" title="Heading 3">H3</button>
-      <button data-cmd="h4" title="Heading 4">H4</button>
-      <button data-cmd="h5" title="Heading 5">H5</button>
-      <button data-cmd="h6" title="Heading 6">H6</button>
-      <button data-cmd="ul" title="Bulleted list">•</button>
-      <button data-cmd="ol" title="Numbered list">1.</button>
-      <button data-cmd="blockquote" title="Blockquote">"</button>
-      <button data-cmd="link" title="Link">🔗</button>
-      <button data-cmd="clear" title="Clear formatting">Tx</button>
-      <button data-cmd="save" title="Save">💾</button>
-    `;
+    // Get configured buttons from module config
+    const configButtons =
+      window.MarkdownFrontEditorConfig?.toolbarButtons ||
+      "bold,italic,strike,code,paragraph,h1,h2,h3,h4,h5,h6,ul,ol,blockquote,link,clear,save";
+    const enabledButtons = new Set(
+      configButtons.split(",").map((b) => b.trim()),
+    );
+
+    // All possible toolbar buttons
+    const allButtons = [
+      { cmd: "bold", title: "Bold", label: "<strong>B</strong>" },
+      { cmd: "italic", title: "Italic", label: "<em>I</em>" },
+      { cmd: "strike", title: "Strikethrough", label: "<s>S</s>" },
+      { cmd: "code", title: "Code", label: "<code>&lt;/&gt;</code>" },
+      { cmd: "paragraph", title: "Paragraph", label: "¶" },
+      { cmd: "h1", title: "Heading 1", label: "H1" },
+      { cmd: "h2", title: "Heading 2", label: "H2" },
+      { cmd: "h3", title: "Heading 3", label: "H3" },
+      { cmd: "h4", title: "Heading 4", label: "H4" },
+      { cmd: "h5", title: "Heading 5", label: "H5" },
+      { cmd: "h6", title: "Heading 6", label: "H6" },
+      { cmd: "ul", title: "Bulleted list", label: "•" },
+      { cmd: "ol", title: "Numbered list", label: "1." },
+      { cmd: "blockquote", title: "Blockquote", label: '"' },
+      { cmd: "link", title: "Link", label: "🔗" },
+      { cmd: "clear", title: "Clear formatting", label: "Tx" },
+      { cmd: "save", title: "Save", label: "💾" },
+    ];
+
+    // Only add buttons that are enabled in config
+    el.innerHTML = allButtons
+      .filter((btn) => enabledButtons.has(btn.cmd))
+      .map(
+        (btn) =>
+          `<button data-cmd="${btn.cmd}" title="${btn.title}">${btn.label}</button>`,
+      )
+      .join("");
 
     // Prevent mousedown from blurring the editor so clicks register
     el.addEventListener("mousedown", (ev) => {
@@ -486,8 +309,12 @@
     }
 
     // Block-count enforcement: Audit after command to ensure constraint maintained
-    if (activeEditableEl && countTopLevelBlocks(activeEditableEl) > 1) {
-      // If command violated constraint, undo (experimental feature)
+    if (
+      activeEditableEl &&
+      !allowMultiBlockFor(activeEditableEl) &&
+      countTopLevelBlocks(activeEditableEl) > 1
+    ) {
+      // If command violated constraint, undo
       document.execCommand("undo");
     }
   }
@@ -697,7 +524,11 @@
     }
 
     // Block-count enforcement: Audit after command to ensure constraint maintained
-    if (activeEditableEl && countTopLevelBlocks(activeEditableEl) > 1) {
+    if (
+      activeEditableEl &&
+      !allowMultiBlockFor(activeEditableEl) &&
+      countTopLevelBlocks(activeEditableEl) > 1
+    ) {
       // If command violated constraint, undo
       document.execCommand("undo");
     }
@@ -707,7 +538,12 @@
     // Block-count enforcement: Prevent Enter only if it would create a NEW top-level block
     // Enter is ALLOWED inside multi-item blocks (list items, blockquotes) to create new items/lines
     if (ev.key === "Enter" && ev.type === "keydown") {
-      if (activeEditableEl && countTopLevelBlocks(activeEditableEl) >= 1) {
+      if (
+        activeEditableEl &&
+        !allowMultiBlockFor(activeEditableEl) &&
+        activeEditableEl &&
+        countTopLevelBlocks(activeEditableEl) >= 1
+      ) {
         const sel = document.getSelection();
         if (sel && sel.rangeCount > 0) {
           let node = sel.anchorNode || sel.focusNode;
@@ -849,6 +685,7 @@
     activeEditor = null;
     activeHost = null;
     activeTarget = null;
+    activeOriginalHtml = null;
     activeEditableEl = null;
     activeKeydownListener = null;
   }
@@ -870,18 +707,43 @@
 
   function fallbackAttach(element) {
     // Simple contentEditable fallback
-    activeTarget = element;
-    element.setAttribute("contenteditable", "true");
-    element.setAttribute("data-fe-editing", "1");
-    element.focus();
+    // For multi-line fields, ensure we attach to the wrapper, not nested elements
+    const wrapper = element.closest(".fe-editable") || element;
+    activeTarget = wrapper;
 
-    // remember editable element and add keydown handler for slash menu
-    activeEditableEl = element;
+    // For multi-line fields, create a proper textarea-like editable
+    const isMultiLine = allowMultiBlockFor(wrapper);
+    if (isMultiLine) {
+      // Create editable div that preserves all HTML structure
+      const editableDiv = document.createElement("div");
+      editableDiv.setAttribute("contenteditable", "true");
+      editableDiv.setAttribute("data-fe-editing", "1");
+      editableDiv.innerHTML = wrapper.innerHTML; // Preserve HTML structure (lists, formatting, etc.)
+
+      // Store original HTML to restore on cancel
+      activeOriginalHtml = wrapper.innerHTML;
+
+      // Replace wrapper content with editable
+      wrapper.innerHTML = "";
+      wrapper.appendChild(editableDiv);
+      editableDiv.focus();
+
+      activeEditableEl = editableDiv;
+    } else {
+      wrapper.setAttribute("contenteditable", "true");
+      wrapper.setAttribute("data-fe-editing", "1");
+      wrapper.focus();
+      activeEditableEl = wrapper;
+    }
+
+    // Add keydown handler for slash menu
     activeKeydownListener = onEditableKeydown;
-    element.addEventListener("keydown", activeKeydownListener);
+    activeEditableEl.addEventListener("keydown", activeKeydownListener);
 
     // Block-count enforcement: Guard paste to prevent multi-block content
-    element.addEventListener("paste", (ev) => {
+    wrapper.addEventListener("paste", (ev) => {
+      const allowMulti = allowMultiBlockFor(wrapper);
+
       ev.preventDefault();
 
       let html = "";
@@ -893,28 +755,38 @@
         }
       }
 
-      // Check if pasted content would exceed block count
-      if (wouldCreateMultipleBlocks(html)) {
-        // Silently reject multi-block paste
-        return;
+      // For single-block fields: reject pasted content with newlines
+      if (!allowMulti) {
+        // Check for actual newlines in plain text
+        if (/\n|\r/.test(html)) {
+          return;
+        }
+        // Check for <br> tags in HTML
+        if (/<br\s*\/?>/i.test(html)) {
+          return;
+        }
+        // Check if pasted content would create multiple blocks
+        if (wouldCreateMultipleBlocks(html)) {
+          return;
+        }
       }
 
-      // Insert single-block paste content
+      // Insert paste content
       if (html) {
         document.execCommand("insertHTML", false, html);
       }
     });
 
     function onBlur() {
-      element.removeEventListener("blur", onBlur);
+      wrapper.removeEventListener("blur", onBlur);
       try {
         destroyEditor();
       } catch (e) {
         // destroyEditor error on blur
       }
     }
-    element.addEventListener("blur", onBlur);
-    activeEditor = { getHTML: () => element.innerHTML };
+    wrapper.addEventListener("blur", onBlur);
+    activeEditor = { getHTML: () => activeEditableEl.innerHTML };
   }
 
   function attachTo(element) {
@@ -959,6 +831,34 @@
       const del = document.createElement("del");
       del.innerHTML = el.innerHTML;
       el.replaceWith(del);
+    });
+
+    // Convert browser-inserted <div> tags to <p> tags for proper markdown conversion
+    root.querySelectorAll("div").forEach((div) => {
+      // Skip if it has child block elements (it's a container)
+      const hasBlockChildren = Array.from(div.children).some((child) => {
+        const tag = child.tagName.toLowerCase();
+        return [
+          "p",
+          "div",
+          "ul",
+          "ol",
+          "blockquote",
+          "h1",
+          "h2",
+          "h3",
+          "h4",
+          "h5",
+          "h6",
+        ].includes(tag);
+      });
+
+      if (!hasBlockChildren) {
+        const p = document.createElement("p");
+        // Copy innerHTML, but if empty, at least make it a line break
+        p.innerHTML = div.innerHTML || "<br>";
+        div.replaceWith(p);
+      }
     });
 
     // Remove inline styles that can leak into markdown
@@ -1127,42 +1027,93 @@
     disableSaveBtn();
 
     try {
-      // Deterministic HTML source: prefer activeEditor.getHTML(), then activeHost's editable child, then activeTarget, then first .fe-editable
+      // For multi-line container fields, extract plain text to avoid HTML artifacts
+      // For single-block fields, use HTML for validation and conversion
+      const isMultiLine = allowMultiBlockFor(activeTarget);
       let html = "";
+      let plainText = "";
+
       try {
+        let sourceElement = null;
+
         if (activeEditor && typeof activeEditor.getHTML === "function") {
           html = activeEditor.getHTML();
+          if (activeTarget) {
+            sourceElement = activeTarget;
+          }
+          if (isMultiLine && typeof activeEditor.getText === "function") {
+            plainText = activeEditor.getText();
+          }
+          console.log(
+            "[FE] saveContent - activeEditor path, activeTarget:",
+            activeTarget ? activeTarget.tagName : "null",
+            "sourceElement:",
+            sourceElement ? sourceElement.tagName : "null",
+            "html.length:",
+            html.length,
+          );
         } else if (activeHost) {
           const shim = activeHost.querySelector(".tiptap-shim-editable");
           const editableChild = activeHost.querySelector("[contenteditable]");
-          if (shim) html = shim.innerHTML;
-          else if (editableChild) html = editableChild.innerHTML;
-          else html = activeHost.innerHTML || "";
+          if (shim) {
+            sourceElement = shim;
+            html = shim.innerHTML;
+          } else if (editableChild) {
+            sourceElement = editableChild;
+            html = editableChild.innerHTML;
+          } else {
+            sourceElement = activeHost;
+            html = activeHost.innerHTML || "";
+          }
         } else if (activeTarget) {
-          html = activeTarget.innerHTML || "";
+          sourceElement = activeEditableEl || activeTarget;
+          html = sourceElement.innerHTML || "";
         } else {
           const el = document.querySelector(".fe-editable");
-          if (el) html = el.innerHTML || "";
+          if (el) {
+            sourceElement = el;
+            html = el.innerHTML || "";
+          }
+        }
+
+        // For multi-line fields, extract plain text with preserved line breaks
+        if (isMultiLine && sourceElement) {
+          plainText =
+            sourceElement.innerText || sourceElement.textContent || "";
         }
       } catch (e) {
-        html = activeTarget ? activeTarget.innerHTML : "";
+        const sourceEl = activeEditableEl || activeTarget;
+        html = sourceEl ? sourceEl.innerHTML : "";
+        if (isMultiLine && sourceEl) {
+          plainText = sourceEl.innerText || sourceEl.textContent || "";
+        }
       }
 
       // Validate block-count constraint: reject saves with multiple top-level blocks
-      try {
-        const temp = document.createElement("div");
-        temp.innerHTML = html;
-        if (countTopLevelBlocks(temp) > 1) {
-          enableSaveBtn();
-          isSaving = false;
-          showToast(
-            "error",
-            "Cannot save: field must contain exactly one block",
-          );
-          return;
+      if (!allowMultiBlockFor(activeTarget)) {
+        try {
+          const temp = document.createElement("div");
+          temp.innerHTML = html;
+          if (countTopLevelBlocks(temp) > 1) {
+            enableSaveBtn();
+            isSaving = false;
+            showToast(
+              "error",
+              "Cannot save: field must contain exactly one block",
+            );
+            return;
+          }
+
+          // Reject <br> tags for fields (newlines forbidden in single-block fields)
+          if (/<br\s*\/?>/i.test(html)) {
+            enableSaveBtn();
+            isSaving = false;
+            showToast("error", "Cannot save: field cannot contain line breaks");
+            return;
+          }
+        } catch (e) {
+          /* ignore */
         }
-      } catch (e) {
-        /* ignore */
       }
 
       // Strip known client chrome (handles, toolbar) before sending
@@ -1190,75 +1141,24 @@
         /* ignore */
       }
 
-      // Normalize editor HTML to improve markdown conversion
+      // Normalize HTML before sending to backend (remove spans, convert divs, etc.)
       try {
         html = normalizeHtmlForMarkdown(html);
       } catch (e) {
-        /* ignore */
-      }
-
-      // If the editor normalized a heading+paragraphs (common when <br> was inside a heading),
-      // or created multiple consecutive headings, merge them back into a single heading with <br>.
-      // Also normalize all nested heading levels to h1 to prevent silent data loss.
-      try {
-        // First try: merge consecutive headings of same level
-        html = html.replace(
-          /<h([1-6])>([\s\S]*?)<\/h\1>(?:\s*<h\1>([\s\S]*?)<\/h\1>)+/g,
-          (match, lvl) => {
-            // Extract all heading contents (regardless of level)
-            const contents = [];
-            const headingRegex = /<h[1-6]>([\s\S]*?)<\/h[1-6]>/g;
-            let hMatch;
-            while ((hMatch = headingRegex.exec(match))) {
-              contents.push(hMatch[1]);
-            }
-            const merged = contents.join("<br>");
-            return `<h${lvl}>${merged}</h${lvl}>`;
-          },
-        );
-
-        // Normalize any remaining nested headings (h2, h3, etc) to match parent level
-        // This prevents silent data loss when user creates h2 inside h1
-        html = html.replace(
-          /^<h([1-6])>([\s\S]*?)<\/h\1>$/i,
-          (match, lvl, content) => {
-            const normalized = content.replace(
-              /<h[1-6]>([\s\S]*?)<\/h[1-6]>/g,
-              (hMatch, hContent) => hContent,
-            );
-            if (normalized !== content) {
-              return `<h${lvl}>${normalized}</h${lvl}>`;
-            }
-            return match;
-          },
-        );
-
-        // Second try: merge paragraphs after heading
-        html = html.replace(
-          /^\s*<h([1-6])>([\s\S]*?)<\/h\1>((?:\s*<p>[\s\S]*?<\/p>)+)\s*$/i,
-          (match, lvl, headingContent, paragraphs) => {
-            const pContents = [];
-            const pRegex = /<p>([\s\S]*?)<\/p>/g;
-            let pMatch;
-            while ((pMatch = pRegex.exec(paragraphs))) {
-              pContents.push(pMatch[1]);
-            }
-            const merged = [headingContent, ...pContents].join("<br>");
-            return `<h${lvl}>${merged}</h${lvl}>`;
-          },
-        );
-      } catch (e) {
-        // Merge error ignored
+        console.error("[FE] normalizeHtmlForMarkdown error:", e);
       }
 
       // Validate non-empty content (allow images/media)
-      const tmp = document.createElement("div");
-      tmp.innerHTML = html || "";
-      const text = (tmp.textContent || "").trim();
-      const hasMedia = !!tmp.querySelector("img,video,iframe,svg");
-      if (!text && !hasMedia) {
-        showToast("error", "Nothing to save");
-        return;
+      const contentToValidate = isMultiLine && plainText ? plainText : html;
+      if (!contentToValidate || !contentToValidate.trim()) {
+        // Check for media even if no text
+        const tmp = document.createElement("div");
+        tmp.innerHTML = html || "";
+        const hasMedia = !!tmp.querySelector("img,video,iframe,svg");
+        if (!hasMedia) {
+          showToast("error", "Nothing to save");
+          return;
+        }
       }
 
       // fetch CSRF token
@@ -1284,7 +1184,16 @@
       }
 
       const body = new URLSearchParams();
+
+      // Always send HTML for conversion to markdown
+      // This preserves lists, formatting, etc.
       body.append("html", html);
+
+      // Debug payload details for server-side tracing
+      body.append("debug_isMultiLine", isMultiLine ? "1" : "0");
+      body.append("debug_plainTextLen", String(plainText.length || 0));
+      body.append("debug_htmlLen", String(html.length || 0));
+
       if (tokenName) body.append(tokenName, tokenValue);
       // Include block identifier and page id when available for single-block replacement
       const mdName =
