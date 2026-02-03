@@ -26,7 +26,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
      */
     public static function getDefaultData() {
         return [
-            'allowMultiBlock' => false,
             'toolbarButtons' => 'bold,italic,strike,paragraph,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,link,unlink,|,code,clear',
         ];
     }
@@ -39,13 +38,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         
         $defaults = self::getDefaultData();
         $data = array_merge($defaults, $data);
-
-        $f = \ProcessWire\wire('modules')->get('InputfieldCheckbox');
-        $f->name = 'allowMultiBlock';
-        $f->label = 'Allow Multi-Block Editing';
-        $f->description = 'If enabled, fields can contain multiple blocks and line breaks.';
-        $f->checked = !empty($data['allowMultiBlock']);
-        $inputfields->add($f);
 
         $f = \ProcessWire\wire('modules')->get('InputfieldText');
         $f->name = 'toolbarButtons';
@@ -175,8 +167,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
         if (!isset($content->sections) || !is_array($content->sections)) return;
 
-        $defaults = self::getDefaultData();
-        $globalAllowMultiBlock = isset($this->allowMultiBlock) ? (bool) $this->allowMultiBlock : (bool) $defaults['allowMultiBlock'];
+        $globalAllowMultiBlock = false;
         
         // Detect container markers (<!-- name ... -->) for automatic multi-line support
         $containerFields = $this->getContainerFieldNames($page);
@@ -322,8 +313,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
         
         $fieldType = null;
-        $defaults = self::getDefaultData();
-        $globalAllowMultiBlock = isset($this->allowMultiBlock) ? (bool) $this->allowMultiBlock : (bool) $defaults['allowMultiBlock'];
+        $globalAllowMultiBlock = false;
         
         // Check if this is a container field
         $containerFields = $this->getContainerFieldNames($page);
