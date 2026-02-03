@@ -1,0 +1,19 @@
+{
+  "name": "markdown-front-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "watch": "vite build --watch",
+    "dev": "vite build --watch"
+  },
+  "devDependencies": {
+    "vite": "^5.4.11"
+  },
+  "dependencies": {
+    "@tiptap/core": "^3.18.0",
+    "@tiptap/starter-kit": "^3.18.0",
+    "prosemirror-markdown": "^1.13.0"
+  }
+}

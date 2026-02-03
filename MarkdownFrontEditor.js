@@ -1,111 +1,247 @@
+/**
+ * MarkdownFrontEditor - CodeMirror-based markdown editor
+ *
+ * Core rules:
+ * - Operates on plain markdown strings only
+ * - No HTML conversion, no contentEditable, no innerHTML
+ * - Single-block fields (<!-- name -->) block Enter key
+ * - Container fields (<!-- name... -->) allow Enter
+ * - Saves exactly what user types (byte-identical)
+ */
 (function () {
   const EDITABLE_CLASS = "fe-editable";
+
   let activeEditor = null;
   let activeHost = null;
   let activeTarget = null;
-  let activeOriginalHtml = null; // Store original HTML before browser modifies it
-
-  function createHost(nextTo) {
-    const host = document.createElement("div");
-    host.className = "fe-editor-host";
-    host.style.minHeight = "1.2em";
-    nextTo.parentNode.insertBefore(host, nextTo.nextSibling);
-    return host;
-  }
-
-  // Floating toolbar implementation
+  let activeMarkdown = null;
+  let isSaving = false;
   let toolbarEl = null;
-  // Suppress finishEditing's auto-apply when we intentionally replace content
-  let suppressFinishEditing = false;
-  let allowedCommands = null;
-  let allowedBlocks = null;
 
+  /**
+   * Check if element allows multi-block content (containers)
+   */
   function allowMultiBlockFor(el) {
-    if (!el) return false;
-    const metaEl =
-      el && typeof el.closest === "function"
-        ? el.closest(".fe-editable") || el
-        : el;
-    if (!metaEl || !metaEl.dataset) return false;
-    if (typeof metaEl.dataset.allowMultiBlock !== "undefined") {
-      return (
-        metaEl.dataset.allowMultiBlock === "true" ||
-        metaEl.dataset.allowMultiBlock === "1"
-      );
-    }
-    const config = window.MarkdownFrontEditorConfig;
-    if (config && typeof config.allowMultiBlock !== "undefined") {
-      return !!config.allowMultiBlock;
-    }
-    return false;
+    if (!el || !el.dataset) return false;
+    const value = el.dataset.allowMultiBlock;
+    return value === "true" || value === "1";
   }
 
+  /**
+   * Get field metadata from element
+   */
   function getFieldMeta(el) {
     if (!el || !el.dataset) return null;
-    const typeRaw = (el.dataset.fieldType || "").toLowerCase();
     return {
-      type: typeRaw || "block",
+      name: el.dataset.mdName || "",
+      type: (el.dataset.fieldType || "block").toLowerCase(),
       allowMultiBlock: allowMultiBlockFor(el),
+      pageId: el.dataset.page || "",
     };
   }
 
-  function applyToolbarConstraints(meta) {
-    // All field types support all commands - constraints are managed via module config
-    allowedCommands = null; // null = all commands allowed
-    allowedBlocks = null;
+  /**
+   * Create editor with preview rendering via CSS/HTML overlay
+   * Uses textarea for editing + absolute positioned mirror for preview
+   * Decorations are CSS-based, no text mutation
+   */
+  function createEditor(element, markdownContent, meta) {
+    // Add selection styling (must be in stylesheet, not inline)
+    if (!document.getElementById("fe-selection-style")) {
+      const style = document.createElement("style");
+      style.id = "fe-selection-style";
+      style.textContent = `
+        .fe-editor-host textarea::selection {
+          background: #b4d5fe !important;
+          color: #000 !important;
+        }
+      `;
+      document.head.appendChild(style);
+    }
 
-    if (!toolbarEl) return;
-    const buttons = toolbarEl.querySelectorAll("button[data-cmd]");
-    buttons.forEach((btn) => {
-      btn.style.display = "";
-      btn.disabled = false;
+    const host = document.createElement("div");
+    host.className = "fe-editor-host";
+    host.style.position = "relative";
+    host.style.border = "1px solid #ccc";
+    host.style.borderRadius = "4px";
+    host.style.overflow = "hidden";
+    host.style.fontFamily = "monospace";
+    host.style.fontSize = "14px";
+    host.style.lineHeight = "1.5";
+    element.parentNode.insertBefore(host, element.nextSibling);
+
+    // Create editor wrapper (for stacking context)
+    const editorWrapper = document.createElement("div");
+    editorWrapper.style.position = "relative";
+    editorWrapper.style.width = "100%";
+    editorWrapper.style.minHeight = "100px";
+    host.appendChild(editorWrapper);
+
+    // Create textarea for editing
+    const textarea = document.createElement("textarea");
+    textarea.className = "fe-textarea-editor";
+    textarea.value = markdownContent;
+    textarea.style.width = "100%";
+    textarea.style.height = "100%";
+    textarea.style.minHeight = "100px";
+    textarea.style.padding = "8px";
+    textarea.style.fontFamily = "monospace";
+    textarea.style.fontSize = "14px";
+    textarea.style.lineHeight = "1.5";
+    textarea.style.border = "none";
+    textarea.style.position = "relative";
+    textarea.style.zIndex = "2";
+    textarea.style.background = "transparent";
+    textarea.style.color = "transparent"; // Transparent so preview shows through
+    textarea.style.caretColor = "#000"; // Visible cursor
+    textarea.style.resize = "vertical";
+    textarea.style.margin = "0";
+    textarea.style.boxSizing = "border-box";
+    textarea.style.whiteSpace = "pre-wrap"; // Preserve newlines
+    textarea.style.wordWrap = "break-word";
+    editorWrapper.appendChild(textarea);
+
+    // Create preview mirror (behind textarea)
+    const preview = document.createElement("pre");
+    preview.className = "fe-preview-mirror";
+    preview.style.position = "absolute";
+    preview.style.top = "0";
+    preview.style.left = "0";
+    preview.style.width = "100%";
+    preview.style.height = "100%";
+    preview.style.minHeight = "100px";
+    preview.style.padding = "8px";
+    preview.style.margin = "0";
+    preview.style.fontFamily = "monospace";
+    preview.style.fontSize = "14px";
+    preview.style.lineHeight = "1.5";
+    preview.style.color = "rgba(0,0,0,0.3)";
+    preview.style.pointerEvents = "none";
+    preview.style.zIndex = "1";
+    preview.style.background = "transparent";
+    preview.style.overflow = "hidden";
+    preview.style.whiteSpace = "pre-wrap";
+    preview.style.wordWrap = "break-word";
+    preview.style.border = "none";
+    preview.style.boxSizing = "border-box";
+    editorWrapper.appendChild(preview);
+
+    // Sync preview with textarea as user types
+    function updatePreview() {
+      const text = textarea.value;
+      // Create decorated HTML version with visual styling (syntax faded, output emphasized)
+      let decorated = text
+        // Escape HTML first
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+
+      // Then apply decorations (markdown syntax dim, content emphasized)
+      // Headings: dim the markers, keep content normal
+      decorated = decorated.replace(
+        /^(#+)(\s+)(.*)$/gm,
+        '<span class="fe-decoration-fade">$1</span><span class="fe-decoration-fade">$2</span><span class="fe-decoration-heading">$3</span>',
+      );
+
+      // Bold: dim markers, emphasize content
+      decorated = decorated.replace(
+        /(\*\*|__)([^*_]+)\1/g,
+        '<span class="fe-decoration-fade">$1</span><span class="fe-decoration-bold">$2</span><span class="fe-decoration-fade">$1</span>',
+      );
+
+      // Italic: dim markers, emphasize content
+      decorated = decorated.replace(
+        /(?<!\*|_)(\*|_)([^*_]+)\1(?!\*|_)/g,
+        '<span class="fe-decoration-fade">$1</span><span class="fe-decoration-italic">$2</span><span class="fe-decoration-fade">$1</span>',
+      );
+
+      // Code: dim markers
+      decorated = decorated.replace(
+        /(`+)([^`]+)\1/g,
+        '<span class="fe-decoration-fade">$1</span><span class="fe-decoration-code">$2</span><span class="fe-decoration-fade">$1</span>',
+      );
+
+      // Blockquote: dim marker
+      decorated = decorated.replace(
+        /(^|\n)(&gt;)(\s)/gm,
+        '$1<span class="fe-decoration-fade">$2</span><span class="fe-decoration-fade">$3</span>',
+      );
+
+      // Lists: dim markers
+      decorated = decorated.replace(
+        /(^|\n)([-*+])(\s)/gm,
+        '$1<span class="fe-decoration-fade">$2</span><span class="fe-decoration-fade">$3</span>',
+      );
+
+      // Field markers: dim completely
+      decorated = decorated.replace(
+        /(&lt;!--.*?--&gt;)/g,
+        '<span class="fe-decoration-comment">$1</span>',
+      );
+
+      preview.innerHTML = decorated;
+    }
+
+    textarea.addEventListener("input", updatePreview);
+    textarea.addEventListener("keydown", (e) => {
+      setTimeout(updatePreview, 0);
     });
+    updatePreview();
+
+    // Block Enter for single-block fields
+    if (!meta.allowMultiBlock) {
+      textarea.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+        }
+      });
+
+      textarea.addEventListener("paste", (e) => {
+        const text = e.clipboardData?.getData("text/plain");
+        if (text && /\n/.test(text)) {
+          e.preventDefault();
+        }
+      });
+    }
+
+    textarea.focus();
+
+    // Return CodeMirror-like interface for compatibility
+    const view = {
+      state: {
+        doc: {
+          toString: () => textarea.value,
+        },
+      },
+      destroy: () => {
+        host.remove();
+      },
+    };
+
+    return { view, host };
   }
 
-  function buildExtensions(libs, meta) {
-    // Not used - using contentEditable editor instead
-    return [];
-  }
-
-  function createToolbarEl() {
+  /**
+   * Create floating toolbar
+   */
+  function createToolbar() {
     if (toolbarEl) return toolbarEl;
+
     const el = document.createElement("div");
     el.className = "fe-toolbar";
-    el.setAttribute("aria-hidden", "true");
     el.style.position = "absolute";
     el.style.display = "none";
 
-    // Get configured buttons from module config
     const configButtons =
       window.MarkdownFrontEditorConfig?.toolbarButtons ||
-      "bold,italic,strike,code,paragraph,h1,h2,h3,h4,h5,h6,ul,ol,blockquote,link,clear,save";
+      "bold,italic,strike,code,save";
     const enabledButtons = new Set(
       configButtons.split(",").map((b) => b.trim()),
     );
 
-    // All possible toolbar buttons
-    const allButtons = [
-      { cmd: "bold", title: "Bold", label: "<strong>B</strong>" },
-      { cmd: "italic", title: "Italic", label: "<em>I</em>" },
-      { cmd: "strike", title: "Strikethrough", label: "<s>S</s>" },
-      { cmd: "code", title: "Code", label: "<code>&lt;/&gt;</code>" },
-      { cmd: "paragraph", title: "Paragraph", label: "¶" },
-      { cmd: "h1", title: "Heading 1", label: "H1" },
-      { cmd: "h2", title: "Heading 2", label: "H2" },
-      { cmd: "h3", title: "Heading 3", label: "H3" },
-      { cmd: "h4", title: "Heading 4", label: "H4" },
-      { cmd: "h5", title: "Heading 5", label: "H5" },
-      { cmd: "h6", title: "Heading 6", label: "H6" },
-      { cmd: "ul", title: "Bulleted list", label: "•" },
-      { cmd: "ol", title: "Numbered list", label: "1." },
-      { cmd: "blockquote", title: "Blockquote", label: '"' },
-      { cmd: "link", title: "Link", label: "🔗" },
-      { cmd: "clear", title: "Clear formatting", label: "Tx" },
-      { cmd: "save", title: "Save", label: "💾" },
-    ];
+    const buttons = [{ cmd: "save", title: "Save", label: "💾" }];
 
-    // Only add buttons that are enabled in config
-    el.innerHTML = allButtons
+    el.innerHTML = buttons
       .filter((btn) => enabledButtons.has(btn.cmd))
       .map(
         (btn) =>
@@ -113,7 +249,6 @@
       )
       .join("");
 
-    // Prevent mousedown from blurring the editor so clicks register
     el.addEventListener("mousedown", (ev) => {
       ev.preventDefault();
     });
@@ -124,8 +259,6 @@
       const cmd = btn.getAttribute("data-cmd");
       if (cmd === "save") {
         saveContent();
-      } else {
-        performCommand(cmd);
       }
     });
 
@@ -134,205 +267,16 @@
     return el;
   }
 
-  // Toast helper
-  let toastEl = null;
-  function getToastEl() {
-    if (toastEl) return toastEl;
-    const t = document.createElement("div");
-    t.className = "fe-toast";
-    document.body.appendChild(t);
-    toastEl = t;
-    return t;
-  }
-
-  function showToast(type, msg, timeout = 3000) {
-    const t = getToastEl();
-    t.className = "fe-toast " + type;
-    t.textContent = msg;
-    t.style.display = "block";
-    setTimeout(() => {
-      try {
-        t.style.display = "none";
-      } catch (e) {}
-    }, timeout);
-  }
-
-  function toggleStrikeSelection() {
-    const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0) return false;
-    const range = sel.getRangeAt(0);
-    if (range.collapsed) {
-      // Expand to nearest word if collapsed
-      if (range.startContainer && range.startContainer.nodeType === 3) {
-        const text = range.startContainer.textContent || "";
-        let start = range.startOffset;
-        let end = range.startOffset;
-        while (start > 0 && /\S/.test(text[start - 1])) start--;
-        while (end < text.length && /\S/.test(text[end])) end++;
-        if (end > start) {
-          range.setStart(range.startContainer, start);
-          range.setEnd(range.startContainer, end);
-          sel.removeAllRanges();
-          sel.addRange(range);
-        } else {
-          return false;
-        }
-      } else {
-        return false;
-      }
-    }
-
-    let node = range.commonAncestorContainer;
-    if (node.nodeType === 3) node = node.parentNode;
-    const strikeEl =
-      node && node.closest ? node.closest("del, s, strike") : null;
-    if (strikeEl) {
-      // Remove strike: unwrap and restore selection
-      const parent = strikeEl.parentNode;
-      const firstChild = strikeEl.firstChild;
-      const lastChild = strikeEl.lastChild;
-
-      while (strikeEl.firstChild)
-        parent.insertBefore(strikeEl.firstChild, strikeEl);
-      parent.removeChild(strikeEl);
-
-      // Restore selection to unwrapped content
-      if (firstChild && lastChild) {
-        const newRange = document.createRange();
-        try {
-          if (firstChild.nodeType === 3) {
-            newRange.setStart(firstChild, 0);
-          } else {
-            newRange.setStartBefore(firstChild);
-          }
-
-          if (lastChild.nodeType === 3) {
-            newRange.setEnd(lastChild, lastChild.textContent.length);
-          } else {
-            newRange.setEndAfter(lastChild);
-          }
-
-          sel.removeAllRanges();
-          sel.addRange(newRange);
-        } catch (e) {
-          // Silent fail on selection restoration
-        }
-      }
-
-      return true;
-    }
-
-    // Add strike: wrap and restore selection
-    const wrapper = document.createElement("del");
-    try {
-      range.surroundContents(wrapper);
-      // Restore selection to wrapped content
-      const newRange = document.createRange();
-      newRange.selectNodeContents(wrapper);
-      sel.removeAllRanges();
-      sel.addRange(newRange);
-    } catch (e) {
-      const frag = range.extractContents();
-      wrapper.appendChild(frag);
-      range.insertNode(wrapper);
-      // Restore selection to wrapped content
-      const newRange = document.createRange();
-      newRange.selectNodeContents(wrapper);
-      sel.removeAllRanges();
-      sel.addRange(newRange);
-    }
-    return true;
-  }
-
-  function performCommand(cmd) {
-    if (!cmd) return;
-    if (allowedCommands && !allowedCommands.has(cmd)) return;
-
-    // Manual formatting via DOM manipulation and execCommand
-    if (cmd === "strike") {
-      const toggled = toggleStrikeSelection();
-      if (toggled) return;
-    }
-
-    // Use document.execCommand for common features
-    switch (cmd) {
-      case "bold":
-        document.execCommand("bold");
-        break;
-      case "italic":
-        document.execCommand("italic");
-        break;
-      case "strike":
-        if (!toggleStrikeSelection()) {
-          document.execCommand("strikethrough");
-        }
-        break;
-      case "paragraph":
-        document.execCommand("formatBlock", false, "p");
-        break;
-      case "h1":
-        document.execCommand("formatBlock", false, "h1");
-        break;
-      case "h2":
-        document.execCommand("formatBlock", false, "h2");
-        break;
-      case "h3":
-        document.execCommand("formatBlock", false, "h3");
-        break;
-      case "h4":
-        document.execCommand("formatBlock", false, "h4");
-        break;
-      case "h5":
-        document.execCommand("formatBlock", false, "h5");
-        break;
-      case "h6":
-        document.execCommand("formatBlock", false, "h6");
-        break;
-      case "ul":
-        document.execCommand("insertUnorderedList");
-        break;
-      case "ol":
-        document.execCommand("insertOrderedList");
-        break;
-      case "blockquote":
-        document.execCommand("formatBlock", false, "blockquote");
-        break;
-      case "clear":
-        document.execCommand("removeFormat");
-        document.execCommand("formatBlock", false, "p");
-        break;
-      case "link": {
-        const url = prompt("Enter link URL");
-        if (url) document.execCommand("createLink", false, url);
-        break;
-      }
-    }
-
-    // Block-count enforcement: Audit after command to ensure constraint maintained
-    if (
-      activeEditableEl &&
-      !allowMultiBlockFor(activeEditableEl) &&
-      countTopLevelBlocks(activeEditableEl) > 1
-    ) {
-      // If command violated constraint, undo
-      document.execCommand("undo");
-    }
-  }
-
+  /**
+   * Position toolbar above editor
+   */
   function positionToolbar() {
-    if (!toolbarEl || (!activeHost && !activeTarget)) return hideToolbar();
-
-    const sel = document.getSelection();
-    let rect = null;
-    if (sel && sel.rangeCount) {
-      const range = sel.getRangeAt(0);
-      rect = range.getBoundingClientRect();
-    }
-    if (!rect) {
-      const el = activeHost || activeTarget;
-      rect = el.getBoundingClientRect();
+    if (!toolbarEl || !activeHost) {
+      hideToolbar();
+      return;
     }
 
+    const rect = activeHost.getBoundingClientRect();
     const tb = toolbarEl;
     tb.style.display = "flex";
     const tbRect = tb.getBoundingClientRect();
@@ -340,830 +284,151 @@
     const top = rect.top + window.scrollY - tbRect.height - 8;
     tb.style.left = Math.max(8, left) + "px";
     tb.style.top = Math.max(8, top) + "px";
-
-    // Also reposition slash menu if visible
-    if (slashMenuEl && slashMenuEl.style.display !== "none") {
-      const mr = slashMenuEl.getBoundingClientRect();
-      const left2 = rect.left + rect.width / 2 - mr.width / 2 + window.scrollX;
-      const top2 = rect.top + window.scrollY - mr.height - 8;
-      slashMenuEl.style.left = Math.max(8, left2) + "px";
-      slashMenuEl.style.top = Math.max(8, top2) + "px";
-    }
   }
 
-  function createAndShowToolbar(hostOrEl, isTipTap, meta) {
-    createToolbarEl();
-    applyToolbarConstraints(meta);
-    positionToolbar();
-    toolbarEl.setAttribute("aria-hidden", "false");
-  }
-
+  /**
+   * Hide toolbar
+   */
   function hideToolbar() {
     if (!toolbarEl) return;
     toolbarEl.style.display = "none";
-    toolbarEl.setAttribute("aria-hidden", "true");
-  }
-
-  // Notion-like slash menu and block handle
-  let slashMenuEl = null;
-  let activeEditableEl = null;
-  let activeKeydownListener = null;
-  let activeHandleEl = null;
-
-  function createSlashMenu() {
-    if (slashMenuEl) return slashMenuEl;
-    const menu = document.createElement("div");
-    menu.className = "fe-slash-menu";
-    menu.style.display = "none";
-    const list = document.createElement("ul");
-
-    const items = [
-      { id: "paragraph", label: "Paragraph" },
-      { id: "h1", label: "Heading 1" },
-      { id: "h2", label: "Heading 2" },
-      { id: "h3", label: "Heading 3" },
-      { id: "h4", label: "Heading 4" },
-      { id: "h5", label: "Heading 5" },
-      { id: "h6", label: "Heading 6" },
-      { id: "ul", label: "Bulleted list" },
-      { id: "ol", label: "Numbered list" },
-      { id: "quote", label: "Quote" },
-      { id: "hr", label: "Divider" },
-    ];
-
-    for (const it of items) {
-      const li = document.createElement("li");
-      li.setAttribute("data-id", it.id);
-      li.textContent = it.label;
-      li.addEventListener("click", () => {
-        applyBlockCommand(it.id);
-        hideSlashMenu();
-      });
-      list.appendChild(li);
-    }
-
-    menu.appendChild(list);
-    document.body.appendChild(menu);
-    slashMenuEl = menu;
-    return menu;
-  }
-
-  function showSlashMenuAt(rect) {
-    const menu = createSlashMenu();
-    if (allowedBlocks) {
-      const items = menu.querySelectorAll("li[data-id]");
-      items.forEach((li) => {
-        const id = li.getAttribute("data-id");
-        let blockType = null;
-        if (id === "paragraph") blockType = "paragraph";
-        else if (/^h[1-6]$/.test(id)) blockType = "heading";
-        else if (id === "ul" || id === "ol") blockType = "list";
-        else if (id === "quote") blockType = "quote";
-        else if (id === "hr") blockType = "hr";
-
-        if (!blockType || allowedBlocks.has(blockType)) {
-          li.style.display = "";
-        } else {
-          li.style.display = "none";
-        }
-      });
-    }
-    const mr = menu.getBoundingClientRect();
-    const left = rect.left + rect.width / 2 - mr.width / 2 + window.scrollX;
-    const top = rect.top + window.scrollY - mr.height - 8;
-    menu.style.left = Math.max(8, left) + "px";
-    menu.style.top = Math.max(8, top) + "px";
-    menu.style.display = "block";
-  }
-
-  function hideSlashMenu() {
-    if (!slashMenuEl) return;
-    slashMenuEl.style.display = "none";
   }
 
   /**
-   * Count top-level block elements in the editable content.
-   * Block elements: p, h1-h6, ul, ol, blockquote, pre, div, hr
-   * (div is treated as block for normalization purposes)
+   * Toast notification helper
    */
-  function countTopLevelBlocks(element) {
-    if (!element) return 0;
-    let count = 0;
-    for (let i = 0; i < element.childNodes.length; i++) {
-      const node = element.childNodes[i];
-      if (node.nodeType === 1) {
-        // Element node
-        const tag = node.tagName.toLowerCase();
-        if (/^(p|h[1-6]|ul|ol|blockquote|pre|div|hr)$/.test(tag)) {
-          count++;
-        }
-      }
+  let toastEl = null;
+  function showToast(type, msg, timeout = 3000) {
+    if (!toastEl) {
+      toastEl = document.createElement("div");
+      toastEl.className = "fe-toast";
+      document.body.appendChild(toastEl);
     }
-    return count;
+    toastEl.className = "fe-toast " + type;
+    toastEl.textContent = msg;
+    toastEl.style.display = "block";
+    setTimeout(() => {
+      toastEl.style.display = "none";
+    }, timeout);
   }
 
   /**
-   * Check if pasted HTML would create multiple top-level blocks.
-   * Parse HTML and count block-level elements at root level.
+   * Destroy active editor
    */
-  function wouldCreateMultipleBlocks(html) {
-    if (!html) return false;
-    const temp = document.createElement("div");
-    temp.innerHTML = html;
-    return countTopLevelBlocks(temp) > 1;
-  }
-
-  function applyBlockCommand(cmd) {
-    if (!activeEditableEl) return;
-    if (allowedBlocks) {
-      let blockType = null;
-      if (cmd === "paragraph") blockType = "paragraph";
-      else if (/^h[1-6]$/.test(cmd)) blockType = "heading";
-      else if (cmd === "ul" || cmd === "ol") blockType = "list";
-      else if (cmd === "quote") blockType = "quote";
-      else if (cmd === "hr") blockType = "hr";
-
-      if (blockType && !allowedBlocks.has(blockType)) return;
-    }
-
-    // Use execCommand for block formatting
-    switch (cmd) {
-      case "paragraph":
-        document.execCommand("formatBlock", false, "p");
-        break;
-      case "h1":
-        document.execCommand("formatBlock", false, "h1");
-        break;
-      case "h2":
-        document.execCommand("formatBlock", false, "h2");
-        break;
-      case "h3":
-        document.execCommand("formatBlock", false, "h3");
-        break;
-      case "h4":
-        document.execCommand("formatBlock", false, "h4");
-        break;
-      case "h5":
-        document.execCommand("formatBlock", false, "h5");
-        break;
-      case "h6":
-        document.execCommand("formatBlock", false, "h6");
-        break;
-      case "ul":
-        document.execCommand("insertUnorderedList");
-        break;
-      case "ol":
-        document.execCommand("insertOrderedList");
-        break;
-      case "quote":
-        document.execCommand("formatBlock", false, "blockquote");
-        break;
-      case "hr":
-        document.execCommand("insertHorizontalRule");
-        break;
-    }
-
-    // Block-count enforcement: Audit after command to ensure constraint maintained
-    if (
-      activeEditableEl &&
-      !allowMultiBlockFor(activeEditableEl) &&
-      countTopLevelBlocks(activeEditableEl) > 1
-    ) {
-      // If command violated constraint, undo
-      document.execCommand("undo");
-    }
-  }
-
-  function onEditableKeydown(ev) {
-    // Block-count enforcement: Prevent Enter only if it would create a NEW top-level block
-    // Enter is ALLOWED inside multi-item blocks (list items, blockquotes) to create new items/lines
-    if (ev.key === "Enter" && ev.type === "keydown") {
-      if (
-        activeEditableEl &&
-        !allowMultiBlockFor(activeEditableEl) &&
-        activeEditableEl &&
-        countTopLevelBlocks(activeEditableEl) >= 1
-      ) {
-        const sel = document.getSelection();
-        if (sel && sel.rangeCount > 0) {
-          let node = sel.anchorNode || sel.focusNode;
-          if (node && node.nodeType === 3) node = node.parentNode;
-
-          // Check if cursor is inside a multi-item block context
-          // These contexts allow Enter to create new items/lines without creating new top-level blocks
-          let current = node;
-          while (current && current !== activeEditableEl) {
-            const tag = current.tagName?.toLowerCase();
-
-            // Inside list item: Enter creates new <li>, stays in list block ✓
-            if (tag === "li") {
-              // Allow Enter but audit after to catch list-exit case
-              setTimeout(() => {
-                if (
-                  activeEditableEl &&
-                  countTopLevelBlocks(activeEditableEl) > 1
-                ) {
-                  document.execCommand("undo");
-                }
-              }, 0);
-              return;
-            }
-
-            // Inside blockquote: Enter creates new line, stays in quote block ✓
-            if (tag === "blockquote") {
-              // Allow Enter but audit after
-              setTimeout(() => {
-                if (
-                  activeEditableEl &&
-                  countTopLevelBlocks(activeEditableEl) > 1
-                ) {
-                  document.execCommand("undo");
-                }
-              }, 0);
-              return;
-            }
-
-            current = current.parentNode;
-          }
-
-          // Not in multi-item context: we're in a paragraph/heading at top-level
-          // Enter would create a new top-level block, so block it
-          ev.preventDefault();
-          return;
-        }
-      }
-    }
-
-    if (ev.key === "/" && ev.type === "keydown") {
-      // Only when selection collapsed
-      const sel = document.getSelection();
-      if (!sel || !sel.isCollapsed) return;
-      // Show menu anchored at caret
-      ev.preventDefault();
-      const range = sel.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-      showSlashMenuAt(rect);
-    }
-
-    // Escape hides menu
-    if (ev.key === "Escape") hideSlashMenu();
-  }
-
-  function createHandle(host) {
-    if (activeHandleEl) return activeHandleEl;
-    const btn = document.createElement("button");
-    btn.className = "fe-handle";
-    btn.type = "button";
-    btn.innerHTML = "≡";
-    btn.addEventListener("click", (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      const rect = host.getBoundingClientRect();
-      showSlashMenuAt(rect);
-    });
-    host.style.position = "relative";
-    host.insertBefore(btn, host.firstChild);
-    activeHandleEl = btn;
-    return btn;
-  }
-
-  function removeHandle() {
-    if (!activeHandleEl) return;
-    if (activeHandleEl.parentNode)
-      activeHandleEl.parentNode.removeChild(activeHandleEl);
-    activeHandleEl = null;
-  }
-
   function destroyEditor() {
     if (!activeEditor) return;
-    try {
-      if (typeof activeEditor.destroy === "function") activeEditor.destroy();
-    } catch (e) {
-      /* ignore */
-    }
 
     try {
-      if (activeHost && activeHost.parentNode)
-        activeHost.parentNode.removeChild(activeHost);
-    } catch (e) {
-      // Error removing activeHost
-    }
-
-    try {
-      if (activeTarget && typeof activeTarget.style !== "undefined")
-        activeTarget.style.display = "";
-    } catch (e) {
-      // Error setting activeTarget display
-    }
-
-    // If we used contentEditable fallback, clear that state
-    try {
-      const at = activeTarget;
-      if (at && typeof at.removeAttribute === "function") {
-        try {
-          at.removeAttribute("contenteditable");
-        } catch (_) {}
-        try {
-          at.removeAttribute("data-fe-editing");
-        } catch (_) {}
+      if (activeEditor.view && activeEditor.view.destroy) {
+        activeEditor.view.destroy();
       }
     } catch (e) {
-      // Error clearing activeTarget attributes
+      // ignore
     }
 
-    // Cleanup toolbar, slash menu, handle and listeners
-    hideToolbar();
-    hideSlashMenu();
-    removeHandle();
     try {
-      document.removeEventListener("selectionchange", positionToolbar);
-    } catch (e) {}
-    if (activeEditableEl && activeKeydownListener) {
-      activeEditableEl.removeEventListener("keydown", activeKeydownListener);
+      if (activeHost && activeHost.parentNode) {
+        activeHost.parentNode.removeChild(activeHost);
+      }
+    } catch (e) {
+      // ignore
     }
+
+    try {
+      if (activeTarget) {
+        activeTarget.style.display = "";
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    hideToolbar();
 
     activeEditor = null;
     activeHost = null;
     activeTarget = null;
-    activeOriginalHtml = null;
-    activeEditableEl = null;
-    activeKeydownListener = null;
+    activeMarkdown = null;
   }
 
-  function finishEditing() {
-    if (suppressFinishEditing) {
-      suppressFinishEditing = false;
-      return;
-    }
-    if (!activeEditor || !activeTarget) return;
-    // TipTap editor exposes getHTML, while fallback uses innerHTML directly
-    const html =
-      typeof activeEditor.getHTML === "function"
-        ? activeEditor.getHTML()
-        : activeTarget.innerHTML;
-    destroyEditor();
-    if (html) activeTarget.innerHTML = html;
-  }
-
-  function fallbackAttach(element) {
-    // Simple contentEditable fallback
-    // For multi-line fields, ensure we attach to the wrapper, not nested elements
-    const wrapper = element.closest(".fe-editable") || element;
-    activeTarget = wrapper;
-
-    // For multi-line fields, create a proper textarea-like editable
-    const isMultiLine = allowMultiBlockFor(wrapper);
-    if (isMultiLine) {
-      // Create editable div that preserves all HTML structure
-      const editableDiv = document.createElement("div");
-      editableDiv.setAttribute("contenteditable", "true");
-      editableDiv.setAttribute("data-fe-editing", "1");
-      editableDiv.innerHTML = wrapper.innerHTML; // Preserve HTML structure (lists, formatting, etc.)
-
-      // Store original HTML to restore on cancel
-      activeOriginalHtml = wrapper.innerHTML;
-
-      // Replace wrapper content with editable
-      wrapper.innerHTML = "";
-      wrapper.appendChild(editableDiv);
-      editableDiv.focus();
-
-      activeEditableEl = editableDiv;
-    } else {
-      wrapper.setAttribute("contenteditable", "true");
-      wrapper.setAttribute("data-fe-editing", "1");
-      wrapper.focus();
-      activeEditableEl = wrapper;
-    }
-
-    // Add keydown handler for slash menu
-    activeKeydownListener = onEditableKeydown;
-    activeEditableEl.addEventListener("keydown", activeKeydownListener);
-
-    // Block-count enforcement: Guard paste to prevent multi-block content
-    wrapper.addEventListener("paste", (ev) => {
-      const allowMulti = allowMultiBlockFor(wrapper);
-
-      ev.preventDefault();
-
-      let html = "";
-      if (ev.clipboardData) {
-        // Try to get HTML first, fallback to text
-        html = ev.clipboardData.getData("text/html");
-        if (!html) {
-          html = ev.clipboardData.getData("text/plain");
-        }
-      }
-
-      // For single-block fields: reject pasted content with newlines
-      if (!allowMulti) {
-        // Check for actual newlines in plain text
-        if (/\n|\r/.test(html)) {
-          return;
-        }
-        // Check for <br> tags in HTML
-        if (/<br\s*\/?>/i.test(html)) {
-          return;
-        }
-        // Check if pasted content would create multiple blocks
-        if (wouldCreateMultipleBlocks(html)) {
-          return;
-        }
-      }
-
-      // Insert paste content
-      if (html) {
-        document.execCommand("insertHTML", false, html);
-      }
-    });
-
-    function onBlur() {
-      wrapper.removeEventListener("blur", onBlur);
-      try {
-        destroyEditor();
-      } catch (e) {
-        // destroyEditor error on blur
-      }
-    }
-    wrapper.addEventListener("blur", onBlur);
-    activeEditor = { getHTML: () => activeEditableEl.innerHTML };
-  }
-
+  /**
+   * Attach editor to element
+   */
   function attachTo(element) {
-    if (activeEditor) return; // single-editor restriction
+    console.log("attachTo called", element.dataset.mdName);
+    if (activeEditor) return;
+
     const meta = getFieldMeta(element);
+    if (!meta || !meta.name) return;
 
-    // Use contentEditable editor
-    fallbackAttach(element);
-    createAndShowToolbar(element, false, meta);
-    document.addEventListener("selectionchange", positionToolbar);
-  }
-  let isSaving = false;
+    // Hide original element
+    element.style.display = "none";
+    activeTarget = element;
 
-  function normalizeHtmlForMarkdown(html) {
-    if (!html) return html;
+    // Get markdown from data attribute (set by backend)
+    const markdown = element.dataset.markdown || "";
+    activeMarkdown = markdown;
 
-    // Restore encoded strike tags so converter can handle them
-    html = html.replace(
-      /&lt;(\/?)(strike|s)([^&]*?)&gt;/gi,
-      (m, slash, tag, attrs) => `<${slash}${tag}${attrs}>`,
-    );
+    // Create editor
+    const { view, host } = createEditor(element, markdown, meta);
+    activeEditor = { view, meta };
+    activeHost = host;
 
-    const root = document.createElement("div");
-    root.innerHTML = html;
+    // Show toolbar
+    createToolbar();
+    positionToolbar();
 
-    const decodeHtml = (value) => {
-      if (!value) return "";
-      const tmp = document.createElement("textarea");
-      tmp.innerHTML = value;
-      return tmp.value;
+    // Focus editor (textarea, not view)
+    const textarea = host.querySelector("textarea");
+    if (textarea) textarea.focus();
+
+    // Handle blur
+    const onBlur = () => {
+      setTimeout(() => {
+        if (
+          document.activeElement !== host &&
+          !toolbarEl.contains(document.activeElement)
+        ) {
+          destroyEditor();
+        }
+      }, 100);
     };
-
-    // Unwrap spans and drop inline styles that break markdown conversion
-    root.querySelectorAll("span").forEach((span) => {
-      const frag = document.createDocumentFragment();
-      while (span.firstChild) frag.appendChild(span.firstChild);
-      span.replaceWith(frag);
-    });
-
-    // Normalize strike tags to <del> for markdown conversion
-    root.querySelectorAll("strike, s").forEach((el) => {
-      const del = document.createElement("del");
-      del.innerHTML = el.innerHTML;
-      el.replaceWith(del);
-    });
-
-    // Convert browser-inserted <div> tags to <p> tags for proper markdown conversion
-    root.querySelectorAll("div").forEach((div) => {
-      // Skip if it has child block elements (it's a container)
-      const hasBlockChildren = Array.from(div.children).some((child) => {
-        const tag = child.tagName.toLowerCase();
-        return [
-          "p",
-          "div",
-          "ul",
-          "ol",
-          "blockquote",
-          "h1",
-          "h2",
-          "h3",
-          "h4",
-          "h5",
-          "h6",
-        ].includes(tag);
-      });
-
-      if (!hasBlockChildren) {
-        const p = document.createElement("p");
-        // Copy innerHTML, but if empty, at least make it a line break
-        p.innerHTML = div.innerHTML || "<br>";
-        div.replaceWith(p);
-      }
-    });
-
-    // Remove inline styles that can leak into markdown
-    root.querySelectorAll("[style]").forEach((el) => {
-      el.removeAttribute("style");
-    });
-
-    const buildBlocksFromLines = (lines, doc) => {
-      const frag = doc.createDocumentFragment();
-      let currentType = null;
-      let currentEl = null;
-
-      const flush = () => {
-        if (currentEl) frag.appendChild(currentEl);
-        currentEl = null;
-        currentType = null;
-      };
-
-      for (const raw of lines) {
-        const line = (raw || "").trim();
-        if (!line) {
-          flush();
-          continue;
-        }
-
-        let type = "p";
-        let content = line;
-        if (/^>\s*/.test(line)) {
-          type = "quote";
-          content = line.replace(/^>\s*/, "");
-        } else if (/^\d+\.\s+/.test(line)) {
-          type = "ol";
-          content = line.replace(/^\d+\.\s+/, "");
-        } else if (/^[-*]\s+/.test(line)) {
-          type = "ul";
-          content = line.replace(/^[-*]\s+/, "");
-        }
-
-        if (type === "p") {
-          flush();
-          const p = doc.createElement("p");
-          p.textContent = content;
-          frag.appendChild(p);
-          continue;
-        }
-
-        if (type !== currentType) {
-          flush();
-          if (type === "ol" || type === "ul") {
-            currentEl = doc.createElement(type);
-          } else if (type === "quote") {
-            currentEl = doc.createElement("blockquote");
-          }
-          currentType = type;
-        }
-
-        if (type === "ol" || type === "ul") {
-          const li = doc.createElement("li");
-          li.textContent = content;
-          currentEl.appendChild(li);
-        } else if (type === "quote") {
-          const p = doc.createElement("p");
-          p.textContent = content;
-          currentEl.appendChild(p);
-        }
-      }
-
-      flush();
-      return frag;
-    };
-
-    const getLinesFromElement = (el) => {
-      if (!el) return [];
-      const innerText = typeof el.innerText === "string" ? el.innerText : "";
-      if (innerText.trim()) {
-        return innerText
-          .split(/\r?\n/)
-          .map((l) => l.trim())
-          .filter(Boolean);
-      }
-
-      const html = el.innerHTML || "";
-      const normalized = html
-        .replace(/<br\s*\/?>/gi, "\n")
-        .replace(/<\/p>/gi, "\n")
-        .replace(/<\/div>/gi, "\n");
-      const text = decodeHtml(normalized.replace(/<[^>]+>/g, ""));
-      return text
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter(Boolean);
-    };
-
-    const replaceElementWithLines = (el) => {
-      const lines = getLinesFromElement(el);
-      if (!lines.length) return;
-
-      const hasMarkers = lines.some((l) =>
-        /^(?:\d+\.\s+|[-*]\s+|>\s*)/.test(l),
-      );
-      if (!hasMarkers) return;
-
-      const frag = buildBlocksFromLines(lines, el.ownerDocument);
-      if (frag && frag.childNodes.length) el.replaceWith(frag);
-    };
-
-    // Split headings containing <br> into separate blocks
-    root.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach((h) => {
-      if (!/<br\s*\/?>/i.test(h.innerHTML)) return;
-      const parts = h.innerHTML
-        .split(/<br\s*\/?>/i)
-        .map((p) => p.trim())
-        .filter(Boolean);
-      if (parts.length <= 1) return;
-
-      h.innerHTML = parts.shift();
-      const lines = parts
-        .map((p) => p.replace(/<[^>]+>/g, "").trim())
-        .filter(Boolean);
-      if (!lines.length) return;
-
-      const frag = buildBlocksFromLines(lines, h.ownerDocument);
-      h.after(frag);
-    });
-
-    // Convert divs/paragraphs that contain list/quote-like lines
-    root.querySelectorAll("div, p").forEach((el) => {
-      replaceElementWithLines(el);
-    });
-
-    // Force conversion for plain text div blocks with list/quote markers
-    root.querySelectorAll("div").forEach((el) => {
-      if (el.children && el.children.length) return;
-      const lines = getLinesFromElement(el);
-      if (!lines.length) return;
-      const hasMarkers = lines.some((l) =>
-        /^(?:\d+\.\s+|[-*]\s+|>\s*)/.test(l),
-      );
-      if (!hasMarkers) return;
-      const frag = buildBlocksFromLines(lines, el.ownerDocument);
-      if (frag && frag.childNodes.length) el.replaceWith(frag);
-    });
-
-    return root.innerHTML;
+    host.addEventListener("blur", onBlur);
   }
 
+  /**
+   * Save content to server
+   */
   async function saveContent() {
-    if (isSaving) {
-      showToast("error", "Save in progress");
+    if (isSaving || !activeEditor || !activeTarget) {
+      showToast("error", "Nothing to save");
       return;
     }
+
     isSaving = true;
-    // disable save button to prevent duplicates
-    const disableSaveBtn = () => {
-      if (toolbarEl) {
-        const btn = toolbarEl.querySelector('button[data-cmd="save"]');
-        if (btn) btn.disabled = true;
-      }
-    };
-    const enableSaveBtn = () => {
-      if (toolbarEl) {
-        const btn = toolbarEl.querySelector('button[data-cmd="save"]');
-        if (btn) btn.disabled = false;
-      }
-    };
-    disableSaveBtn();
+    const saveBtn = toolbarEl?.querySelector('button[data-cmd="save"]');
+    if (saveBtn) saveBtn.disabled = true;
 
     try {
-      // For multi-line container fields, extract plain text to avoid HTML artifacts
-      // For single-block fields, use HTML for validation and conversion
-      const isMultiLine = allowMultiBlockFor(activeTarget);
-      let html = "";
-      let plainText = "";
+      // Get current markdown from editor
+      const view = activeEditor.view;
+      const markdown = view.state.doc.toString();
+      const meta = activeEditor.meta;
 
-      try {
-        let sourceElement = null;
-
-        if (activeEditor && typeof activeEditor.getHTML === "function") {
-          html = activeEditor.getHTML();
-          if (activeTarget) {
-            sourceElement = activeTarget;
-          }
-          if (isMultiLine && typeof activeEditor.getText === "function") {
-            plainText = activeEditor.getText();
-          }
-          console.log(
-            "[FE] saveContent - activeEditor path, activeTarget:",
-            activeTarget ? activeTarget.tagName : "null",
-            "sourceElement:",
-            sourceElement ? sourceElement.tagName : "null",
-            "html.length:",
-            html.length,
-          );
-        } else if (activeHost) {
-          const shim = activeHost.querySelector(".tiptap-shim-editable");
-          const editableChild = activeHost.querySelector("[contenteditable]");
-          if (shim) {
-            sourceElement = shim;
-            html = shim.innerHTML;
-          } else if (editableChild) {
-            sourceElement = editableChild;
-            html = editableChild.innerHTML;
-          } else {
-            sourceElement = activeHost;
-            html = activeHost.innerHTML || "";
-          }
-        } else if (activeTarget) {
-          sourceElement = activeEditableEl || activeTarget;
-          html = sourceElement.innerHTML || "";
-        } else {
-          const el = document.querySelector(".fe-editable");
-          if (el) {
-            sourceElement = el;
-            html = el.innerHTML || "";
-          }
-        }
-
-        // For multi-line fields, extract plain text with preserved line breaks
-        if (isMultiLine && sourceElement) {
-          plainText =
-            sourceElement.innerText || sourceElement.textContent || "";
-        }
-      } catch (e) {
-        const sourceEl = activeEditableEl || activeTarget;
-        html = sourceEl ? sourceEl.innerHTML : "";
-        if (isMultiLine && sourceEl) {
-          plainText = sourceEl.innerText || sourceEl.textContent || "";
-        }
+      // Validate single-block constraint
+      if (!meta.allowMultiBlock && markdown.includes("\n")) {
+        showToast("error", "Single-block field cannot contain newlines");
+        return;
       }
 
-      // Validate block-count constraint: reject saves with multiple top-level blocks
-      if (!allowMultiBlockFor(activeTarget)) {
-        try {
-          const temp = document.createElement("div");
-          temp.innerHTML = html;
-          if (countTopLevelBlocks(temp) > 1) {
-            enableSaveBtn();
-            isSaving = false;
-            showToast(
-              "error",
-              "Cannot save: field must contain exactly one block",
-            );
-            return;
-          }
-
-          // Reject <br> tags for fields (newlines forbidden in single-block fields)
-          if (/<br\s*\/?>/i.test(html)) {
-            enableSaveBtn();
-            isSaving = false;
-            showToast("error", "Cannot save: field cannot contain line breaks");
-            return;
-          }
-        } catch (e) {
-          /* ignore */
-        }
+      // Validate non-empty
+      if (!markdown.trim()) {
+        showToast("error", "Content cannot be empty");
+        return;
       }
 
-      // Strip known client chrome (handles, toolbar) before sending
-      try {
-        html = html.replace(
-          /<button[^>]*class=["']?[^"']*fe-handle[^"']*["']?[^>]*>[\s\S]*?<\/button>/gi,
-          "",
-        );
-        html = html.replace(
-          /<div[^>]*class=["']?[^"']*fe-toolbar[^"']*["']?[^>]*>[\s\S]*?<\/div>/gi,
-          "",
-        );
-        html = html.replace(/ data-fe-editing="[^"]*"/g, "");
-      } catch (e) {
-        /* ignore */
-      }
-
-      // Ensure inline breaks are real <br> tags before posting
-      try {
-        html = html.replace(
-          /<md-inline-break\b[^>]*><\/md-inline-break>/gi,
-          "<br>",
-        );
-      } catch (e) {
-        /* ignore */
-      }
-
-      // Normalize HTML before sending to backend (remove spans, convert divs, etc.)
-      try {
-        html = normalizeHtmlForMarkdown(html);
-      } catch (e) {
-        console.error("[FE] normalizeHtmlForMarkdown error:", e);
-      }
-
-      // Validate non-empty content (allow images/media)
-      const contentToValidate = isMultiLine && plainText ? plainText : html;
-      if (!contentToValidate || !contentToValidate.trim()) {
-        // Check for media even if no text
-        const tmp = document.createElement("div");
-        tmp.innerHTML = html || "";
-        const hasMedia = !!tmp.querySelector("img,video,iframe,svg");
-        if (!hasMedia) {
-          showToast("error", "Nothing to save");
-          return;
-        }
-      }
-
-      // fetch CSRF token
-      let tokenName = null,
-        tokenValue = null;
+      // Fetch CSRF token
+      let tokenName = null;
+      let tokenValue = null;
       try {
         const resp = await fetch(
           location.pathname + "?markdownFrontEditorToken=1",
@@ -1180,33 +445,17 @@
           }
         }
       } catch (e) {
-        /* ignore token fetch error */
+        // ignore token fetch error
       }
 
+      // Build request
       const body = new URLSearchParams();
-
-      // Always send HTML for conversion to markdown
-      // This preserves lists, formatting, etc.
-      body.append("html", html);
-
-      // Debug payload details for server-side tracing
-      body.append("debug_isMultiLine", isMultiLine ? "1" : "0");
-      body.append("debug_plainTextLen", String(plainText.length || 0));
-      body.append("debug_htmlLen", String(html.length || 0));
-
+      body.append("markdown", markdown);
+      body.append("mdName", meta.name);
+      body.append("pageId", meta.pageId);
       if (tokenName) body.append(tokenName, tokenValue);
-      // Include block identifier and page id when available for single-block replacement
-      const mdName =
-        activeTarget && activeTarget.dataset && activeTarget.dataset.mdName
-          ? activeTarget.dataset.mdName
-          : null;
-      const pageId =
-        activeTarget && activeTarget.dataset && activeTarget.dataset.page
-          ? activeTarget.dataset.page
-          : null;
-      if (mdName) body.append("mdName", mdName);
-      if (pageId) body.append("pageId", pageId);
 
+      // Send save request
       const res = await fetch(
         location.pathname + "?markdownFrontEditorSave=1",
         {
@@ -1226,30 +475,14 @@
 
       if (res.ok && json && json.status === 1) {
         showToast("success", json.message || "Saved");
-        if (json.html) {
-          try {
-            suppressFinishEditing = true;
-            destroyEditor();
-          } catch (e) {}
-          const hostEl =
-            document.querySelector(
-              `.fe-editable[data-md-name="${mdName}"][data-page="${pageId}"]`,
-            ) || activeTarget;
-          if (hostEl) {
-            try {
-              hostEl.innerHTML = json.html;
-            } catch (e) {}
-            setTimeout(() => {
-              try {
-                hostEl.innerHTML = json.html;
-              } catch (e) {}
-            }, 120);
-          }
-        } else {
-          try {
-            destroyEditor();
-          } catch (e) {}
+
+        // Update target element with new HTML
+        if (json.html && activeTarget) {
+          activeTarget.innerHTML = json.html;
+          activeTarget.dataset.markdown = markdown;
         }
+
+        destroyEditor();
       } else {
         showToast(
           "error",
@@ -1261,21 +494,33 @@
       showToast("error", "Save failed: " + e.message);
     } finally {
       isSaving = false;
-      enableSaveBtn();
+      if (saveBtn) saveBtn.disabled = false;
     }
   }
-  document.addEventListener("DOMContentLoaded", () => {
+
+  /**
+   * Initialize event listeners (works if called before or after DOMContentLoaded)
+   */
+  function initializeListeners() {
+    // Double-click to edit
     document.body.addEventListener("dblclick", (ev) => {
       const el = ev.target.closest("." + EDITABLE_CLASS);
       if (!el) return;
       attachTo(el);
     });
 
-    // Escape key cancels edit
+    // Escape to cancel
     document.addEventListener("keydown", (ev) => {
       if (ev.key === "Escape" && activeEditor) {
         destroyEditor();
       }
     });
-  });
+  }
+
+  // Initialize immediately if DOM is ready, otherwise wait
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initializeListeners);
+  } else {
+    initializeListeners();
+  }
 })();

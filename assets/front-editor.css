@@ -1,0 +1,389 @@
+.fe-editable {
+  cursor: pointer;
+  transition: outline 0.2s;
+  position: relative;
+  outline: 1px dashed rgba(0, 122, 255, 0);
+  outline-offset: 4px;
+}
+
+.fe-editable:hover {
+  outline: 1px dashed rgba(0, 122, 255, 0.6);
+  outline-offset: 4px;
+}
+
+body.mfe-no-scroll {
+  overflow: hidden;
+}
+
+.fe-editable::after {
+  content: "Double click to edit";
+  position: absolute;
+  top: -25px;
+  right: -4px;
+  padding: 4px 10px;
+  border-radius: 10px 10px 0 0;
+  background: rgba(240, 248, 255, 0.98);
+  color: #2563eb;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px dashed rgba(37, 99, 235, 0.45);
+  border-bottom: 0;
+  text-transform: uppercase;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.fe-editable:hover::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.mfe-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10000;
+  background: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+}
+
+.mfe-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 9999;
+}
+
+.mfe-container {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(100% - 48px, 980px);
+  max-width: 980px;
+  padding: 0;
+  height: 100vh;
+  overflow-y: auto;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(15, 23, 42, 0.2) transparent;
+}
+
+.mfe-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.mfe-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mfe-container::-webkit-scrollbar-thumb {
+  background-color: rgba(15, 23, 42, 0.18);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.mfe-container::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(15, 23, 42, 0.32);
+}
+
+.mfe-editor {
+  font-size: 16px;
+  line-height: 1.7;
+  max-width: none;
+  padding: 140px 40px 40px 40px;
+  color: #1f2937;
+}
+
+.mfe-editor a {
+  pointer-events: none;
+}
+
+.mfe-toolbar {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: flex-start;
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(100% - 48px, 980px);
+  max-width: 980px;
+  padding: 10px 24px;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(10px);
+  border: 0;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 0 0 12px 12px;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
+  z-index: 10001;
+  flex-wrap: wrap;
+}
+
+.editor-toolbar-btn {
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  color: #6b7280;
+  text-align: center;
+  min-width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0.01em;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  outline: none;
+}
+
+.editor-toolbar-btn:focus-visible {
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+}
+
+.editor-toolbar-close {
+  position: fixed;
+  top: 8px;
+  right: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 10px;
+  font-size: 0;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  color: #6b7280;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;
+  z-index: 10002;
+}
+
+.editor-toolbar-close svg {
+  width: 36px;
+  height: 36px;
+  display: block;
+}
+
+.editor-toolbar-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.editor-toolbar-save {
+  background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  box-shadow: none;
+}
+
+.editor-toolbar-save:hover {
+  background: #eef2f7;
+}
+
+.editor-toolbar-separator {
+  width: 1px;
+  height: 18px;
+  background: rgba(148, 163, 184, 0.5);
+  margin: 0 6px;
+}
+
+.editor-toolbar-spacer {
+  flex: 1 1 auto;
+  min-width: 100px;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+[data-editor-toolbar="true"] {
+  animation: slideDown 0.2s ease-out;
+}
+
+/* Show warning separator line after first child block when there are multiple blocks */
+/* Target first p/h1-h6 child that is not the only child (i.e., has siblings) */
+.ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > p:nth-child(1):not(:only-child)::after,
+.ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > h1:nth-child(1):not(:only-child)::after,
+.ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > h2:nth-child(1):not(:only-child)::after,
+.ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > h3:nth-child(1):not(:only-child)::after,
+.ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > h4:nth-child(1):not(:only-child)::after,
+.ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > h5:nth-child(1):not(:only-child)::after,
+.ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > h6:nth-child(1):not(:only-child)::after {
+  content: "Warning: Content below this line won't be saved";
+  display: block;
+  margin: 24px 0 18px;
+  text-align: center;
+  color: #b91c1c;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: linear-gradient(rgba(185, 28, 28, 0.35), rgba(185, 28, 28, 0.35)) center / 100% 1px no-repeat;
+  text-shadow: 0 0 6px #fff, 0 0 6px #fff;
+}
+
+/* Hide ProseMirror trailing break placeholder */
+.ProseMirror .ProseMirror-trailingBreak {
+  opacity: 0;
+  height: 0;
+}
+
+.ProseMirror {
+  position: relative;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  white-space: break-spaces;
+  -webkit-font-variant-ligatures: none;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0;
+  outline: none;
+}
+
+.ProseMirror p {
+  margin: 0.5em 0;
+}
+
+.ProseMirror p:first-child {
+  margin-top: 0;
+}
+
+.ProseMirror p:last-child {
+  margin-bottom: 0;
+}
+
+.ProseMirror h1 {
+  font-size: 2em;
+  margin: 0.67em 0;
+  font-weight: bold;
+}
+
+.ProseMirror h2 {
+  font-size: 1.5em;
+  margin: 0.75em 0;
+  font-weight: bold;
+}
+
+.ProseMirror h3 {
+  font-size: 1.17em;
+  margin: 0.83em 0;
+  font-weight: bold;
+}
+
+.ProseMirror h4 {
+  font-size: 1em;
+  margin: 1em 0;
+  font-weight: bold;
+}
+
+.ProseMirror h5 {
+  font-size: 0.83em;
+  margin: 1em 0;
+  font-weight: bold;
+}
+
+.ProseMirror h6 {
+  font-size: 0.67em;
+  margin: 1em 0;
+  font-weight: bold;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  padding-left: 2em;
+  margin: 0.5em 0;
+}
+
+.ProseMirror li {
+  margin: 0.25em 0;
+}
+
+.ProseMirror code {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.9em;
+}
+
+.ProseMirror pre {
+  background: rgba(0, 0, 0, 0.04);
+  padding: 12px;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+
+.ProseMirror pre code {
+  background: none;
+  padding: 0;
+}
+
+.ProseMirror blockquote {
+  border-left: 3px solid #ccc;
+  padding-left: 1em;
+  margin: 0.5em 0 0.5em 0.5em;
+  color: #666;
+  font-style: italic;
+}
+
+.ProseMirror strong {
+  font-weight: bold;
+}
+
+.ProseMirror em {
+  font-style: italic;
+}
+
+.ProseMirror a {
+  color: #0066cc;
+  text-decoration: underline;
+}
+
+.ProseMirror a:hover {
+  color: #0052a3;
+}
+
+.ProseMirror img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Keep title/heading fields WYSIWYG (no auto-resize from editor defaults) */
+.fe-editor-host.fe-type-title .ProseMirror h1,
+.fe-editor-host.fe-type-heading .ProseMirror h1,
+.fe-editor-host.fe-type-heading .ProseMirror h2,
+.fe-editor-host.fe-type-heading .ProseMirror h3,
+.fe-editor-host.fe-type-heading .ProseMirror h4,
+.fe-editor-host.fe-type-heading .ProseMirror h5,
+.fe-editor-host.fe-type-heading .ProseMirror h6 {
+  font-size: 1em;
+  margin: 0;
+}
