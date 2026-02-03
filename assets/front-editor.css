@@ -213,20 +213,7 @@ body.mfe-no-scroll {
   min-width: 100px;
 }
 
-@keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-[data-editor-toolbar="true"] {
-  animation: slideDown 0.2s ease-out;
-}
+/* Toolbar animation removed for stable positioning */
 
 /* Show warning separator line after first child block when there are multiple blocks */
 /* Target first p/h1-h6 child that is not the only child (i.e., has siblings) */
@@ -237,16 +224,16 @@ body.mfe-no-scroll {
 .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > h4:nth-child(1):not(:only-child)::after,
 .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > h5:nth-child(1):not(:only-child)::after,
 .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > h6:nth-child(1):not(:only-child)::after {
-  content: "Warning: Content below this line won't be saved";
+  content: "This field saves only one line. Everything below won’t be saved.";
   display: block;
   margin: 24px 0 18px;
   text-align: center;
-  color: #b91c1c;
-  font-size: 11px;
+  color: #b45309;
+  font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  background: linear-gradient(rgba(185, 28, 28, 0.35), rgba(185, 28, 28, 0.35)) center / 100% 1px no-repeat;
+  background: linear-gradient(rgba(180, 83, 9, 0.25), rgba(180, 83, 9, 0.25)) center / 100% 1px no-repeat;
   text-shadow: 0 0 6px #fff, 0 0 6px #fff;
 }
 
@@ -255,6 +242,8 @@ body.mfe-no-scroll {
   opacity: 0;
   height: 0;
 }
+
+
 
 .ProseMirror {
   position: relative;

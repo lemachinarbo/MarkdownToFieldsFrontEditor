@@ -1,7 +1,7 @@
 /**
  * Tiptap-based Markdown Editor for MarkdownToFields
  *
- * Uses Tiptap v3 with prosemirror-markdown for markdown serialization.
+ * Uses Tiptap v.3 with prosemirror-markdown for markdown serialization.
  * This editor provides WYSIWYG editing while preserving markdown integrity.
  */
 
@@ -16,11 +16,9 @@ import {
 } from "prosemirror-markdown";
 
 let activeEditor = null;
-let activeMarkdown = "";
 let originalBlockCount = 0; // Track original paragraph count to detect user-added content
 let activeTarget = null;
 let activeFieldName = null;
-let activePageId = null;
 let activeFieldType = null; // "tag" or "container"
 
 // Configure which fields should show extra-content warnings
@@ -49,12 +47,28 @@ function countNonEmptyBlocks(doc) {
   }
   return count;
 }
+
+function stripTrailingEmptyParagraph() {
+  if (!activeEditor) return;
+  const { state, view } = activeEditor;
+  const { doc } = state;
+  if (doc.childCount <= 1) return;
+
+  const last = doc.child(doc.childCount - 1);
+  if (last.type.name !== "paragraph") return;
+  if (last.textContent.trim() !== "") return;
+
+  const from = doc.content.size - last.nodeSize;
+  const to = doc.content.size;
+  const tr = state.tr.delete(from, to);
+  view.dispatch(tr);
+}
 let saveCallback = null;
 let keydownHandler = null;
-let notificationBanner = null; // (unused) placeholder for legacy banner
-let mutationObserver = null; // Track DOM changes
 
 function createMarkdownParser(schema) {
+  const markdownIt = defaultMarkdownParser.tokenizer;
+  markdownIt.set({ breaks: true });
   const tokens = {
     ...defaultMarkdownParser.tokens,
     blockquote: { block: "blockquote" },
@@ -80,6 +94,7 @@ function createMarkdownParser(schema) {
     },
     hr: { node: "horizontalRule" },
     hardbreak: { node: "hardBreak" },
+    softbreak: { node: "hardBreak" },
     em: { mark: "italic" },
     strong: { mark: "bold" },
     link: defaultMarkdownParser.tokens.link,
@@ -94,7 +109,7 @@ function createMarkdownParser(schema) {
     delete tokens.image;
   }
 
-  return new MarkdownParser(schema, defaultMarkdownParser.tokenizer, tokens);
+  return new MarkdownParser(schema, markdownIt, tokens);
 }
 
 const markdownSerializer = new MarkdownSerializer(
@@ -108,7 +123,9 @@ const markdownSerializer = new MarkdownSerializer(
     listItem: defaultMarkdownSerializer.nodes.list_item,
     paragraph: defaultMarkdownSerializer.nodes.paragraph,
     image: defaultMarkdownSerializer.nodes.image,
-    hardBreak: defaultMarkdownSerializer.nodes.hard_break,
+    hardBreak(state) {
+      state.write("\n");
+    },
     text: defaultMarkdownSerializer.nodes.text,
   },
   {
@@ -146,7 +163,6 @@ const EscapeKeyExtension = Extension.create({
  * Initialize the editor for a specific field
  */
 function initEditor(markdownContent, onSave, fieldType = "tag") {
-  activeMarkdown = markdownContent;
   activeFieldType = fieldType;
   saveCallback = onSave;
 
@@ -186,6 +202,7 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
     editorProps: {
       attributes: {
         class: "prose prose-sm focus:outline-none mfe-editor",
+        spellcheck: "false",
       },
     },
   });
@@ -194,6 +211,12 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
   const parser = createMarkdownParser(activeEditor.schema);
   const doc = parser.parse(markdownContent || "");
   activeEditor.commands.setContent(doc.toJSON(), false);
+  if (shouldWarnForExtraContent(fieldType, activeFieldName)) {
+    stripTrailingEmptyParagraph();
+  }
+  if (shouldWarnForExtraContent(fieldType, activeFieldName)) {
+    stripTrailingEmptyParagraph();
+  }
 
   // Set field attributes on ProseMirror element for CSS targeting
   activeEditor.view.dom.setAttribute("data-field-type", fieldType);
@@ -208,7 +231,9 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
 
   // Count the actual non-empty blocks in the editor AFTER content is set
   // This ignores trailingBreak placeholders and empty extra lines
-  originalBlockCount = countNonEmptyBlocks(activeEditor.state.doc);
+  originalBlockCount = shouldWarnForExtraContent(fieldType, activeFieldName)
+    ? 1
+    : countNonEmptyBlocks(activeEditor.state.doc);
   console.log(
     "Original block count set to:",
     originalBlockCount,
@@ -219,6 +244,9 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
   // Add hook to highlight extra content when editor updates
   activeEditor.on("update", () => {
     highlightExtraContent();
+    if (shouldWarnForExtraContent(fieldType, activeFieldName)) {
+      stripTrailingEmptyParagraph();
+    }
   });
 
   // Create toolbar
@@ -635,7 +663,6 @@ function getMarkdownFromEditor() {
   return markdownSerializer.serialize(activeEditor.state.doc);
 }
 
-
 /**
  * Highlight extra paragraphs that won't be saved in tag fields
  */
@@ -675,12 +702,7 @@ function highlightExtraContent() {
 /**
  * Remove visual indicators for tag field content
  */
-function clearExtraContentHighlights() {
-  if (mutationObserver) {
-    mutationObserver.disconnect();
-    mutationObserver = null;
-  }
-}
+function clearExtraContentHighlights() {}
 
 /**
  * Save editor content
@@ -743,10 +765,8 @@ function closeEditor() {
   document.body.classList.remove("mfe-no-scroll");
 
   saveCallback = null;
-  activeMarkdown = "";
   activeTarget = null;
   activeFieldName = null;
-  activePageId = null;
 }
 
 function getSaveUrl() {
@@ -790,15 +810,22 @@ function initEditors() {
       e.preventDefault();
 
       // Get markdown from data attribute (set by backend)
-      const markdownContent =
-        el.getAttribute("data-markdown") || el.textContent;
+      const markdownB64 = el.getAttribute("data-markdown-b64");
+      const markdownContent = markdownB64
+        ? decodeURIComponent(
+            Array.prototype.map
+              .call(
+                atob(markdownB64),
+                (c) => `%${`00${c.charCodeAt(0).toString(16)}`.slice(-2)}`,
+              )
+              .join(""),
+          )
+        : "";
       const fieldName = el.getAttribute("data-md-name") || "unknown";
-      const pageId = el.getAttribute("data-page") || "0";
       const fieldType = el.getAttribute("data-field-type") || "tag"; // Field type from backend
 
       activeTarget = el;
       activeFieldName = fieldName;
-      activePageId = pageId;
       activeFieldType = fieldType;
 
       // Save callback
@@ -807,7 +834,7 @@ function initEditors() {
           const formData = new FormData();
           formData.append("markdown", markdown);
           formData.append("mdName", fieldName);
-          formData.append("pageId", pageId);
+          formData.append("pageId", el.getAttribute("data-page") || "0");
 
           if (csrf) {
             formData.append(csrf.name, csrf.value);

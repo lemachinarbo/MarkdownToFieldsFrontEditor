@@ -167,11 +167,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
         if (!isset($content->sections) || !is_array($content->sections)) return;
 
-        $globalAllowMultiBlock = false;
-        
-        // Detect container markers (<!-- name ... -->) for automatic multi-line support
-        $containerFields = $this->getContainerFieldNames($page);
-
         // Collect all fields with their metadata: name, html, markdown, type
         $fields = [];
         foreach ($content->sections as $section) {
@@ -179,8 +174,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 foreach ($section->fields as $fname => $f) {
                     if (isset($f->html) && $f->html !== '') {
                         $fieldType = $this->resolveFieldType($f);
-                        // Container fields automatically get multi-line unless global config is explicitly set
-                        $allowMultiBlock = isset($containerFields[$fname]) ? true : $globalAllowMultiBlock;
                         $html = $f->html;
                         // Trust MarkdownToFields API for field extraction and boundaries
                         $markdown = (string)($f->markdown ?? '');
@@ -188,7 +181,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                             'html' => $html,
                             'markdown' => $markdown,
                             'type' => $fieldType,
-                            'allow_multi_block' => $allowMultiBlock,
                         ];
                         $this->wire->log->save('markdown-front-edit', "COLLECT field='{$fname}' type='{$fieldType}' markdownLen=" . strlen($markdown));
                     }
@@ -200,7 +192,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         foreach ($subsection->fields as $fname => $f) {
                             if (isset($f->html) && $f->html !== '') {
                                 $fieldType = $this->resolveFieldType($f);
-                                $allowMultiBlock = isset($containerFields[$fname]) ? true : $globalAllowMultiBlock;
                                 $html = $f->html;
                                 // Trust MarkdownToFields API for field extraction and boundaries
                                 $markdown = (string)($f->markdown ?? '');
@@ -208,7 +199,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                                     'html' => $html,
                                     'markdown' => $markdown,
                                     'type' => $fieldType,
-                                    'allow_multi_block' => $allowMultiBlock,
                                 ];
                                 $this->wire->log->save('markdown-front-edit', "COLLECT field='{$fname}' type='{$fieldType}' markdownLen=" . strlen($markdown));
                             }
@@ -229,8 +219,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                     if (isset($f->html) && $f->html !== '' && isset($fields[$fname])) {
                         $safeAttr = htmlspecialchars($fname, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                         $safeType = htmlspecialchars($fields[$fname]['type'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                        $allowMulti = !empty($fields[$fname]['allow_multi_block']) ? 'true' : 'false';
                         $safeMarkdown = htmlspecialchars($fields[$fname]['markdown'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                        $safeMarkdownB64 = htmlspecialchars(base64_encode($fields[$fname]['markdown']), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                         
                         // Check if already wrapped
                         if (stripos($rebuilt, 'data-md-name="' . $safeAttr . '"') !== false) continue;
@@ -238,7 +228,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         // Find and wrap the field
                         $originalHtml = $f->html;
                         $displayHtml = $fields[$fname]['html'];
-                        $wrapper = '<div class="fe-editable md-edit" data-md-name="' . $safeAttr . '" data-field-type="' . $safeType . '" data-allow-multi-block="' . $allowMulti . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '">' . $displayHtml . '</div>';
+                        $wrapper = '<div class="fe-editable md-edit" data-md-name="' . $safeAttr . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
                         
                         // Find original HTML in output and replace with wrapped version
                         $pos = stripos($rebuilt, $originalHtml);
@@ -255,15 +245,15 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                             if (isset($f->html) && $f->html !== '' && isset($fields[$fname])) {
                                 $safeAttr = htmlspecialchars($fname, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                                 $safeType = htmlspecialchars($fields[$fname]['type'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                                $allowMulti = !empty($fields[$fname]['allow_multi_block']) ? 'true' : 'false';
                                 $safeMarkdown = htmlspecialchars($fields[$fname]['markdown'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                                $safeMarkdownB64 = htmlspecialchars(base64_encode($fields[$fname]['markdown']), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                                 
                                 // Check if already wrapped
                                 if (stripos($rebuilt, 'data-md-name="' . $safeAttr . '"') !== false) continue;
                                 
                                 $originalHtml = $f->html;
                                 $displayHtml = $fields[$fname]['html'];
-                                $wrapper = '<div class="fe-editable md-edit" data-md-name="' . $safeAttr . '" data-field-type="' . $safeType . '" data-allow-multi-block="' . $allowMulti . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '">' . $displayHtml . '</div>';
+                                $wrapper = '<div class="fe-editable md-edit" data-md-name="' . $safeAttr . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
                                 
                                 $pos = stripos($rebuilt, $originalHtml);
                                 if ($pos !== false) {
@@ -313,18 +303,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
         
         $fieldType = null;
-        $globalAllowMultiBlock = false;
-        
-        // Check if this is a container field
-        $containerFields = $this->getContainerFieldNames($page);
-        $allowMultiBlock = isset($containerFields[$fieldName]) ? true : $globalAllowMultiBlock;
-
-        // Explicit override via options argument
-        if (is_bool($options)) {
-            $allowMultiBlock = $options;
-        } elseif (is_array($options) && array_key_exists('allowMultiBlock', $options)) {
-            $allowMultiBlock = (bool) $options['allowMultiBlock'];
-        }
         
         if (isset($content->sections) && is_array($content->sections)) {
             foreach ($content->sections as $section) {
@@ -351,8 +329,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         // Wrap in editable container with metadata
         $safeAttr = htmlspecialchars($fieldName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $safeType = htmlspecialchars($fieldType, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $allowMultiAttr = $allowMultiBlock ? 'true' : 'false';
-        $out = "<div class=\"fe-editable md-edit\" data-md-name=\"{$safeAttr}\" data-field-type=\"{$safeType}\" data-allow-multi-block=\"{$allowMultiAttr}\" data-page=\"{$page->id}\">";
+        $out = "<div class=\"fe-editable md-edit\" data-md-name=\"{$safeAttr}\" data-field-type=\"{$safeType}\" data-page=\"{$page->id}\">";
         $out .= $html;
         $out .= "</div>";
         $event->return = $out;
@@ -593,95 +570,11 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return 'block';
     }
 
-    /**
-     * Update a field in markdown by directly modifying the file.
-     * Uses implicit boundaries: field content ends at next marker or EOF.
-     */
-    protected function updateFieldUsingLetMeDown($page, $fieldName, $newMarkdown, $langCode = null) {
-        if (!$langCode) {
-            $langCode = \ProcessWire\MarkdownLanguageResolver::getDefaultLanguageCode($page);
-        }
-
-        // Get markdown file path
-        $path = \ProcessWire\MarkdownFileIO::getMarkdownFilePath($page, $langCode);
-        if (!is_file($path)) {
-            throw new \Exception("Markdown file not found: {$path}");
-        }
-
-        // Read current markdown
-        $markdown = @file_get_contents($path);
-        if ($markdown === false) {
-            throw new \Exception("Failed to read markdown file: {$path}");
-        }
-
-        // Field pattern: <!-- fieldName --> or <!-- fieldName... -->
-        // Content ends at next <!-- marker or EOF
-        $escapedName = preg_quote($fieldName, '/');
-        $pattern = '/(<!--\s*' . $escapedName . '(\\.{3})?\s*-->)(.*?)((?=<!--)|$)/s';
-        
-        $matches = [];
-        if (!preg_match($pattern, $markdown, $matches, PREG_OFFSET_CAPTURE)) {
-            throw new \Exception("Field '{$fieldName}' marker not found in markdown");
-        }
-
-        $fullMatch = $matches[0][0];
-        $offset = $matches[0][1];
-        $markerPart = $matches[1][0]; // <!-- fieldName --> or <!-- fieldName... -->
-        $isContainer = !empty($matches[2][0]); // Has "..." marker
-        $oldContent = $matches[3][0];
-        
-        // Build replacement: marker + new content (preserve spacing)
-        $replacement = $markerPart . $newMarkdown;
-        
-        // Replace in markdown
-        $before = substr($markdown, 0, $offset);
-        $after = substr($markdown, $offset + strlen($matches[0][0]) - strlen($matches[4][0]));
-        $updatedMarkdown = $before . $replacement . $matches[4][0] . $after;
-
-        // Write back to file
-        if (@file_put_contents($path, $updatedMarkdown, LOCK_EX) === false) {
-            throw new \Exception("Failed to write markdown file: {$path}");
-        }
-
-        $this->wire->log->save('markdown-front-edit', "Updated field '{$fieldName}' in {$path}");
-    }
-
-
     protected function sendJsonError($msg, $code = 400) {
         if($code) http_response_code($code);
         header('Content-Type: application/json');
         echo json_encode(['status' => 0, 'error' => $msg]);
         exit;
-    }
-
-    /**
-     * Parse markdown source to detect container fields (<!-- name ... -->).
-     * Returns array of field names that have the ... marker.
-     */
-    protected function getContainerFieldNames(\ProcessWire\Page $page): array {
-        if (!class_exists('\\ProcessWire\\MarkdownFileIO')) return [];
-        if (!class_exists('\\ProcessWire\\MarkdownLanguageResolver')) return [];
-        
-        try {
-            $language = \ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
-            $path = \ProcessWire\MarkdownFileIO::getMarkdownFilePath($page, $language);
-            if (!is_file($path)) return [];
-
-            $markdown = @file_get_contents($path);
-            if ($markdown === false || $markdown === '') return [];
-
-            $containers = [];
-            // Match <!-- name ... --> markers
-            if (preg_match_all('/<!--\s*([a-zA-Z0-9_-]+)(\\.{3})\s*-->/m', $markdown, $matches)) {
-                foreach ($matches[1] as $fieldName) {
-                    $containers[$fieldName] = true;
-                }
-            }
-            
-            return $containers;
-        } catch (\Exception $e) {
-            return [];
-        }
     }
 
 }
