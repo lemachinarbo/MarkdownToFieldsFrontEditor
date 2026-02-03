@@ -184,6 +184,20 @@ body.mfe-no-scroll {
   pointer-events: none;
 }
 
+.mfe-inline-html {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.06);
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  font-size: 11px;
+  line-height: 1.4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  color: #475569;
+  vertical-align: middle;
+}
+
 .mfe-toolbar {
   display: flex;
   gap: 4px;

@@ -10,6 +10,8 @@ import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { common, createLowlight } from "lowlight";
+import { Plugin } from "prosemirror-state";
+import { Decoration, DecorationSet } from "prosemirror-view";
 import {
   MarkdownParser,
   MarkdownSerializer,
@@ -38,6 +40,20 @@ let activeFieldType = null; // "tag" or "container"
 // Toggle by field type and/or field name (data-md-name)
 const warningFieldTypes = new Set(["heading"]);
 const warningFieldNames = new Set(["title", "name"]);
+// Inline HTML tags to style as labels inside the editor
+const inlineHtmlTags = [
+  "br",
+  "strong",
+  "em",
+  "span",
+  "a",
+  "i",
+  "u",
+  "s",
+  "del",
+  "sub",
+  "sup",
+];
 
 function shouldWarnForExtraContent(fieldType, fieldName) {
   if (fieldType === "container") return false;
@@ -105,6 +121,44 @@ function applyFieldAttributes(editor, fieldType, fieldName) {
 
 function createEditorInstance(element, fieldType, fieldName) {
   const lowlight = createLowlight(common);
+  const InlineHtmlLabel = Extension.create({
+    name: "inlineHtmlLabel",
+    addProseMirrorPlugins() {
+      return [
+        new Plugin({
+          props: {
+            decorations(state) {
+              const decorations = [];
+              state.doc.descendants((node, pos, parent) => {
+                if (!node.isText) return;
+                if (parent?.type?.name === "codeBlock") return;
+                if (node.marks?.some((mark) => mark.type.name === "code")) return;
+
+                inlineHtmlTags.forEach((tag) => {
+                  const re = new RegExp(
+                    `<\\s*\\/?\\s*${tag}\\b[^>]*>`,
+                    "gi",
+                  );
+                  let match;
+                  while ((match = re.exec(node.text)) !== null) {
+                    const from = pos + match.index;
+                    const to = from + match[0].length;
+                    decorations.push(
+                      Decoration.inline(from, to, {
+                        class: "mfe-inline-html",
+                        "data-inline-html": match[0],
+                      }),
+                    );
+                  }
+                });
+              });
+              return DecorationSet.create(state.doc, decorations);
+            },
+          },
+        }),
+      ];
+    },
+  });
   const editor = new Editor({
     element,
     extensions: [
@@ -118,6 +172,7 @@ function createEditorInstance(element, fieldType, fieldName) {
         openOnClick: false,
         linkOnPaste: true,
       }),
+      InlineHtmlLabel,
       EscapeKeyExtension,
     ],
     content: "",
