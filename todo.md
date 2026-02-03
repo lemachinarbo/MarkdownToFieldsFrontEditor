@@ -1,7 +1,6 @@
 # Todo
 - Implement a Notion-like editor.
 - Is it still worth implementing a WYSIWYG editor?
-- &lt;?php is getting replace in code fences
 
 # Features
 - Image editor

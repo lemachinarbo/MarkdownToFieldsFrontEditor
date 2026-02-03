@@ -1005,6 +1005,22 @@ function getMarkdownFromEditor(editor = activeEditor) {
   return markdownSerializer.serialize(editor.state.doc);
 }
 
+function decodeHtmlEntitiesInFences(markdown) {
+  const parts = markdown.split(/```/);
+  if (parts.length === 1) return markdown;
+
+  for (let i = 1; i < parts.length; i += 2) {
+    parts[i] = parts[i]
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'");
+  }
+
+  return parts.join("```");
+}
+
 /**
  * Highlight extra paragraphs that won't be saved in tag fields
  */
@@ -1053,7 +1069,7 @@ function clearExtraContentHighlights() {}
 function saveEditorContent(editor = activeEditor) {
   if (!editor) return;
 
-  let markdown = getMarkdownFromEditor(editor);
+  let markdown = decodeHtmlEntitiesInFences(getMarkdownFromEditor(editor));
 
   // For single-line fields, strip any extra paragraphs - only save the first block
   if (shouldWarnForExtraContent(activeFieldType, activeFieldName)) {
@@ -1078,7 +1094,9 @@ function saveActiveEditor() {
   if (activeEditor === secondaryEditor && secondaryLang) {
     const pageId = activeTarget?.getAttribute("data-page") || "";
     const mdName = activeFieldName || "";
-    const markdown = getMarkdownFromEditor(activeEditor);
+    const markdown = decodeHtmlEntitiesInFences(
+      getMarkdownFromEditor(activeEditor),
+    );
     if (translationsCache) {
       translationsCache[secondaryLang] = markdown;
     }
