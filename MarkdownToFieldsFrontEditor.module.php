@@ -523,7 +523,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             
             // Get original field markdown from MarkdownToFields
             // MarkdownToFields handles all field boundary extraction
-            $fullMarkdown = $content->getMarkdown();
+            $fullMarkdown = $content->getRawDocument();
             $oldFieldMarkdown = '';
             foreach ($content->sections as $section) {
                 if (isset($section->fields[$mdName])) {
@@ -588,8 +588,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $languageCode = $langCode !== '' ? $langCode : \ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
             \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $updatedMarkdown, $languageCode);
             
+            $frontRaw = $content->getFrontmatterRaw();
             $this->wire->log->save('markdown-front-edit',
-                "SAVE: After save - file updated"
+                "SAVE: After save - file updated (frontmatter=" . ($frontRaw !== null ? "1" : "0") . ")"
             );
             
         } catch (\Throwable $e) {
