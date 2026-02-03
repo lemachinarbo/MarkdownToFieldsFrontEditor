@@ -421,6 +421,45 @@ body.mfe-no-scroll {
   padding: 0;
 }
 
+/* Code block syntax highlighting (lowlight / highlight.js classes) */
+.ProseMirror pre code.hljs {
+  color: #0f172a;
+}
+
+.ProseMirror .hljs-comment,
+.ProseMirror .hljs-quote {
+  color: #64748b;
+}
+
+.ProseMirror .hljs-keyword,
+.ProseMirror .hljs-selector-tag,
+.ProseMirror .hljs-literal,
+.ProseMirror .hljs-section,
+.ProseMirror .hljs-link {
+  color: #7c3aed;
+}
+
+.ProseMirror .hljs-function,
+.ProseMirror .hljs-title,
+.ProseMirror .hljs-name,
+.ProseMirror .hljs-selector-id,
+.ProseMirror .hljs-selector-class {
+  color: #2563eb;
+}
+
+.ProseMirror .hljs-string,
+.ProseMirror .hljs-symbol,
+.ProseMirror .hljs-bullet,
+.ProseMirror .hljs-addition {
+  color: #16a34a;
+}
+
+.ProseMirror .hljs-number,
+.ProseMirror .hljs-meta,
+.ProseMirror .hljs-attribute {
+  color: #f59e0b;
+}
+
 .ProseMirror blockquote {
   border-left: 3px solid #ccc;
   padding-left: 1em;

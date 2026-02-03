@@ -8,6 +8,8 @@
 import { Editor, Extension } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
+import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
+import { common, createLowlight } from "lowlight";
 import {
   MarkdownParser,
   MarkdownSerializer,
@@ -102,11 +104,15 @@ function applyFieldAttributes(editor, fieldType, fieldName) {
 }
 
 function createEditorInstance(element, fieldType, fieldName) {
+  const lowlight = createLowlight(common);
   const editor = new Editor({
     element,
     extensions: [
       StarterKit.configure({
         codeBlock: false,
+      }),
+      CodeBlockLowlight.configure({
+        lowlight,
       }),
       Link.configure({
         openOnClick: false,
@@ -567,6 +573,12 @@ function createToolbar(container, overlay) {
       title: "Inline code",
     },
     {
+      label: "```",
+      action: () => activeEditor.chain().focus().toggleCodeBlock().run(),
+      isActive: () => activeEditor.isActive("codeBlock"),
+      title: "Code block",
+    },
+    {
       label: "P",
       action: () => activeEditor.chain().focus().setParagraph().run(),
       isActive: () => activeEditor.isActive("paragraph"),
@@ -711,6 +723,7 @@ function createToolbar(container, overlay) {
     "italic",
     "strike",
     "code",
+    "codeblock",
     "paragraph",
     "h1",
     "h2",
@@ -734,7 +747,7 @@ function createToolbar(container, overlay) {
 
   const configButtons =
     window.MarkdownFrontEditorConfig?.toolbarButtons ||
-    "bold,italic,strike,paragraph,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,link,unlink,|,code,clear,split";
+    "bold,italic,strike,paragraph,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,link,unlink,|,code,codeblock,clear,split";
   const configOrder = configButtons
     .split(",")
     .map((btn) => btn.trim())
