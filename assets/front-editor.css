@@ -53,6 +53,75 @@ body.mfe-no-scroll {
   overflow: hidden;
 }
 
+.mfe-editor-shell {
+  display: flex;
+  gap: 0;
+}
+
+.mfe-editor-pane {
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+  padding-top: 0;
+  margin-top: 80px;
+}
+
+.mfe-editor-pane--secondary {
+  position: relative;
+  border-left: 1px solid rgba(15, 23, 42, 0.12);
+  padding-left: 0;
+}
+
+.mfe-editor-pane--secondary::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -1px;
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 1) 0%,
+    rgba(255, 255, 255, 1) 120px,
+    rgba(15, 23, 42, 0.12) 55%,
+    rgba(15, 23, 42, 0.12) 65%,
+    rgba(255, 255, 255, 1) 100%
+  );
+}
+
+.mfe-editor-pane-header {
+  position: static;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 28px;
+  margin-left: auto;
+  margin-bottom: 48px;
+}
+
+.mfe-editor-pane-header--spacer {
+  visibility: hidden;
+}
+
+.mfe-editor-pane-label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.mfe-editor-pane-select {
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+.mfe-editor-pane-body {
+  min-height: 200px;
+}
+
 .mfe-backdrop {
   position: fixed;
   top: 0;
@@ -101,8 +170,14 @@ body.mfe-no-scroll {
   font-size: 16px;
   line-height: 1.7;
   max-width: none;
-  padding: 140px 40px 40px 40px;
+  padding: 0 40px 40px 40px;
   color: #1f2937;
+}
+
+.mfe-editor-pane--primary .mfe-editor,
+.mfe-editor-pane--secondary .mfe-editor {
+  padding-left: 32px;
+  padding-right: 32px;
 }
 
 .mfe-editor a {
@@ -113,20 +188,19 @@ body.mfe-no-scroll {
   display: flex;
   gap: 4px;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: flex-end;
   position: fixed;
   top: 0;
   left: 50%;
   transform: translateX(-50%);
   width: min(100% - 48px, 980px);
   max-width: 980px;
-  padding: 10px 24px;
-  background: rgba(255, 255, 255, 0.96);
-  backdrop-filter: blur(10px);
+  padding: 6px 0;
+  background: #ffffff;
   border: 0;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 0 0 12px 12px;
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 0;
+  box-shadow: none;
   z-index: 10001;
   flex-wrap: wrap;
 }
@@ -194,11 +268,23 @@ body.mfe-no-scroll {
 .editor-toolbar-save {
   background: #f8fafc;
   border: 1px solid rgba(148, 163, 184, 0.35);
-  box-shadow: none;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
 }
 
 .editor-toolbar-save:hover {
   background: #eef2f7;
+}
+
+.editor-toolbar-status {
+  font-size: 11px;
+  color: #64748b;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  margin-right: 8px;
+}
+
+.editor-toolbar-status.is-visible {
+  opacity: 1;
 }
 
 .editor-toolbar-separator {
@@ -210,7 +296,7 @@ body.mfe-no-scroll {
 
 .editor-toolbar-spacer {
   flex: 1 1 auto;
-  min-width: 100px;
+  min-width: 40px;
 }
 
 /* Toolbar animation removed for stable positioning */

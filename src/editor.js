@@ -16,7 +16,18 @@ import {
 } from "prosemirror-markdown";
 
 let activeEditor = null;
-let originalBlockCount = 0; // Track original paragraph count to detect user-added content
+let primaryEditor = null;
+let secondaryEditor = null;
+let secondaryLang = "";
+let translationsCache = null;
+const originalBlockCounts = new WeakMap();
+let editorShell = null;
+let editorContainer = null;
+let overlayEl = null;
+let splitPane = null;
+let saveStatusEl = null;
+let primaryDirty = false;
+const dirtyTranslations = new Map();
 let activeTarget = null;
 let activeFieldName = null;
 let activeFieldType = null; // "tag" or "container"
@@ -48,9 +59,9 @@ function countNonEmptyBlocks(doc) {
   return count;
 }
 
-function stripTrailingEmptyParagraph() {
-  if (!activeEditor) return;
-  const { state, view } = activeEditor;
+function stripTrailingEmptyParagraph(editor) {
+  if (!editor) return;
+  const { state, view } = editor;
   const { doc } = state;
   if (doc.childCount <= 1) return;
 
@@ -65,6 +76,288 @@ function stripTrailingEmptyParagraph() {
 }
 let saveCallback = null;
 let keydownHandler = null;
+
+function setOriginalBlockCount(editor, fieldType, fieldName) {
+  const count = shouldWarnForExtraContent(fieldType, fieldName)
+    ? 1
+    : countNonEmptyBlocks(editor.state.doc);
+  originalBlockCounts.set(editor, count);
+}
+
+function getOriginalBlockCount(editor) {
+  return originalBlockCounts.get(editor) || 0;
+}
+
+function applyFieldAttributes(editor, fieldType, fieldName) {
+  const dom = editor.view.dom;
+  dom.setAttribute("data-field-type", fieldType);
+  dom.setAttribute("data-field-name", fieldName || "");
+  if (shouldWarnForExtraContent(fieldType, fieldName)) {
+    dom.setAttribute("data-extra-warning", "true");
+    dom.setAttribute("data-extra-warning-active", "false");
+  } else {
+    dom.removeAttribute("data-extra-warning");
+    dom.removeAttribute("data-extra-warning-active");
+  }
+}
+
+function createEditorInstance(element, fieldType, fieldName) {
+  const editor = new Editor({
+    element,
+    extensions: [
+      StarterKit.configure({
+        codeBlock: false,
+      }),
+      Link.configure({
+        openOnClick: false,
+        linkOnPaste: true,
+      }),
+      EscapeKeyExtension,
+    ],
+    content: "",
+    editorProps: {
+      attributes: {
+        class: "prose prose-sm focus:outline-none mfe-editor",
+        spellcheck: "false",
+      },
+    },
+  });
+
+  applyFieldAttributes(editor, fieldType, fieldName);
+
+  editor.on("focus", () => {
+    activeEditor = editor;
+  });
+
+  editor.on("update", () => {
+    highlightExtraContent(editor);
+    if (shouldWarnForExtraContent(fieldType, fieldName)) {
+      stripTrailingEmptyParagraph(editor);
+    }
+    if (editor === primaryEditor) {
+      primaryDirty = true;
+    }
+    if (editor === secondaryEditor && secondaryLang) {
+      dirtyTranslations.set(secondaryLang, true);
+      translationsCache = translationsCache || {};
+      translationsCache[secondaryLang] = getMarkdownFromEditor(editor);
+    }
+  });
+
+  editor.view.dom.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab") return;
+    if (!primaryEditor || !secondaryEditor) return;
+    e.preventDefault();
+    if (e.shiftKey) {
+      primaryEditor.view.focus();
+    } else {
+      secondaryEditor.view.focus();
+    }
+  });
+
+  return editor;
+}
+
+function decodeMarkdownBase64(markdownB64) {
+  return decodeURIComponent(
+    Array.prototype.map
+      .call(atob(markdownB64), (c) =>
+        `%${`00${c.charCodeAt(0).toString(16)}`.slice(-2)}`,
+      )
+      .join(""),
+  );
+}
+
+function getLanguagesConfig() {
+  const cfg = window.MarkdownFrontEditorConfig || {};
+  const langs = Array.isArray(cfg.languages) ? cfg.languages : [];
+  const current = cfg.currentLanguage || "";
+  return { langs, current };
+}
+
+function fetchTranslations(mdName, pageId) {
+  return fetch(
+    `?markdownFrontEditorTranslations=1&mdName=${encodeURIComponent(
+      mdName,
+    )}&pageId=${encodeURIComponent(pageId)}`,
+    { credentials: "same-origin" },
+  )
+    .then((res) => res.json())
+    .then((data) => (data?.status ? data.data : null))
+    .catch(() => null);
+}
+
+function saveTranslation(pageId, mdName, lang, markdown) {
+  return fetchCsrfToken().then((csrf) => {
+    const formData = new FormData();
+    formData.append("markdown", markdown);
+    formData.append("mdName", mdName);
+    formData.append("pageId", pageId);
+    formData.append("lang", lang);
+
+    if (csrf) {
+      formData.append(csrf.name, csrf.value);
+    }
+
+    return fetch(getSaveUrl(), {
+      method: "POST",
+      body: formData,
+      credentials: "same-origin",
+    });
+  });
+}
+
+function setSaveStatus(message) {
+  if (!saveStatusEl) return;
+  saveStatusEl.textContent = message;
+  saveStatusEl.classList.add("is-visible");
+  window.clearTimeout(saveStatusEl._timer);
+  saveStatusEl._timer = window.setTimeout(() => {
+    saveStatusEl.classList.remove("is-visible");
+  }, 2000);
+}
+
+function saveAllEditors() {
+  const tasks = [];
+  if (primaryEditor && primaryDirty) {
+    tasks.push(
+      new Promise((resolve, reject) => {
+        const markdown = getMarkdownFromEditor(primaryEditor);
+        if (saveCallback) {
+          try {
+            saveCallback(markdown, resolve, reject);
+          } catch (err) {
+            reject(err);
+          }
+        } else {
+          resolve();
+        }
+      }),
+    );
+  }
+
+  if (secondaryEditor) {
+    for (const [lang, dirty] of dirtyTranslations.entries()) {
+      if (!dirty) continue;
+      const pageId = activeTarget?.getAttribute("data-page") || "";
+      const mdName = activeFieldName || "";
+      const markdown = translationsCache?.[lang] ?? "";
+      tasks.push(saveTranslation(pageId, mdName, lang, markdown));
+      dirtyTranslations.set(lang, false);
+    }
+  }
+
+  if (tasks.length === 0) {
+    setSaveStatus("No changes");
+    return;
+  }
+
+  Promise.all(tasks)
+    .then(() => {
+      primaryDirty = false;
+      setSaveStatus("Saved");
+    })
+    .catch(() => {
+      setSaveStatus("Save failed");
+    });
+}
+
+function toggleSplit() {
+  if (secondaryEditor) {
+    closeSplit();
+  } else {
+    openSplit();
+  }
+}
+
+function openSplit() {
+  if (!editorShell || secondaryEditor) return;
+  const { langs, current } = getLanguagesConfig();
+  const otherLangs = langs.filter((l) => l.name !== current);
+  if (otherLangs.length === 0) return;
+
+  splitPane = document.createElement("div");
+  splitPane.className = "mfe-editor-pane mfe-editor-pane--secondary";
+
+  const header = document.createElement("div");
+  header.className = "mfe-editor-pane-header";
+  header.innerHTML = `
+    <label class="mfe-editor-pane-label">Language</label>
+    <select class="mfe-editor-pane-select"></select>
+  `;
+
+  const select = header.querySelector(".mfe-editor-pane-select");
+  otherLangs.forEach((lang) => {
+    const opt = document.createElement("option");
+    opt.value = lang.name;
+    const label =
+      typeof lang.title === "string" && lang.title.trim() !== ""
+        ? lang.title
+        : String(lang.title || lang.name);
+    opt.textContent = label;
+    select.appendChild(opt);
+  });
+  if (otherLangs[0]) {
+    select.value = otherLangs[0].name;
+  }
+
+  const body = document.createElement("div");
+  body.className = "mfe-editor-pane-body";
+
+  splitPane.appendChild(header);
+  splitPane.appendChild(body);
+  editorShell.appendChild(splitPane);
+
+  secondaryEditor = createEditorInstance(
+    body,
+    activeFieldType,
+    activeFieldName,
+  );
+  activeEditor = secondaryEditor;
+
+  select.addEventListener("change", () => {
+    setSecondaryLanguage(select.value);
+  });
+
+  if (translationsCache === null) {
+    const pageId = activeTarget?.getAttribute("data-page") || "";
+    const mdName = activeFieldName || "";
+    fetchTranslations(mdName, pageId).then((data) => {
+      translationsCache = data || {};
+      setSecondaryLanguage(select.value);
+    });
+  } else {
+    setSecondaryLanguage(select.value);
+  }
+}
+
+function closeSplit() {
+  if (secondaryEditor) {
+    secondaryEditor.destroy();
+    secondaryEditor = null;
+  }
+  if (splitPane) {
+    splitPane.remove();
+    splitPane = null;
+  }
+  secondaryLang = "";
+  activeEditor = primaryEditor;
+}
+
+function setSecondaryLanguage(lang) {
+  if (!secondaryEditor) return;
+  secondaryLang = lang;
+  const markdown = translationsCache?.[lang] ?? "";
+  const parser = createMarkdownParser(secondaryEditor.schema);
+  const doc = parser.parse(markdown || "");
+  secondaryEditor.commands.setContent(doc.toJSON(), false);
+  if (shouldWarnForExtraContent(activeFieldType, activeFieldName)) {
+    stripTrailingEmptyParagraph(secondaryEditor);
+  }
+  setOriginalBlockCount(secondaryEditor, activeFieldType, activeFieldName);
+  highlightExtraContent(secondaryEditor);
+  dirtyTranslations.set(lang, false);
+}
 
 function createMarkdownParser(schema) {
   const markdownIt = defaultMarkdownParser.tokenizer;
@@ -166,88 +459,52 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
   activeFieldType = fieldType;
   saveCallback = onSave;
 
-  // We'll count original blocks AFTER parsing the markdown into the editor
-  // MarkdownToFields provides us the exact field content, so we don't parse ourselves
-  originalBlockCount = 0;
-
   // Create overlay (zen mode - full white screen)
   const overlay = document.createElement("div");
   overlay.setAttribute("data-editor-overlay", "true");
   overlay.className = "mfe-overlay";
   document.body.appendChild(overlay);
   document.body.classList.add("mfe-no-scroll");
+  overlayEl = overlay;
 
   // Create container (starts at top, centered)
   const container = document.createElement("div");
   container.setAttribute("data-editor-container", "true");
   container.setAttribute("data-field-type", fieldType); // Add field type as data attribute
   container.className = "mfe-container";
-
   overlay.appendChild(container);
+  editorContainer = container;
 
-  // Create Tiptap editor
-  activeEditor = new Editor({
-    element: container,
-    extensions: [
-      StarterKit.configure({
-        codeBlock: false,
-      }),
-      Link.configure({
-        openOnClick: false,
-        linkOnPaste: true,
-      }),
-      EscapeKeyExtension,
-    ],
-    content: "",
-    editorProps: {
-      attributes: {
-        class: "prose prose-sm focus:outline-none mfe-editor",
-        spellcheck: "false",
-      },
-    },
-  });
+  editorShell = document.createElement("div");
+  editorShell.className = "mfe-editor-shell";
+  container.appendChild(editorShell);
+
+  const primaryPane = document.createElement("div");
+  primaryPane.className = "mfe-editor-pane mfe-editor-pane--primary";
+  const primaryHeader = document.createElement("div");
+  primaryHeader.className = "mfe-editor-pane-header mfe-editor-pane-header--spacer";
+  primaryPane.appendChild(primaryHeader);
+  editorShell.appendChild(primaryPane);
+
+  // Create primary editor
+  primaryEditor = createEditorInstance(
+    primaryPane,
+    fieldType,
+    activeFieldName,
+  );
+  activeEditor = primaryEditor;
 
   // Parse markdown into editor schema and set content
-  const parser = createMarkdownParser(activeEditor.schema);
+  const parser = createMarkdownParser(primaryEditor.schema);
   const doc = parser.parse(markdownContent || "");
-  activeEditor.commands.setContent(doc.toJSON(), false);
+  primaryEditor.commands.setContent(doc.toJSON(), false);
   if (shouldWarnForExtraContent(fieldType, activeFieldName)) {
-    stripTrailingEmptyParagraph();
+    stripTrailingEmptyParagraph(primaryEditor);
   }
-  if (shouldWarnForExtraContent(fieldType, activeFieldName)) {
-    stripTrailingEmptyParagraph();
-  }
-
-  // Set field attributes on ProseMirror element for CSS targeting
-  activeEditor.view.dom.setAttribute("data-field-type", fieldType);
-  activeEditor.view.dom.setAttribute("data-field-name", activeFieldName || "");
-  if (shouldWarnForExtraContent(fieldType, activeFieldName)) {
-    activeEditor.view.dom.setAttribute("data-extra-warning", "true");
-    activeEditor.view.dom.setAttribute("data-extra-warning-active", "false");
-  } else {
-    activeEditor.view.dom.removeAttribute("data-extra-warning");
-    activeEditor.view.dom.removeAttribute("data-extra-warning-active");
-  }
-
-  // Count the actual non-empty blocks in the editor AFTER content is set
-  // This ignores trailingBreak placeholders and empty extra lines
-  originalBlockCount = shouldWarnForExtraContent(fieldType, activeFieldName)
-    ? 1
-    : countNonEmptyBlocks(activeEditor.state.doc);
-  console.log(
-    "Original block count set to:",
-    originalBlockCount,
-    "Field type:",
-    fieldType,
-  );
-
-  // Add hook to highlight extra content when editor updates
-  activeEditor.on("update", () => {
-    highlightExtraContent();
-    if (shouldWarnForExtraContent(fieldType, activeFieldName)) {
-      stripTrailingEmptyParagraph();
-    }
-  });
+  setOriginalBlockCount(primaryEditor, fieldType, activeFieldName);
+  highlightExtraContent(primaryEditor);
+  primaryDirty = false;
+  dirtyTranslations.clear();
 
   // Create toolbar
   createToolbar(container, overlay);
@@ -256,7 +513,7 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
   setupKeyboardShortcuts();
 
   // Focus editor
-  setTimeout(() => activeEditor.view.focus(), 0);
+  setTimeout(() => primaryEditor.view.focus(), 0);
 }
 
 /**
@@ -428,11 +685,21 @@ function createToolbar(container, overlay) {
     },
     {
       label: `
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" data-slot="icon" class="size-6">
+          <path fill-rule="evenodd" d="M9 2.25a.75.75 0 0 1 .75.75v1.506a49.384 49.384 0 0 1 5.343.371.75.75 0 1 1-.186 1.489c-.66-.083-1.323-.151-1.99-.206a18.67 18.67 0 0 1-2.97 6.323c.318.384.65.753 1 1.107a.75.75 0 0 1-1.07 1.052A18.902 18.902 0 0 1 9 13.687a18.823 18.823 0 0 1-5.656 4.482.75.75 0 0 1-.688-1.333 17.323 17.323 0 0 0 5.396-4.353A18.72 18.72 0 0 1 5.89 8.598a.75.75 0 0 1 1.388-.568A17.21 17.21 0 0 0 9 11.224a17.168 17.168 0 0 0 2.391-5.165 48.04 48.04 0 0 0-8.298.307.75.75 0 0 1-.186-1.489 49.159 49.159 0 0 1 5.343-.371V3A.75.75 0 0 1 9 2.25ZM15.75 9a.75.75 0 0 1 .68.433l5.25 11.25a.75.75 0 1 1-1.36.634l-1.198-2.567h-6.744l-1.198 2.567a.75.75 0 0 1-1.36-.634l5.25-11.25A.75.75 0 0 1 15.75 9Zm-2.672 8.25h5.344l-2.672-5.726-2.672 5.726Z" clip-rule="evenodd"></path>
+        </svg>
+      `,
+      action: () => toggleSplit(),
+      isActive: () => false,
+      title: "View languages",
+    },
+    {
+      label: `
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" data-slot="icon" fill="none">
           <path stroke-linecap="round" stroke-linejoin="round" d="M6 20.25h12A2.25 2.25 0 0 0 20.25 18V7.5L16.5 3.75H6A2.25 2.25 0 0 0 3.75 6v12A2.25 2.25 0 0 0 6 20.25zm9.75-16.5v5h-9.5v-5zM13 5.5V7m-6.75 4.25h11.5v6.5H6.25Z"></path>
         </svg>
       `,
-      action: () => saveEditorContent(),
+      action: () => saveAllEditors(),
       isActive: () => false,
       title: "Save changes (Ctrl+S)",
       className: "editor-toolbar-save",
@@ -457,6 +724,7 @@ function createToolbar(container, overlay) {
     "link",
     "unlink",
     "clear",
+    "split",
     "save",
   ];
 
@@ -466,7 +734,7 @@ function createToolbar(container, overlay) {
 
   const configButtons =
     window.MarkdownFrontEditorConfig?.toolbarButtons ||
-    "bold,italic,strike,paragraph,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,link,unlink,|,code,clear";
+    "bold,italic,strike,paragraph,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,link,unlink,|,code,clear,split";
   const configOrder = configButtons
     .split(",")
     .map((btn) => btn.trim())
@@ -538,6 +806,12 @@ function createToolbar(container, overlay) {
   const spacer = document.createElement("div");
   spacer.className = "editor-toolbar-spacer";
   toolbar.appendChild(spacer);
+
+  const status = document.createElement("div");
+  status.className = "editor-toolbar-status";
+  status.textContent = "";
+  toolbar.appendChild(status);
+  saveStatusEl = status;
 
   const saveBtn = buttons.find((btn) => btn.key === "save");
   if (saveBtn) {
@@ -644,7 +918,7 @@ function setupKeyboardShortcuts() {
           break;
         case "s":
           e.preventDefault();
-          saveEditorContent();
+          saveAllEditors();
           break;
       }
     }
@@ -657,29 +931,30 @@ function setupKeyboardShortcuts() {
 /**
  * Get markdown from editor state
  */
-function getMarkdownFromEditor() {
-  if (!activeEditor) return "";
+function getMarkdownFromEditor(editor = activeEditor) {
+  if (!editor) return "";
 
-  return markdownSerializer.serialize(activeEditor.state.doc);
+  return markdownSerializer.serialize(editor.state.doc);
 }
 
 /**
  * Highlight extra paragraphs that won't be saved in tag fields
  */
-function highlightExtraContent() {
-  if (!activeEditor) {
+function highlightExtraContent(editor = activeEditor) {
+  if (!editor) {
     return;
   }
 
   if (!shouldWarnForExtraContent(activeFieldType, activeFieldName)) {
-    if (activeEditor?.view?.dom) {
-      activeEditor.view.dom.removeAttribute("data-extra-warning-active");
+    if (editor?.view?.dom) {
+      editor.view.dom.removeAttribute("data-extra-warning-active");
     }
     return;
   }
 
-  const currentBlockCount = countNonEmptyBlocks(activeEditor.state.doc);
+  const currentBlockCount = countNonEmptyBlocks(editor.state.doc);
 
+  const originalBlockCount = getOriginalBlockCount(editor);
   console.log(
     "Found blocks:",
     currentBlockCount,
@@ -692,11 +967,11 @@ function highlightExtraContent() {
   // Only show warning if user has ADDED blocks beyond the original
   // (This applies to any field - if originalBlockCount is 1, only 1 block should be added)
   if (currentBlockCount <= originalBlockCount) {
-    activeEditor.view.dom.setAttribute("data-extra-warning-active", "false");
+    editor.view.dom.setAttribute("data-extra-warning-active", "false");
     return;
   }
 
-  activeEditor.view.dom.setAttribute("data-extra-warning-active", "true");
+  editor.view.dom.setAttribute("data-extra-warning-active", "true");
 }
 
 /**
@@ -707,10 +982,10 @@ function clearExtraContentHighlights() {}
 /**
  * Save editor content
  */
-function saveEditorContent() {
-  if (!activeEditor) return;
+function saveEditorContent(editor = activeEditor) {
+  if (!editor) return;
 
-  let markdown = getMarkdownFromEditor();
+  let markdown = getMarkdownFromEditor(editor);
 
   // For single-line fields, strip any extra paragraphs - only save the first block
   if (shouldWarnForExtraContent(activeFieldType, activeFieldName)) {
@@ -725,19 +1000,39 @@ function saveEditorContent() {
   clearExtraContentHighlights();
 
   console.log("Saving markdown:", markdown.substring(0, 100) + "...");
-  if (saveCallback) {
+  if (saveCallback && editor === primaryEditor) {
     saveCallback(markdown);
   }
+}
+
+function saveActiveEditor() {
+  if (!activeEditor) return;
+  if (activeEditor === secondaryEditor && secondaryLang) {
+    const pageId = activeTarget?.getAttribute("data-page") || "";
+    const mdName = activeFieldName || "";
+    const markdown = getMarkdownFromEditor(activeEditor);
+    if (translationsCache) {
+      translationsCache[secondaryLang] = markdown;
+    }
+    saveTranslation(pageId, mdName, secondaryLang, markdown);
+    return;
+  }
+  saveEditorContent(activeEditor);
 }
 
 /**
  * Close the editor
  */
 function closeEditor() {
-  if (activeEditor) {
-    activeEditor.destroy();
-    activeEditor = null;
+  if (secondaryEditor) {
+    secondaryEditor.destroy();
+    secondaryEditor = null;
   }
+  if (primaryEditor) {
+    primaryEditor.destroy();
+    primaryEditor = null;
+  }
+  activeEditor = null;
 
   // Remove keyboard event listener
   if (keydownHandler) {
@@ -767,6 +1062,13 @@ function closeEditor() {
   saveCallback = null;
   activeTarget = null;
   activeFieldName = null;
+  activeFieldType = null;
+  translationsCache = null;
+  secondaryLang = "";
+  editorShell = null;
+  editorContainer = null;
+  overlayEl = null;
+  splitPane = null;
 }
 
 function getSaveUrl() {
@@ -811,16 +1113,7 @@ function initEditors() {
 
       // Get markdown from data attribute (set by backend)
       const markdownB64 = el.getAttribute("data-markdown-b64");
-      const markdownContent = markdownB64
-        ? decodeURIComponent(
-            Array.prototype.map
-              .call(
-                atob(markdownB64),
-                (c) => `%${`00${c.charCodeAt(0).toString(16)}`.slice(-2)}`,
-              )
-              .join(""),
-          )
-        : "";
+      const markdownContent = markdownB64 ? decodeMarkdownBase64(markdownB64) : "";
       const fieldName = el.getAttribute("data-md-name") || "unknown";
       const fieldType = el.getAttribute("data-field-type") || "tag"; // Field type from backend
 
@@ -829,7 +1122,7 @@ function initEditors() {
       activeFieldType = fieldType;
 
       // Save callback
-      const saveCallback = (markdown) => {
+      const saveCallback = (markdown, resolve, reject) => {
         fetchCsrfToken().then((csrf) => {
           const formData = new FormData();
           formData.append("markdown", markdown);
@@ -857,14 +1150,16 @@ function initEditors() {
                     activeTarget.innerHTML = data.html;
                   }
                 }
-                closeEditor();
+                if (resolve) resolve();
               } else {
                 alert(`Save failed: ${data.message || "Unknown error"}`);
+                if (reject) reject(new Error(data.message || "Save failed"));
               }
             })
             .catch((err) => {
               console.error("Save error:", err);
               alert(`Save error: ${err.message}`);
+              if (reject) reject(err);
             });
         });
       };

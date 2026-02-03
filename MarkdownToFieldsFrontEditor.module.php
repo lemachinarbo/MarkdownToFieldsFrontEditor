@@ -14,7 +14,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
             'summary' => 'Frontend editor for MarkdownToFields.',
-            'version' =>  '0.2.1',
+            'version' =>  '0.3',
             'autoload' => true,
             'singular' => true,
             'requires' => ['MarkdownToFields'],
@@ -26,7 +26,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
      */
     public static function getDefaultData() {
         return [
-            'toolbarButtons' => 'bold,italic,strike,paragraph,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,link,unlink,|,code,clear',
+            'toolbarButtons' => 'bold,italic,strike,paragraph,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,link,unlink,|,code,clear,split',
         ];
     }
 
@@ -42,8 +42,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $f = \ProcessWire\wire('modules')->get('InputfieldText');
         $f->name = 'toolbarButtons';
         $f->label = 'Toolbar Buttons';
-        $f->description = 'Comma-separated list of toolbar buttons to show. Use "|" as a separator. Available: bold, italic, strike, code, paragraph, h1-h6, ul, ol, blockquote, link, unlink, clear. Save is always shown at the end.';
-        $f->notes = 'Defaults: bold,italic,strike,paragraph,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,link,unlink,|,code,clear';
+        $f->description = 'Comma-separated list of toolbar buttons to show. Use "|" as a separator. Available: bold, italic, strike, code, paragraph, h1-h6, ul, ol, blockquote, link, unlink, clear, split. Save is always shown at the end.';
+        $f->notes = 'Defaults: bold,italic,strike,paragraph,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,link,unlink,|,code,clear,split';
         $f->value = !empty($data['toolbarButtons']) ? $data['toolbarButtons'] : $defaults['toolbarButtons'];
         $f->columnWidth = 100;
         $inputfields->add($f);
@@ -65,6 +65,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         // Handle minimal save/token endpoints on ready
         $this->addHookBefore('ProcessWire::ready', $this, 'handleSaveRequest');
+    }
+
+    public function install() {
+        $defaults = self::getDefaultData();
+        $this->wire('modules')->saveConfig($this, [
+            'toolbarButtons' => $defaults['toolbarButtons'],
+        ]);
     }
 
     /**
@@ -106,8 +113,31 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $toolbarButtons = isset($this->toolbarButtons) && trim((string)$this->toolbarButtons) !== ''
             ? (string)$this->toolbarButtons
             : (string)$defaults['toolbarButtons'];
+        $currentLangCode = \ProcessWire\MarkdownLanguageResolver::getLanguageCode($this->wire()->page);
+        if ($this->wire()->languages && $this->wire()->user && $this->wire()->user->language) {
+            $currentLangCode = $this->wire()->user->language->name;
+        }
+        $langList = [];
+        $languages = $this->wire()->languages;
+        if ($languages) {
+            foreach ($languages as $lang) {
+                $langList[] = [
+                    'name' => $lang->name,
+                    'title' => (string)($lang->title ?: $lang->name),
+                    'isDefault' => (bool)$lang->isDefault(),
+                ];
+            }
+        } else {
+            $langList[] = [
+                'name' => 'default',
+                'title' => 'Default',
+                'isDefault' => true,
+            ];
+        }
         $frontConfig = [
             'toolbarButtons' => $toolbarButtons,
+            'languages' => $langList,
+            'currentLanguage' => $currentLangCode,
         ];
         $configScript = "<script>window.MarkdownFrontEditorConfig=" . json_encode($frontConfig) . ";</script>";
 
@@ -356,6 +386,67 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             exit;
         }
 
+        // Translations endpoint
+        if ($input->get->markdownFrontEditorTranslations) {
+            $user = $this->wire()->user;
+            if(!$user->isLoggedIn() || !$user->hasPermission('page-edit-front')) {
+                $this->sendJsonError('Forbidden', 403);
+            }
+
+            $mdName = $input->get->text('mdName');
+            $pageId = (int)$input->get->pageId;
+            if(!$mdName || !$pageId) {
+                $this->sendJsonError('Missing mdName or pageId', 400);
+            }
+
+            $page = $this->wire()->pages->get($pageId);
+            if(!$page || !$page->id) {
+                $this->sendJsonError('Page not found', 404);
+            }
+
+            $languages = $this->wire()->languages;
+            $langItems = [];
+            if ($languages) {
+                foreach ($languages as $lang) {
+                    $langItems[] = $lang;
+                }
+            } else {
+                $langItems[] = null;
+            }
+
+            $results = [];
+            foreach ($langItems as $lang) {
+                $langCode = $lang ? $lang->name : 'default';
+                try {
+                    $content = $page->loadContent(null, $lang ? $lang->name : null);
+                    $found = null;
+                    if (isset($content->sections) && is_array($content->sections)) {
+                        foreach ($content->sections as $section) {
+                            if (isset($section->fields[$mdName])) {
+                                $found = $section->fields[$mdName]->markdown ?? '';
+                                break;
+                            }
+                            if (isset($section->subsections)) {
+                                foreach ($section->subsections as $subsection) {
+                                    if (isset($subsection->fields[$mdName])) {
+                                        $found = $subsection->fields[$mdName]->markdown ?? '';
+                                        break 2;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    $results[$langCode] = (string)($found ?? '');
+                } catch (\Throwable $e) {
+                    $results[$langCode] = '';
+                }
+            }
+
+            header('Content-Type: application/json');
+            echo json_encode(['status' => 1, 'data' => $results]);
+            exit;
+        }
+
         // Save endpoint
         if(!$input->get->markdownFrontEditorSave) return;
 
@@ -386,6 +477,14 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         $pageId = (int)$input->post->pageId;
         if(!$pageId) $this->sendJsonError('Missing pageId', 400);
+
+        $langCode = $input->post->text('lang');
+        if ($langCode !== '') {
+            $languages = $this->wire()->languages;
+            if ($languages && !$languages->get($langCode)) {
+                $this->sendJsonError('Invalid language', 400);
+            }
+        }
 
         // Trace payload details
         $markdownLen = strlen((string)$markdown);
@@ -485,8 +584,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 "SAVE: Before saving - oldField='" . substr($oldFieldMarkdown, 0, 50) . "' blockMarkdown='" . substr($blockMarkdown, 0, 50) . "'"
             );
             
-            // Use MarkdownFileIO's native save mechanism (respect current language)
-            $languageCode = \ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
+            // Use MarkdownFileIO's native save mechanism (respect current language or override)
+            $languageCode = $langCode !== '' ? $langCode : \ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
             \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $updatedMarkdown, $languageCode);
             
             $this->wire->log->save('markdown-front-edit',
@@ -497,7 +596,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $this->sendJsonError('Failed to update markdown: ' . $e->getMessage(), 500);
         }
 
-        $languageCode = \ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
+        $languageCode = $langCode !== '' ? $langCode : \ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
         $content = $page->loadContent(null, $languageCode);
         $canonicalHtml = null;
         
