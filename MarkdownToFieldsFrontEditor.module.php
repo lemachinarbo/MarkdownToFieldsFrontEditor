@@ -14,7 +14,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
             'summary' => 'Frontend editor for MarkdownToFields.',
-            'version' =>  '0.2.0',
+            'version' =>  '0.2.1',
             'autoload' => true,
             'singular' => true,
             'requires' => ['MarkdownToFields'],
@@ -485,8 +485,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 "SAVE: Before saving - oldField='" . substr($oldFieldMarkdown, 0, 50) . "' blockMarkdown='" . substr($blockMarkdown, 0, 50) . "'"
             );
             
-            // Use MarkdownFileIO's native save mechanism
-            \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $updatedMarkdown);
+            // Use MarkdownFileIO's native save mechanism (respect current language)
+            $languageCode = \ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
+            \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $updatedMarkdown, $languageCode);
             
             $this->wire->log->save('markdown-front-edit',
                 "SAVE: After save - file updated"
@@ -496,7 +497,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $this->sendJsonError('Failed to update markdown: ' . $e->getMessage(), 500);
         }
 
-        $content = $page->loadContent();
+        $languageCode = \ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
+        $content = $page->loadContent(null, $languageCode);
         $canonicalHtml = null;
         
         $this->wire->log->save('markdown-front-edit',
