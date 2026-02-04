@@ -8,6 +8,9 @@
   top: 12px;
   left: 50%;
   transform: translateX(-50%);
+  min-width: 980px;
+  width: min(100% - 48px, 980px);
+  max-width: 980px;
   background: #ffffff;
   border-bottom: 1px solid rgba(15, 23, 42, 0.12);
   border-radius: 10px;
@@ -64,6 +67,14 @@
   opacity: 0;
   transition: opacity 0.2s ease;
   margin-right: 8px;
+}
+
+.mfe-view-inline .editor-toolbar-status.is-saved {
+  color: #15803d;
+}
+
+.mfe-view-inline .editor-toolbar-status.is-unchanged {
+  color: #0f172a;
 }
 
 .mfe-view-inline .editor-toolbar-status.is-visible {

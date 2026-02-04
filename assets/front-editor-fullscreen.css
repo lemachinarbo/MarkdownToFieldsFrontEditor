@@ -171,6 +171,7 @@ body.mfe-no-scroll {
   left: 50%;
   transform: translateX(-50%);
   width: min(100% - 48px, 980px);
+  min-width: 980px;
   max-width: 980px;
   padding: 6px 0;
   background: #ffffff;
@@ -258,6 +259,14 @@ body.mfe-no-scroll {
   opacity: 0;
   transition: opacity 0.2s ease;
   margin-right: 8px;
+}
+
+.mfe-view-fullscreen .editor-toolbar-status.is-saved {
+  color: #15803d;
+}
+
+.mfe-view-fullscreen .editor-toolbar-status.is-unchanged {
+  color: #0f172a;
 }
 
 .mfe-view-fullscreen .editor-toolbar-status.is-visible {

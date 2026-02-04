@@ -189,6 +189,13 @@ function createEditorInstance(host, fieldType, fieldName) {
 function setToolbarStatus(message) {
   if (!toolbarStatusEl) return;
   toolbarStatusEl.textContent = message;
+  toolbarStatusEl.classList.remove("is-saved", "is-unchanged");
+  if (message === "Saved") {
+    toolbarStatusEl.classList.add("is-saved");
+  }
+  if (message === "No changes") {
+    toolbarStatusEl.classList.add("is-unchanged");
+  }
   toolbarStatusEl.classList.add("is-visible");
   window.clearTimeout(toolbarStatusEl._timer);
   toolbarStatusEl._timer = window.setTimeout(() => {
@@ -203,6 +210,7 @@ function getMarkdownFromEditor(editor = activeEditor) {
 
 function saveInlineEditor() {
   if (!activeEditor || !dirty) {
+    setToolbarStatus("No changes");
     return Promise.resolve();
   }
 

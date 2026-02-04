@@ -192,6 +192,13 @@ function createEditorInstance(element, fieldType, fieldName) {
 function setSaveStatus(message) {
   if (!saveStatusEl) return;
   saveStatusEl.textContent = message;
+  saveStatusEl.classList.remove("is-saved", "is-unchanged");
+  if (message === "Saved") {
+    saveStatusEl.classList.add("is-saved");
+  }
+  if (message === "No changes") {
+    saveStatusEl.classList.add("is-unchanged");
+  }
   saveStatusEl.classList.add("is-visible");
   window.clearTimeout(saveStatusEl._timer);
   saveStatusEl._timer = window.setTimeout(() => {
