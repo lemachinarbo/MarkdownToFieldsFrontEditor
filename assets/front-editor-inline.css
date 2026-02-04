@@ -14,7 +14,7 @@
   background: #ffffff;
   border-bottom: 1px solid rgba(15, 23, 42, 0.12);
   border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
 }
 
 .mfe-view-inline .editor-toolbar-btn {

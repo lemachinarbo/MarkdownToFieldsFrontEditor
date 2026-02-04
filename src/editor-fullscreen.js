@@ -446,32 +446,18 @@ function createToolbar(container, overlay) {
   saveStatusEl = statusEl;
   statusManager.registerStatusEl(statusEl);
 
-  // Create close button in top right
   const closeBtn = document.createElement("button");
-  closeBtn.innerHTML = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M18 6l-12 12" /><path d="M6 6l12 12" /></svg>
-  `;
-  closeBtn.title = "Close (Esc)";
   closeBtn.type = "button";
-  closeBtn.className = "editor-toolbar-btn editor-toolbar-close";
-
+  closeBtn.className = "editor-toolbar-btn mfe-inline-close";
+  closeBtn.title = "Close (Esc)";
+  closeBtn.innerHTML = "×";
   closeBtn.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
     closeEditor();
   });
 
-  closeBtn.addEventListener("mouseenter", () => {
-    closeBtn.style.background = "#f3f4f6";
-    closeBtn.style.color = "#374151";
-  });
-
-  closeBtn.addEventListener("mouseleave", () => {
-    closeBtn.style.background = "transparent";
-    closeBtn.style.color = "#6b7280";
-  });
-
-  overlay.appendChild(closeBtn);
+  toolbar.appendChild(closeBtn);
   overlay.appendChild(toolbar);
 }
 

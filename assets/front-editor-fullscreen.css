@@ -167,20 +167,23 @@ body.mfe-no-scroll {
   align-items: center;
   justify-content: flex-end;
   position: fixed;
-  top: 0;
+  top: 12px;
   left: 50%;
   transform: translateX(-50%);
   width: min(100% - 48px, 980px);
   min-width: 980px;
   max-width: 980px;
-  padding: 6px 0;
+  padding: 6px 12px;
   background: #ffffff;
-  border: 0;
   border-bottom: 1px solid rgba(15, 23, 42, 0.12);
-  border-radius: 0;
-  box-shadow: none;
+  border-radius: 10px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
   z-index: 10001;
   flex-wrap: wrap;
+}
+
+.mfe-view-fullscreen .mfe-toolbar .editor-toolbar-btn {
+  padding: 4px 8px;
 }
 
 .mfe-view-fullscreen .editor-toolbar-btn {
@@ -207,34 +210,6 @@ body.mfe-no-scroll {
 
 .mfe-view-fullscreen .editor-toolbar-btn:focus-visible {
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
-}
-
-.mfe-view-fullscreen .editor-toolbar-close {
-  position: fixed;
-  top: 8px;
-  right: 16px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  border-radius: 10px;
-  font-size: 0;
-  font-weight: 500;
-  transition: all 0.2s ease;
-  color: #6b7280;
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: none;
-  z-index: 10002;
-}
-
-.mfe-view-fullscreen .editor-toolbar-close svg {
-  width: 36px;
-  height: 36px;
-  display: block;
 }
 
 .mfe-view-fullscreen .editor-toolbar-btn svg {
