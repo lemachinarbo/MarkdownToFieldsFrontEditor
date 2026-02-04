@@ -1,0 +1,58 @@
+name: Create Release with Built Assets
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend bundle
+        run: npm run build
+
+      - name: Create release artifact
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          RELEASE_NAME="MarkdownToFieldsFrontEditor-${VERSION}"
+          RELEASE_DIR="${RELEASE_NAME}"
+
+          mkdir -p "$RELEASE_DIR"
+
+          rsync -av \
+            MarkdownToFieldsFrontEditor.module.php \
+            README.md \
+            assets/ \
+            dist/ \
+            docs/ \
+            "$RELEASE_DIR/"
+
+          zip -r "${RELEASE_NAME}.zip" "$RELEASE_DIR"
+
+          rm -rf "$RELEASE_DIR"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: MarkdownToFieldsFrontEditor-v*.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
