@@ -147,13 +147,18 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $cssHref = $url . 'assets/front-editor.css?v=' . $cssVersion;
         $cssLink = "<link rel=\"stylesheet\" href=\"{$cssHref}\">";
 
+        $fullscreenCssPath = $modulePath . 'assets/front-editor-fullscreen.css';
+        $fullscreenCssVersion = is_file($fullscreenCssPath) ? (string) filemtime($fullscreenCssPath) : (string) time();
+        $fullscreenCssHref = $url . 'assets/front-editor-fullscreen.css?v=' . $fullscreenCssVersion;
+        $fullscreenCssLink = "<link rel=\"stylesheet\" href=\"{$fullscreenCssHref}\">";
+
         $jsPath = $modulePath . 'dist/editor.bundle.js';
         $version = is_file($jsPath) ? (string) filemtime($jsPath) : (string) time();
         
         // Load bundled ProseMirror editor (single file, no external dependencies)
         $moduleScript = "<script src=\"{$url}dist/editor.bundle.js?v={$version}\"></script>";
         
-        $script = $cssLink . $configScript . $moduleScript;
+        $script = $cssLink . $fullscreenCssLink . $configScript . $moduleScript;
 
         if(stripos($out, '</body>') !== false) {
             $out = str_ireplace('</body>', $script . '</body>', $out);
