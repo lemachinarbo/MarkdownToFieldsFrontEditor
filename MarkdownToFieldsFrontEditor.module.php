@@ -507,15 +507,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         // Accept markdown directly from frontend
         // IMPORTANT: Use raw POST data, not $input->post->textarea() which may sanitize HTML tags
-        $markdown = isset($_POST['markdown']) ? (string)$_POST['markdown'] : '';
-        
-        if(!$markdown) {
-            $this->sendJsonError('Missing markdown content', 400);
-        }
-
-        $mdName = $input->post->text('mdName');
-        if(!$mdName) $this->sendJsonError('Missing mdName', 400);
-
+        $isBatch = (bool)$input->post->int('batch');
         $pageId = (int)$input->post->pageId;
         if(!$pageId) $this->sendJsonError('Missing pageId', 400);
 
@@ -527,14 +519,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             }
         }
 
-        // Trace payload details
-        $markdownLen = strlen((string)$markdown);
-        $markdownLines = $markdownLen ? (substr_count((string)$markdown, "\n") + 1) : 0;
-        $markdownPreview = $markdownLen ? substr(str_replace(["\r", "\n"], ["\\r", "\\n"], (string)$markdown), 0, 120) : '';
-        $this->wire->log->save('markdown-front-edit',
-            "PAYLOAD mdName='{$mdName}' pageId={$pageId} markdownLen={$markdownLen} markdownLines={$markdownLines} markdownPreview='{$markdownPreview}'"
-        );
-
         $page = $this->wire()->pages->get($pageId);
         if(!$page->id) $this->sendJsonError('Page not found', 404);
         if(!$page->editable()) $this->sendJsonError('Page not editable', 403);
@@ -542,6 +526,116 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         if(!\ProcessWire\MarkdownConfig::supportsPage($page)) {
             $this->sendJsonError('MarkdownToFields not configured for this page', 400);
         }
+
+        if ($isBatch) {
+            $fieldsJson = (string)$input->post('fields', 'string');
+            $fields = wireDecodeJSON($fieldsJson);
+            if (!is_array($fields) || !$fields) {
+                $this->sendJsonError('Missing fields payload', 400);
+            }
+
+            try {
+                $content = \ProcessWire\MarkdownFileIO::loadMarkdown($page);
+                $fullMarkdown = $content->getRawDocument();
+                $updatedMarkdown = $fullMarkdown;
+                $skipped = [];
+                $replaced = 0;
+
+                foreach ($fields as $mdName => $blockMarkdown) {
+                    $blockMarkdown = (string)$blockMarkdown;
+                    if ($mdName === '' || trim($blockMarkdown) === '') {
+                        $skipped[] = $mdName;
+                        continue;
+                    }
+
+                    $oldFieldMarkdown = null;
+                    foreach ($content->sections as $section) {
+                        if (isset($section->fields[$mdName])) {
+                            $oldFieldMarkdown = (string)($section->fields[$mdName]->markdown ?? '');
+                            break;
+                        }
+                        if (isset($section->subsections)) {
+                            foreach ($section->subsections as $subsection) {
+                                if (isset($subsection->fields[$mdName])) {
+                                    $oldFieldMarkdown = (string)($subsection->fields[$mdName]->markdown ?? '');
+                                    break 2;
+                                }
+                            }
+                        }
+                    }
+
+                    if ($oldFieldMarkdown === null) {
+                        $skipped[] = $mdName;
+                        continue;
+                    }
+
+                    $updatedMarkdown = str_replace($oldFieldMarkdown, $blockMarkdown, $updatedMarkdown, $count);
+                    if ($count === 0) {
+                        $skipped[] = $mdName;
+                        continue;
+                    }
+                    $replaced += $count;
+                }
+
+                if ($replaced > 0) {
+                    $languageCode = $langCode !== '' ? $langCode : \ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
+                    \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $updatedMarkdown, $languageCode);
+                }
+            } catch (\Throwable $e) {
+                $this->sendJsonError('Failed to update markdown: ' . $e->getMessage(), 500);
+            }
+
+            $languageCode = $langCode !== '' ? $langCode : \ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
+            $content = $page->loadContent(null, $languageCode);
+            $htmlMap = [];
+            foreach ($fields as $mdName => $blockMarkdown) {
+                $canonicalHtml = null;
+                if (isset($content->sections) && is_array($content->sections)) {
+                    foreach ($content->sections as $s) {
+                        if (isset($s->fields[$mdName]->html)) {
+                            $canonicalHtml = $s->fields[$mdName]->html;
+                            break;
+                        }
+                        if (isset($s->subsections) && is_array($s->subsections)) {
+                            foreach ($s->subsections as $sub) {
+                                if (isset($sub->fields[$mdName]->html)) {
+                                    $canonicalHtml = $sub->fields[$mdName]->html;
+                                    break 2;
+                                }
+                            }
+                        }
+                    }
+                }
+                if ($canonicalHtml && strpos((string)$blockMarkdown, '<') !== false && strpos((string)$blockMarkdown, '>') !== false) {
+                    $parsedown = new \Parsedown();
+                    $parsedown->setSafeMode(false);
+                    $canonicalHtml = $parsedown->text((string)$blockMarkdown);
+                }
+                if ($canonicalHtml !== null) {
+                    $htmlMap[$mdName] = $canonicalHtml;
+                }
+            }
+
+            header('Content-Type: application/json');
+            echo json_encode(['status' => 1, 'html' => $htmlMap, 'skipped' => $skipped ?? []]);
+            exit;
+        }
+
+        $markdown = isset($_POST['markdown']) ? (string)$_POST['markdown'] : '';
+        if(!$markdown) {
+            $this->sendJsonError('Missing markdown content', 400);
+        }
+
+        $mdName = $input->post->text('mdName');
+        if(!$mdName) $this->sendJsonError('Missing mdName', 400);
+
+        // Trace payload details
+        $markdownLen = strlen((string)$markdown);
+        $markdownLines = $markdownLen ? (substr_count((string)$markdown, "\n") + 1) : 0;
+        $markdownPreview = $markdownLen ? substr(str_replace(["\r", "\n"], ["\\r", "\\n"], (string)$markdown), 0, 120) : '';
+        $this->wire->log->save('markdown-front-edit',
+            "PAYLOAD mdName='{$mdName}' pageId={$pageId} markdownLen={$markdownLen} markdownLines={$markdownLines} markdownPreview='{$markdownPreview}'"
+        );
 
         // Use markdown directly - no conversion
         $blockMarkdown = $markdown;

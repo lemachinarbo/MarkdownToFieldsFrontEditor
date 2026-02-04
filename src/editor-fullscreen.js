@@ -14,6 +14,7 @@ import { Plugin } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import { createToolbarButtons } from "./editor-toolbar.js";
 import { renderToolbarButtons } from "./editor-toolbar-renderer.js";
+import { createStatusManager } from "./editor-status.js";
 import {
   inlineHtmlTags,
   shouldWarnForExtraContent,
@@ -45,6 +46,8 @@ const dirtyTranslations = new Map();
 let activeTarget = null;
 let activeFieldName = null;
 let activeFieldType = null; // "tag" or "container"
+let activeFieldId = null;
+const statusManager = createStatusManager();
 
 function stripTrailingEmptyParagraph(editor) {
   if (!editor) return;
@@ -167,6 +170,9 @@ function createEditorInstance(element, fieldType, fieldName) {
     }
     if (editor === primaryEditor) {
       primaryDirty = true;
+      if (activeFieldId) {
+        statusManager.markDirty(activeFieldId);
+      }
     }
     if (editor === secondaryEditor && secondaryLang) {
       dirtyTranslations.set(secondaryLang, true);
@@ -187,23 +193,6 @@ function createEditorInstance(element, fieldType, fieldName) {
   });
 
   return editor;
-}
-
-function setSaveStatus(message) {
-  if (!saveStatusEl) return;
-  saveStatusEl.textContent = message;
-  saveStatusEl.classList.remove("is-saved", "is-unchanged");
-  if (message === "Saved") {
-    saveStatusEl.classList.add("is-saved");
-  }
-  if (message === "No changes") {
-    saveStatusEl.classList.add("is-unchanged");
-  }
-  saveStatusEl.classList.add("is-visible");
-  window.clearTimeout(saveStatusEl._timer);
-  saveStatusEl._timer = window.setTimeout(() => {
-    saveStatusEl.classList.remove("is-visible");
-  }, 2000);
 }
 
 function saveAllEditors() {
@@ -237,17 +226,20 @@ function saveAllEditors() {
   }
 
   if (tasks.length === 0) {
-    setSaveStatus("No changes");
+    statusManager.setNoChanges();
     return;
   }
 
   Promise.all(tasks)
     .then(() => {
       primaryDirty = false;
-      setSaveStatus("Saved");
+      if (activeFieldId) {
+        statusManager.clearDirty(activeFieldId);
+      }
+      statusManager.setSaved();
     })
     .catch(() => {
-      setSaveStatus("Save failed");
+      statusManager.setError();
     });
 }
 
@@ -452,6 +444,7 @@ function createToolbar(container, overlay) {
     getEditor: () => activeEditor,
   });
   saveStatusEl = statusEl;
+  statusManager.registerStatusEl(statusEl);
 
   // Create close button in top right
   const closeBtn = document.createElement("button");
@@ -653,11 +646,13 @@ function closeEditor() {
 
   document.body.classList.remove("mfe-no-scroll");
   document.body.classList.remove("mfe-view-fullscreen");
+  statusManager.reset();
 
   saveCallback = null;
   activeTarget = null;
   activeFieldName = null;
   activeFieldType = null;
+  activeFieldId = null;
   translationsCache = null;
   secondaryLang = "";
   editorShell = null;
@@ -692,6 +687,7 @@ function initEditors() {
       activeTarget = el;
       activeFieldName = fieldName;
       activeFieldType = fieldType;
+      activeFieldId = `${el.getAttribute("data-page") || "0"}:${fieldName}`;
 
       // Save callback
       const saveCallback = (markdown, resolve, reject) => {

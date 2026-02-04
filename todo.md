@@ -1,6 +1,5 @@
 # Todo
 - Implement a Notion-like editor.
-- Is it still worth implementing a WYSIWYG editor?
 
 # Features
 - Image editor

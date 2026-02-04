@@ -77,6 +77,14 @@
   color: #0f172a;
 }
 
+.mfe-view-inline .editor-toolbar-status.is-draft {
+  color: #b45309;
+}
+
+.mfe-view-inline .editor-toolbar-status.is-error {
+  color: #b91c1c;
+}
+
 .mfe-view-inline .editor-toolbar-status.is-visible {
   opacity: 1;
 }
