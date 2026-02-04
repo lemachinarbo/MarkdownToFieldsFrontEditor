@@ -49,7 +49,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $f->columnWidth = 100;
         $inputfields->add($f);
 
-        $viewField = \ProcessWire\wire('modules')->get('InputfieldSelect');
+        $viewField = \ProcessWire\wire('modules')->get('InputfieldRadios');
         $viewField->name = 'view';
         $viewField->label = 'Editor View';
         $viewField->description = 'Choose the editor view layout.';
@@ -116,7 +116,12 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         
         // Only inject assets for editors: either template explicitly enabled or user has front edit permission
         $user = $this->wire()->user;
-        if (empty($this->enabledForRequest) && (!$user->isLoggedIn() || !$user->hasPermission('page-edit-front'))) return;
+        if (!$user->isLoggedIn() || !$user->hasPermission('page-edit-front')) return;
+
+        $page = $event->object;
+        if (!$page instanceof \ProcessWire\Page) return;
+        $enabled = $this->enabledForRequest || $this->isMarkdownTemplateEnabled($page);
+        if (!$enabled) return;
 
         $out = $event->return;
         if (!is_string($out)) return;
@@ -207,6 +212,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         $page = $event->object;
         if(!$page || !$page->id || !$page->editable()) return;
+        if (!$this->enabledForRequest && !$this->isMarkdownTemplateEnabled($page)) return;
         
         // Skip admin pages, AJAX requests, and system templates
         $config = $this->wire()->config;
@@ -346,6 +352,10 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         // Permission check
         $user = $this->wire()->user;
         if(!$user->hasPermission('page-edit-front', $page) || !$page->editable()) {
+            $event->return = $html;
+            return;
+        }
+        if (!$this->enabledForRequest && !$this->isMarkdownTemplateEnabled($page)) {
             $event->return = $html;
             return;
         }
@@ -708,6 +718,23 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         header('Content-Type: application/json');
         echo json_encode(['status' => 0, 'error' => $msg]);
         exit;
+    }
+
+    private function isMarkdownTemplateEnabled(\ProcessWire\Page $page): bool {
+        $template = $page->template ?? null;
+        if (!$template) return false;
+
+        $config = $this->wire()->config;
+        $mdConfig = $config->MarkdownToFields ?? [];
+        if (isset($mdConfig['enabledTemplates'])) {
+            $enabled = (array) $mdConfig['enabledTemplates'];
+        } else {
+            $moduleConfig = $this->wire()->modules->getConfig('MarkdownToFields');
+            $enabled = is_array($moduleConfig['templates'] ?? null) ? $moduleConfig['templates'] : [];
+        }
+
+        if (!$enabled) return false;
+        return in_array($template->name, $enabled, true);
     }
 
 }
