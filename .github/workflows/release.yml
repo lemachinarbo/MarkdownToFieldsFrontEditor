@@ -39,9 +39,9 @@ jobs:
           rsync -av \
             MarkdownToFieldsFrontEditor.module.php \
             README.md \
-            assets/ \
-            dist/ \
-            docs/ \
+            assets \
+            dist \
+            docs \
             "$RELEASE_DIR/"
 
           zip -r "${RELEASE_NAME}.zip" "$RELEASE_DIR"
