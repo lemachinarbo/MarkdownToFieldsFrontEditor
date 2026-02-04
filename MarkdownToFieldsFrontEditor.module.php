@@ -14,7 +14,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
             'summary' => 'Frontend editor for MarkdownToFields.',
-            'version' =>  '0.3',
+            'version' =>  '0.3.1',
             'autoload' => true,
             'singular' => true,
             'requires' => ['MarkdownToFields'],
@@ -26,6 +26,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
      */
     public static function getDefaultData() {
         return [
+            'view' => 'fullscreen',
             'toolbarButtons' => 'bold,italic,strike,paragraph,link,unlink,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split',
         ];
     }
@@ -47,6 +48,18 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $f->value = !empty($data['toolbarButtons']) ? $data['toolbarButtons'] : $defaults['toolbarButtons'];
         $f->columnWidth = 100;
         $inputfields->add($f);
+
+        $viewField = \ProcessWire\wire('modules')->get('InputfieldSelect');
+        $viewField->name = 'view';
+        $viewField->label = 'Editor View';
+        $viewField->description = 'Choose the editor view layout.';
+        $viewField->options = [
+            'fullscreen' => 'Fullscreen',
+            'inline' => 'Inline',
+        ];
+        $viewField->value = !empty($data['view']) ? $data['view'] : $defaults['view'];
+        $viewField->columnWidth = 100;
+        $inputfields->add($viewField);
 
         return $inputfields;
     }
@@ -70,6 +83,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
     public function install() {
         $defaults = self::getDefaultData();
         $this->wire('modules')->saveConfig($this, [
+            'view' => $defaults['view'],
             'toolbarButtons' => $defaults['toolbarButtons'],
         ]);
     }
@@ -134,7 +148,11 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 'isDefault' => true,
             ];
         }
+        $view = isset($this->view) && trim((string)$this->view) !== ''
+            ? (string)$this->view
+            : (string)$defaults['view'];
         $frontConfig = [
+            'view' => $view,
             'toolbarButtons' => $toolbarButtons,
             'languages' => $langList,
             'currentLanguage' => $currentLangCode,
@@ -147,10 +165,18 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $cssHref = $url . 'assets/front-editor.css?v=' . $cssVersion;
         $cssLink = "<link rel=\"stylesheet\" href=\"{$cssHref}\">";
 
-        $fullscreenCssPath = $modulePath . 'assets/front-editor-fullscreen.css';
-        $fullscreenCssVersion = is_file($fullscreenCssPath) ? (string) filemtime($fullscreenCssPath) : (string) time();
-        $fullscreenCssHref = $url . 'assets/front-editor-fullscreen.css?v=' . $fullscreenCssVersion;
-        $fullscreenCssLink = "<link rel=\"stylesheet\" href=\"{$fullscreenCssHref}\">";
+        $viewCssLink = '';
+        if ($view === 'fullscreen') {
+            $viewCssPath = $modulePath . 'assets/front-editor-fullscreen.css';
+            $viewCssVersion = is_file($viewCssPath) ? (string) filemtime($viewCssPath) : (string) time();
+            $viewCssHref = $url . 'assets/front-editor-fullscreen.css?v=' . $viewCssVersion;
+            $viewCssLink = "<link rel=\"stylesheet\" href=\"{$viewCssHref}\">";
+        } elseif ($view === 'inline') {
+            $viewCssPath = $modulePath . 'assets/front-editor-inline.css';
+            $viewCssVersion = is_file($viewCssPath) ? (string) filemtime($viewCssPath) : (string) time();
+            $viewCssHref = $url . 'assets/front-editor-inline.css?v=' . $viewCssVersion;
+            $viewCssLink = "<link rel=\"stylesheet\" href=\"{$viewCssHref}\">";
+        }
 
         $jsPath = $modulePath . 'dist/editor.bundle.js';
         $version = is_file($jsPath) ? (string) filemtime($jsPath) : (string) time();
@@ -158,7 +184,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         // Load bundled ProseMirror editor (single file, no external dependencies)
         $moduleScript = "<script src=\"{$url}dist/editor.bundle.js?v={$version}\"></script>";
         
-        $script = $cssLink . $fullscreenCssLink . $configScript . $moduleScript;
+        $script = $cssLink . $viewCssLink . $configScript . $moduleScript;
 
         if(stripos($out, '</body>') !== false) {
             $out = str_ireplace('</body>', $script . '</body>', $out);

@@ -133,6 +133,7 @@ function createEditorInstance(element, fieldType, fieldName) {
     extensions: [
       StarterKit.configure({
         codeBlock: false,
+        link: false,
       }),
       CodeBlockLowlight.configure({
         lowlight,
