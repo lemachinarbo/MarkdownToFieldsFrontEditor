@@ -25,10 +25,14 @@ It is NOT a standalone module. It only works **together** with MarkdownToFields.
 
 ## What's New
 
+**0.4.1**
+- Breadcrumbs in fullscreen allow you to edit ancestors (section > subsection > container > field).
+- Section breadcrumb is disabled when the section has no direct content.
+  
 **0.4**
 - Adds sections/subsections support.
 - New hybrid system: inline editing + fullscreen editing.
-- 
+
 **0.3**
 - Official launch of the front-end editor tested in one machine, one installation, one browser.
 
@@ -58,6 +62,8 @@ Notes:
 - **Tag fields**: `Ctrl + double-click` opens **inline** editor.
 - **All other targets**: double-click opens **fullscreen** editor.
 
+If a section only contains subsections, it may not have its own content. In that case the section breadcrumb is shown but not clickable.
+
 ## Requirements
 
 - ProcessWire + MarkdownToFields
@@ -69,7 +75,7 @@ Notes:
 This module is small and opinionated. If something breaks, start by (shaking) checking:
 
 - the markdown file
-- the tags (`<!-- name -->`, `<!-- name... -->`)
+- the tags (`<!-- name -->`, `<!-- name... -->`, `<!-- section:name -->`, `<!-- sub:name -->`)
 - the permission (`page-edit-front`)
 - the AI
 

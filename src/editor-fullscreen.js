@@ -29,6 +29,7 @@ import {
   getSaveUrl,
   fetchCsrfToken,
 } from "./editor-core.js";
+import { buildContentIndex, getSectionEntry, getSubsectionEntry } from "./content-index.js";
 
 let activeEditor = null;
 let primaryEditor = null;
@@ -51,6 +52,8 @@ let activeFieldSection = "";
 let activeFieldId = null;
 let activeRawMarkdown = null;
 let activeDisplayMarkdown = null;
+let breadcrumbsEl = null;
+let breadcrumbClickHandler = null;
 const statusManager = createStatusManager();
 
 function stripTrailingEmptyParagraph(editor) {
@@ -369,6 +372,10 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
   const overlay = document.createElement("div");
   overlay.setAttribute("data-editor-overlay", "true");
   overlay.className = "mfe-overlay";
+  overlay.addEventListener("dblclick", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
   document.body.appendChild(overlay);
   document.body.classList.add("mfe-no-scroll");
   document.body.classList.add("mfe-view-fullscreen");
@@ -379,8 +386,17 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
   container.setAttribute("data-editor-container", "true");
   container.setAttribute("data-field-type", fieldType); // Add field type as data attribute
   container.className = "mfe-container";
+  container.addEventListener("dblclick", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
   overlay.appendChild(container);
   editorContainer = container;
+
+  breadcrumbsEl = document.createElement("div");
+  breadcrumbsEl.className = "mfe-breadcrumbs";
+  renderBreadcrumbs();
+  container.appendChild(breadcrumbsEl);
 
   editorShell = document.createElement("div");
   editorShell.className = "mfe-editor-shell";
@@ -546,6 +562,109 @@ function highlightExtraContent(editor = activeEditor) {
  */
 function clearExtraContentHighlights() {}
 
+function buildBreadcrumbParts() {
+  const scope = activeFieldScope || "field";
+  const name = activeFieldName || "";
+  const sectionFromSubsection =
+    scope === "subsection" ? findSectionNameForSubsection(name) : "";
+  const section =
+    sectionFromSubsection ||
+    activeFieldSection ||
+    activeTarget?.getAttribute?.("data-md-section") ||
+    "";
+  const type = activeFieldType || "";
+  const isContainer = type === "container";
+  const sectionName =
+    section ||
+    sectionFromSubsection ||
+    (scope === "section" ? name : "");
+
+  const parts = [];
+  if (sectionName) {
+    parts.push({ label: `Section: ${sectionName}`, target: "section" });
+  }
+  if (scope === "subsection" && name) {
+    parts.push({ label: `Sub: ${name}`, target: "subsection" });
+  }
+  if (isContainer && name) {
+    parts.push({ label: `Container: ${name}`, target: "container" });
+  }
+  if (!isContainer && scope === "field" && name) {
+    parts.push({ label: `Field: ${name}`, target: "field" });
+  }
+
+  if (!parts.length) {
+    if (scope === "section") return [{ label: "Section", target: "section" }];
+    if (scope === "subsection") {
+      return [{ label: "Subsection", target: "subsection" }];
+    }
+    if (type === "container") {
+      return [{ label: "Container", target: "container" }];
+    }
+    return [{ label: "Field", target: "field" }];
+  }
+
+  return parts;
+}
+
+function getBreadcrumbsCurrentTarget() {
+  if (activeFieldScope === "section") return "section";
+  if (activeFieldScope === "subsection") return "subsection";
+  if (activeFieldType === "container") return "container";
+  return "field";
+}
+
+function renderBreadcrumbs() {
+  if (!breadcrumbsEl) return;
+  breadcrumbsEl.innerHTML = "";
+
+  const parts = buildBreadcrumbParts();
+  const currentTarget = getBreadcrumbsCurrentTarget();
+  const sectionName =
+    activeFieldSection ||
+    activeTarget?.getAttribute?.("data-md-section") ||
+    (activeFieldScope === "section" ? activeFieldName : "") ||
+    (activeFieldScope === "subsection"
+      ? findSectionNameForSubsection(activeFieldName)
+      : "");
+  const sectionEntry = sectionName ? getSectionEntry(sectionName) : null;
+  const sectionHasContent =
+    Boolean(sectionEntry?.markdownB64) &&
+    sectionEntry.markdownB64.trim() !== "";
+
+  parts.forEach((part, index) => {
+    if (index > 0) {
+      const sep = document.createElement("span");
+      sep.className = "mfe-breadcrumb-sep";
+      sep.textContent = " > ";
+      breadcrumbsEl.appendChild(sep);
+    }
+
+    const sectionDisabled = part.target === "section" && !sectionHasContent;
+    if (part.target === currentTarget || sectionDisabled) {
+      const current = document.createElement("span");
+      current.className = sectionDisabled
+        ? "mfe-breadcrumb-disabled"
+        : "mfe-breadcrumb-current";
+      current.textContent = part.label;
+      breadcrumbsEl.appendChild(current);
+      return;
+    }
+
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "mfe-breadcrumb-link";
+    link.textContent = part.label;
+    link.setAttribute("data-breadcrumb-target", part.target);
+    breadcrumbsEl.appendChild(link);
+  });
+
+  if (!breadcrumbsEl.dataset.listener) {
+    breadcrumbsEl.addEventListener("click", handleBreadcrumbClick);
+    breadcrumbsEl.dataset.listener = "1";
+  }
+}
+
 /**
  * Save editor content
  */
@@ -605,6 +724,10 @@ function closeEditor() {
     document.removeEventListener("keydown", keydownHandler, true);
     keydownHandler = null;
   }
+  if (breadcrumbsEl?.dataset?.listener) {
+    breadcrumbsEl.removeEventListener("click", handleBreadcrumbClick);
+    delete breadcrumbsEl.dataset.listener;
+  }
 
   // Remove editor container
   const container = document.querySelector("[data-editor-container]");
@@ -642,6 +765,7 @@ function closeEditor() {
   editorContainer = null;
   overlayEl = null;
   splitPane = null;
+  breadcrumbsEl = null;
 }
 
 function createOverlay() {
@@ -668,6 +792,119 @@ function initEditors() {
       openFullscreenEditorForElement(target);
     });
   });
+}
+
+function findSectionNameForSubsection(subName) {
+  const sections = window.MarkdownFrontEditorConfig?.sectionsIndex || [];
+  for (const section of sections) {
+    const subs = Array.isArray(section.subsections) ? section.subsections : [];
+    for (const sub of subs) {
+      if (sub?.name === subName) return section.name || "";
+    }
+  }
+  return "";
+}
+
+function handleBreadcrumbClick(e) {
+  const target = e.target?.closest?.(".mfe-breadcrumb-link");
+  if (!target) return;
+  e.preventDefault();
+  e.stopPropagation();
+
+  const type = target.getAttribute("data-breadcrumb-target");
+  if (!type || !activeTarget) return;
+
+  console.log("[mfe] breadcrumb click", {
+    type,
+    activeScope: activeFieldScope,
+    activeName: activeFieldName,
+    activeSection: activeFieldSection,
+    activeType: activeFieldType,
+  });
+
+  const index = buildContentIndex();
+  const sectionName =
+    (activeFieldScope === "subsection"
+      ? findSectionNameForSubsection(activeFieldName)
+      : "") ||
+    activeFieldSection ||
+    activeTarget.getAttribute("data-md-section") ||
+    (activeFieldScope === "section" ? activeFieldName : "");
+  const fieldName = activeFieldName || "";
+  let id = "";
+
+  if (type === "section") {
+    id = sectionName ? `section:${sectionName}` : "";
+  } else if (type === "subsection") {
+    id = sectionName && fieldName ? `subsection:${sectionName}:${fieldName}` : "";
+  } else if (type === "container") {
+    id = fieldName ? `field:${sectionName ? `${sectionName}:` : ""}${fieldName}` : "";
+  } else if (type === "field") {
+    id = fieldName ? `field:${sectionName ? `${sectionName}:` : ""}${fieldName}` : "";
+  }
+
+  const indexed = id ? index.byId.get(id) : null;
+  console.log("[mfe] breadcrumb target", {
+    id,
+    hasElement: Boolean(indexed?.element),
+    hasMarkdown: Boolean(indexed?.markdownB64),
+    sectionName,
+    fieldName,
+  });
+  if (indexed?.element) {
+    openFullscreenEditorForElement(indexed.element);
+    return;
+  }
+
+  if (indexed?.markdownB64) {
+    const virtual = document.createElement("div");
+    virtual.className = "fe-editable md-edit mfe-virtual";
+    virtual.setAttribute("data-page", activeTarget.getAttribute("data-page") || "0");
+    virtual.setAttribute("data-md-scope", indexed.scope || type);
+    virtual.setAttribute("data-md-name", indexed.name || fieldName);
+    if (indexed.section) {
+      virtual.setAttribute("data-md-section", indexed.section);
+    }
+    virtual.setAttribute("data-markdown-b64", indexed.markdownB64);
+    openFullscreenEditorForElement(virtual);
+    return;
+  }
+
+  if (type === "section") {
+    const entry = sectionName ? getSectionEntry(sectionName) : null;
+    if (entry) {
+      const virtual = document.createElement("div");
+      virtual.className = "fe-editable md-edit mfe-virtual";
+      virtual.setAttribute(
+        "data-page",
+        activeTarget.getAttribute("data-page") || "0",
+      );
+      virtual.setAttribute("data-md-scope", "section");
+      virtual.setAttribute("data-md-name", sectionName);
+      virtual.setAttribute("data-markdown-b64", entry.markdownB64 || "");
+      openFullscreenEditorForElement(virtual);
+      return;
+    }
+  }
+
+  if (type === "subsection") {
+    const entry =
+      sectionName && fieldName ? getSubsectionEntry(sectionName, fieldName) : null;
+    if (entry) {
+      const virtual = document.createElement("div");
+      virtual.className = "fe-editable md-edit mfe-virtual";
+      virtual.setAttribute(
+        "data-page",
+        activeTarget.getAttribute("data-page") || "0",
+      );
+      virtual.setAttribute("data-md-scope", "subsection");
+      virtual.setAttribute("data-md-name", fieldName);
+      virtual.setAttribute("data-md-section", sectionName);
+      virtual.setAttribute("data-markdown-b64", entry.markdownB64 || "");
+      openFullscreenEditorForElement(virtual);
+      return;
+    }
+  }
 }
 
 function openFullscreenEditorFromPayload(payload) {
@@ -755,6 +992,7 @@ function openFullscreenEditorFromPayload(payload) {
     if (overlay) overlay.style.display = "none";
   }
   initEditor(activeDisplayMarkdown, saveCallback, fieldType);
+  breadcrumbClickHandler = handleBreadcrumbClick;
 }
 
 export function openFullscreenEditorForElement(target) {

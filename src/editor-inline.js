@@ -50,6 +50,7 @@ let lastHoverRect = null;
 let debugLabels =
   window.MarkdownFrontEditorConfig?.debugLabels ||
   window.localStorage?.getItem("mfeDebugLabels") === "1";
+const debugClicks = window.localStorage?.getItem("mfeDebugClicks") === "1";
 const overlayEngine = createOverlayEngine({ debugLabels });
 
 let dirty = false;
@@ -932,6 +933,9 @@ function initInlineEditor() {
 
   if (!dblclickHandler) {
     dblclickHandler = (e) => {
+      if (document.body.classList.contains("mfe-view-fullscreen")) {
+        return;
+      }
       const hit = e.target?.closest?.(".fe-editable");
       if (!hit) {
         // no hit
@@ -953,7 +957,23 @@ function initInlineEditor() {
       });
 
       if (!action || action.action === "none") {
+        if (debugClicks) {
+          console.log("[mfe] dblclick:none", {
+            targetTag: e.target?.tagName || null,
+            reason: action?.reason || null,
+          });
+        }
         return;
+      }
+
+      if (debugClicks) {
+        console.log("[mfe] dblclick:action", {
+          action: action.action,
+          reason: action.reason,
+          targetName: action.target?.getAttribute?.("data-md-name") || null,
+          targetScope: action.target?.getAttribute?.("data-md-scope") || null,
+          targetType: action.target?.getAttribute?.("data-field-type") || null,
+        });
       }
 
       if (action.action === "fullscreen") {

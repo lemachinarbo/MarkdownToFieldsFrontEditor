@@ -10,6 +10,17 @@ export function resolveDblclickAction({
   createVirtualTarget,
   pageId,
 }) {
+  const findSectionNameForSubsection = (subName) => {
+    const sections = window.MarkdownFrontEditorConfig?.sectionsIndex || [];
+    for (const section of sections) {
+      const subs = Array.isArray(section.subsections) ? section.subsections : [];
+      for (const sub of subs) {
+        if (sub?.name === subName) return section.name || "";
+      }
+    }
+    return "";
+  };
+
   if (!hit) {
     const fallback =
       overlayEngine.findMarkerTargetFromPoint(event.clientX, event.clientY) ||
@@ -20,13 +31,19 @@ export function resolveDblclickAction({
       findTargetFromPoint(event.clientX, event.clientY) ||
       findSectionFromText(event.target?.textContent || "");
 
+    const fallbackSection =
+      fallback?.section ||
+      (fallback?.scope === "subsection"
+        ? findSectionNameForSubsection(fallback?.name)
+        : "");
+
     let fallbackB64 = fallback?.b64 || fallback?.markdownB64 || "";
     if (!fallbackB64 && fallback?.scope === "section") {
       fallbackB64 = getSectionEntry(fallback.name)?.markdownB64 || "";
     }
     if (!fallbackB64 && fallback?.scope === "subsection") {
       fallbackB64 =
-        getSubsectionEntry(fallback.section || "", fallback.name)?.markdownB64 ||
+        getSubsectionEntry(fallbackSection, fallback.name)?.markdownB64 ||
         "";
     }
 
@@ -38,7 +55,7 @@ export function resolveDblclickAction({
       pageId,
       scope: fallback.scope,
       name: fallback.name,
-      section: fallback.section || "",
+      section: fallbackSection || "",
       markdown: decodeMarkdownBase64(fallbackB64),
     });
 
