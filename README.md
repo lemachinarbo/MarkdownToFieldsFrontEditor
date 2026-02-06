@@ -7,21 +7,31 @@ It is NOT a standalone module. It only works **together** with MarkdownToFields.
 
 ## What it does
 
-- Double‑click any tag field `<!-- field -->` or container field `<!-- container... -->` to edit it.
+- Double‑click any tag field `<!-- field -->` container field `<!-- container... -->`, section `<!-- section:name -->` or subsection `<!-- sub:name -->` to edit it.
 - Save the change back to the markdown file.
 - Supports multiple languages (uses ProcessWire languages).
 - It supports two different views: 
 
 ### Inline 
 
-The best for quick edits.
+`Ctrl + double click` The best for quick edits (Only avaible for `tag fields`).
 
 <img src="docs/inline.png" width="700">
 
 ### Fullscreen 
-Amazing for comparing content in different languages
+`double click` Amazing for comparing content in different languages
 
 <img src="docs/fullscreen.png" width="700">
+
+## What's New
+
+**0.4**
+- Adds sections/subsections support.
+- New hybrid system: inline editing + fullscreen editing.
+- 
+**0.3**
+- Official launch of the front-end editor tested in one machine, one installation, one browser.
+
 
 ## Install
 
@@ -43,6 +53,11 @@ Notes:
 - `|` adds a separator.
 - `save` is always shown at the end.
 
+## Editing Behavior
+
+- **Tag fields**: `Ctrl + double-click` opens **inline** editor.
+- **All other targets**: double-click opens **fullscreen** editor.
+
 ## Requirements
 
 - ProcessWire + MarkdownToFields
@@ -57,16 +72,6 @@ This module is small and opinionated. If something breaks, start by (shaking) ch
 - the tags (`<!-- name -->`, `<!-- name... -->`)
 - the permission (`page-edit-front`)
 - the AI
-
-## Architecture (For Future You)
-
-This stays boring on purpose. If you want to add images, components, or translations, plug into these spots:
-
-- `content-index`: builds a front-end map of editable targets.
-- `scope-resolver`: decides what a double-click should open.
-- `overlay-engine`: only draws hover boxes/labels.
-- `views`: inline/fullscreen editors render, no routing logic.
-- `state+mutation`: drafts, save batching, status.
 
 ## License
 
