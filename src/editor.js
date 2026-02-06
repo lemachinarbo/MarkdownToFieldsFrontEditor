@@ -2,10 +2,8 @@
 import { initFullscreenEditor } from "./editor-fullscreen.js";
 import { initInlineEditor } from "./editor-inline.js";
 
-const view = window.MarkdownFrontEditorConfig?.view || "fullscreen";
+const cfg = window.MarkdownFrontEditorConfig || {};
+const stamp = cfg.buildStamp || "unknown";
 
-if (view === "inline") {
-  initInlineEditor();
-} else {
-  initFullscreenEditor();
-}
+
+initInlineEditor();

@@ -14,7 +14,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
             'summary' => 'Frontend editor for MarkdownToFields.',
-            'version' =>  '0.3.2',
+            'version' =>  '0.4.0',
             'autoload' => true,
             'singular' => true,
             'requires' => ['MarkdownToFields'],
@@ -28,6 +28,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'view' => 'fullscreen',
             'toolbarButtons' => 'bold,italic,strike,paragraph,link,unlink,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split',
+            'editableTargets' => ['tag', 'container', 'section', 'subsection'],
         ];
     }
 
@@ -61,6 +62,22 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $viewField->columnWidth = 100;
         $inputfields->add($viewField);
 
+        $targetsField = \ProcessWire\wire('modules')->get('InputfieldCheckboxes');
+        $targetsField->name = 'editableTargets';
+        $targetsField->label = 'Editable Targets';
+        $targetsField->description = 'Choose which content types get auto-wrapped for editing.';
+        $targetsField->options = [
+            'tag' => 'Tag fields (<!-- name -->)',
+            'container' => 'Container fields (<!-- name... -->)',
+            'bind' => 'Bind fields (<!-- field:name -->)',
+            'section' => 'Sections (<!-- section:name -->)',
+            'subsection' => 'Subsections (<!-- sub:name -->)',
+        ];
+        $targetsField->value = !empty($data['editableTargets']) ? $data['editableTargets'] : $defaults['editableTargets'];
+        $targetsField->notes = 'Defaults: tag, container, section, subsection';
+        $targetsField->columnWidth = 100;
+        $inputfields->add($targetsField);
+
         return $inputfields;
     }
 
@@ -85,6 +102,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $this->wire('modules')->saveConfig($this, [
             'view' => $defaults['view'],
             'toolbarButtons' => $defaults['toolbarButtons'],
+            'editableTargets' => $defaults['editableTargets'],
         ]);
     }
 
@@ -156,35 +174,38 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $view = isset($this->view) && trim((string)$this->view) !== ''
             ? (string)$this->view
             : (string)$defaults['view'];
+
+        $modulePath = $config->paths($this->className());
+        $jsPath = $modulePath . 'dist/editor.bundle.js';
+        $version = is_file($jsPath) ? (string) filemtime($jsPath) : (string) time();
+        $sectionsIndex = $this->buildSectionsIndex($page);
+
         $frontConfig = [
             'view' => $view,
             'toolbarButtons' => $toolbarButtons,
+            'editableTargets' => $this->getEditableTargets(),
             'languages' => $langList,
             'currentLanguage' => $currentLangCode,
+            'buildStamp' => $version,
+            'sectionsIndex' => $sectionsIndex,
         ];
-        $configScript = "<script>window.MarkdownFrontEditorConfig=" . json_encode($frontConfig) . ";</script>";
+        $configScript = "<script>window.MarkdownFrontEditorConfig=" . json_encode($frontConfig) . ";document.body.setAttribute('data-mfe-build','{$version}');</script>";
 
-        $modulePath = $config->paths($this->className());
         $cssPath = $modulePath . 'assets/front-editor.css';
         $cssVersion = is_file($cssPath) ? (string) filemtime($cssPath) : (string) time();
         $cssHref = $url . 'assets/front-editor.css?v=' . $cssVersion;
         $cssLink = "<link rel=\"stylesheet\" href=\"{$cssHref}\">";
 
-        $viewCssLink = '';
-        if ($view === 'fullscreen') {
-            $viewCssPath = $modulePath . 'assets/front-editor-fullscreen.css';
-            $viewCssVersion = is_file($viewCssPath) ? (string) filemtime($viewCssPath) : (string) time();
-            $viewCssHref = $url . 'assets/front-editor-fullscreen.css?v=' . $viewCssVersion;
-            $viewCssLink = "<link rel=\"stylesheet\" href=\"{$viewCssHref}\">";
-        } elseif ($view === 'inline') {
-            $viewCssPath = $modulePath . 'assets/front-editor-inline.css';
-            $viewCssVersion = is_file($viewCssPath) ? (string) filemtime($viewCssPath) : (string) time();
-            $viewCssHref = $url . 'assets/front-editor-inline.css?v=' . $viewCssVersion;
-            $viewCssLink = "<link rel=\"stylesheet\" href=\"{$viewCssHref}\">";
-        }
+        $inlineCssPath = $modulePath . 'assets/front-editor-inline.css';
+        $inlineCssVersion = is_file($inlineCssPath) ? (string) filemtime($inlineCssPath) : (string) time();
+        $inlineCssHref = $url . 'assets/front-editor-inline.css?v=' . $inlineCssVersion;
 
-        $jsPath = $modulePath . 'dist/editor.bundle.js';
-        $version = is_file($jsPath) ? (string) filemtime($jsPath) : (string) time();
+        $fullscreenCssPath = $modulePath . 'assets/front-editor-fullscreen.css';
+        $fullscreenCssVersion = is_file($fullscreenCssPath) ? (string) filemtime($fullscreenCssPath) : (string) time();
+        $fullscreenCssHref = $url . 'assets/front-editor-fullscreen.css?v=' . $fullscreenCssVersion;
+
+        $viewCssLink = "<link rel=\"stylesheet\" href=\"{$inlineCssHref}\">";
+        $viewCssLink .= "<link rel=\"stylesheet\" href=\"{$fullscreenCssHref}\">";
         
         // Load bundled ProseMirror editor (single file, no external dependencies)
         $moduleScript = "<script src=\"{$url}dist/editor.bundle.js?v={$version}\"></script>";
@@ -234,38 +255,61 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
         if (!isset($content->sections) || !is_array($content->sections)) return;
 
+        $targets = $this->getEditableTargets();
+        $allow = fn($kind) => in_array($kind, $targets, true);
+
+        $sectionNameByObject = [];
+        if (isset($content->sectionsByName) && is_array($content->sectionsByName)) {
+            foreach ($content->sectionsByName as $sectionName => $sectionObj) {
+                if (!$sectionObj) continue;
+                $sectionNameByObject[spl_object_hash($sectionObj)] = $sectionName;
+            }
+        }
+
         // Collect all fields with their metadata: name, html, markdown, type
         $fields = [];
         foreach ($content->sections as $section) {
             if (isset($section->fields) && is_array($section->fields)) {
                 foreach ($section->fields as $fname => $f) {
                     if (isset($f->html) && $f->html !== '') {
+                        $fieldKind = $this->resolveFieldKind($f);
+                        if (!$allow($fieldKind)) continue;
                         $fieldType = $this->resolveFieldType($f);
                         $html = $f->html;
                         // Trust MarkdownToFields API for field extraction and boundaries
                         $markdown = (string)($f->markdown ?? '');
+                        $sectionName = $sectionNameByObject[spl_object_hash($section)] ?? '';
                         $fields[$fname] = [
                             'html' => $html,
                             'markdown' => $markdown,
                             'type' => $fieldType,
+                            'section' => $sectionName,
+                            'sectionMarkdown' => (string)($section->markdown ?? ''),
                         ];
                         $this->wire->log->save('markdown-front-edit', "COLLECT field='{$fname}' type='{$fieldType}' markdownLen=" . strlen($markdown));
                     }
                 }
             }
             if (isset($section->subsections) && is_array($section->subsections)) {
-                foreach ($section->subsections as $subsection) {
+                foreach ($section->subsections as $subsectionName => $subsection) {
                     if (isset($subsection->fields) && is_array($subsection->fields)) {
                         foreach ($subsection->fields as $fname => $f) {
                             if (isset($f->html) && $f->html !== '') {
+                                $fieldKind = $this->resolveFieldKind($f);
+                                if (!$allow($fieldKind)) continue;
                                 $fieldType = $this->resolveFieldType($f);
                                 $html = $f->html;
                                 // Trust MarkdownToFields API for field extraction and boundaries
                                 $markdown = (string)($f->markdown ?? '');
+                                $sectionName = $sectionNameByObject[spl_object_hash($section)] ?? '';
                                 $fields[$fname] = [
                                     'html' => $html,
                                     'markdown' => $markdown,
                                     'type' => $fieldType,
+                                    'section' => $sectionName,
+                                    'sectionMarkdown' => (string)($section->markdown ?? ''),
+                                    'subsection' => (string)$subsectionName,
+                                    'subsectionMarkdown' => (string)($subsection->markdown ?? ''),
                                 ];
                                 $this->wire->log->save('markdown-front-edit', "COLLECT field='{$fname}' type='{$fieldType}' markdownLen=" . strlen($markdown));
                             }
@@ -275,10 +319,19 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             }
         }
 
-        // Rebuild output by wrapping fields using HTML comment markers
+        // Rebuild output by wrapping blocks/fields using HTML comment markers
         // LetMeDown source has <!-- fieldname --> markers; we'll insert them into HTML
         // then wrap based on those markers
         $rebuilt = $out;
+
+        // NOTE: We avoid DOM wrappers for sections/subsections to preserve layout.
+        // Instead we inject invisible comment markers for stable overlay detection.
+        $editableTargets = $this->getEditableTargets();
+        $allowSectionMarkers = in_array('section', $editableTargets, true);
+        $allowSubsectionMarkers = in_array('subsection', $editableTargets, true);
+        $rebuilt = $this->injectSectionMarkers($rebuilt, $content, $allowSectionMarkers, $allowSubsectionMarkers);
+
+        // We also attach section metadata to field wrappers to preserve layout.
         
         foreach ($content->sections as $section) {
             if (isset($section->fields) && is_array($section->fields)) {
@@ -288,6 +341,10 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         $safeType = htmlspecialchars($fields[$fname]['type'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                         $safeMarkdown = htmlspecialchars($fields[$fname]['markdown'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                         $safeMarkdownB64 = htmlspecialchars(base64_encode($fields[$fname]['markdown']), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                        $sectionName = (string)($fields[$fname]['section'] ?? '');
+                        $sectionMarkdown = (string)($fields[$fname]['sectionMarkdown'] ?? '');
+                        $safeSection = htmlspecialchars($sectionName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                        $safeSectionB64 = htmlspecialchars(base64_encode($sectionMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                         
                         // Check if already wrapped
                         if (stripos($rebuilt, 'data-md-name="' . $safeAttr . '"') !== false) continue;
@@ -295,7 +352,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         // Find and wrap the field
                         $originalHtml = $f->html;
                         $displayHtml = $fields[$fname]['html'];
-                        $wrapper = '<div class="fe-editable md-edit" data-md-name="' . $safeAttr . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
+                        $wrapper = '<div class="fe-editable md-edit" data-md-scope="field" data-md-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-md-section-b64="' . $safeSectionB64 . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
                         
                         // Find original HTML in output and replace with wrapped version
                         $pos = stripos($rebuilt, $originalHtml);
@@ -314,13 +371,21 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                                 $safeType = htmlspecialchars($fields[$fname]['type'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                                 $safeMarkdown = htmlspecialchars($fields[$fname]['markdown'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                                 $safeMarkdownB64 = htmlspecialchars(base64_encode($fields[$fname]['markdown']), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                                $sectionName = (string)($fields[$fname]['section'] ?? '');
+                                $sectionMarkdown = (string)($fields[$fname]['sectionMarkdown'] ?? '');
+                                $subsectionName = (string)($fields[$fname]['subsection'] ?? '');
+                                $subsectionMarkdown = (string)($fields[$fname]['subsectionMarkdown'] ?? '');
+                                $safeSection = htmlspecialchars($sectionName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                                $safeSectionB64 = htmlspecialchars(base64_encode($sectionMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                                $safeSubsection = htmlspecialchars($subsectionName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                                $safeSubsectionB64 = htmlspecialchars(base64_encode($subsectionMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                                 
                                 // Check if already wrapped
                                 if (stripos($rebuilt, 'data-md-name="' . $safeAttr . '"') !== false) continue;
                                 
                                 $originalHtml = $f->html;
                                 $displayHtml = $fields[$fname]['html'];
-                                $wrapper = '<div class="fe-editable md-edit" data-md-name="' . $safeAttr . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
+                                $wrapper = '<div class="fe-editable md-edit" data-md-scope="field" data-md-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-md-section-b64="' . $safeSectionB64 . '" data-md-subsection="' . $safeSubsection . '" data-md-subsection-b64="' . $safeSubsectionB64 . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
                                 
                                 $pos = stripos($rebuilt, $originalHtml);
                                 if ($pos !== false) {
@@ -336,6 +401,95 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $out = $rebuilt;
 
         $event->return = $out;
+    }
+
+    private function injectSectionMarkers($rebuilt, $content, $allowSectionMarkers, $allowSubsectionMarkers) {
+        if (!$rebuilt || !is_string($rebuilt)) return $rebuilt;
+        if (!($allowSectionMarkers || $allowSubsectionMarkers)) return $rebuilt;
+        if (!isset($content->sectionsByName) || !is_array($content->sectionsByName)) return $rebuilt;
+
+        foreach ($content->sectionsByName as $sectionName => $section) {
+            if (!$sectionName || !$section) continue;
+            $sectionHtml = (string)($section->html ?? '');
+            if ($sectionHtml === '') continue;
+            $safeSection = htmlspecialchars((string)$sectionName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            $sectionStart = '<!--mfe:section:start ' . $safeSection . '-->';
+            $sectionEnd = '<!--mfe:section:end ' . $safeSection . '-->';
+            $sectionHtmlWithMarkers = $sectionHtml;
+
+            if ($allowSubsectionMarkers && isset($section->subsections) && is_array($section->subsections)) {
+                foreach ($section->subsections as $subName => $subsection) {
+                    if (!$subName || !$subsection) continue;
+                    $subHtml = (string)($subsection->html ?? '');
+                    if ($subHtml === '') continue;
+                    $safeSub = htmlspecialchars((string)$subName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                    $subStart = '<!--mfe:subsection:start ' . $safeSection . '::' . $safeSub . '-->';
+                    $subEnd = '<!--mfe:subsection:end ' . $safeSection . '::' . $safeSub . '-->';
+                    if (stripos($sectionHtmlWithMarkers, $subStart) === false) {
+                        $pos = stripos($sectionHtmlWithMarkers, $subHtml);
+                        if ($pos !== false) {
+                            $sectionHtmlWithMarkers = substr_replace(
+                                $sectionHtmlWithMarkers,
+                                $subStart . $subHtml . $subEnd,
+                                $pos,
+                                strlen($subHtml)
+                            );
+                        }
+                    }
+                }
+            }
+
+            if ($allowSectionMarkers && stripos($rebuilt, $sectionStart) === false) {
+                $pos = stripos($rebuilt, $sectionHtml);
+                if ($pos !== false) {
+                    $rebuilt = substr_replace(
+                        $rebuilt,
+                        $sectionStart . $sectionHtmlWithMarkers . $sectionEnd,
+                        $pos,
+                        strlen($sectionHtml)
+                    );
+                }
+            } elseif ($allowSubsectionMarkers && stripos($rebuilt, $sectionHtmlWithMarkers) === false) {
+                $pos = stripos($rebuilt, $sectionHtml);
+                if ($pos !== false) {
+                    $rebuilt = substr_replace(
+                        $rebuilt,
+                        $sectionHtmlWithMarkers,
+                        $pos,
+                        strlen($sectionHtml)
+                    );
+                }
+            }
+        }
+
+        if ($allowSubsectionMarkers) {
+            foreach ($content->sectionsByName as $sectionName => $section) {
+                if (!$sectionName || !$section) continue;
+                $safeSection = htmlspecialchars((string)$sectionName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                if (!isset($section->subsections) || !is_array($section->subsections)) continue;
+                foreach ($section->subsections as $subName => $subsection) {
+                    if (!$subName || !$subsection) continue;
+                    $subHtml = (string)($subsection->html ?? '');
+                    if ($subHtml === '') continue;
+                    $safeSub = htmlspecialchars((string)$subName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                    $subStart = '<!--mfe:subsection:start ' . $safeSection . '::' . $safeSub . '-->';
+                    $subEnd = '<!--mfe:subsection:end ' . $safeSection . '::' . $safeSub . '-->';
+                    if (stripos($rebuilt, $subStart) === false) {
+                        $pos = stripos($rebuilt, $subHtml);
+                        if ($pos !== false) {
+                            $rebuilt = substr_replace(
+                                $rebuilt,
+                                $subStart . $subHtml . $subEnd,
+                                $pos,
+                                strlen($subHtml)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        return $rebuilt;
     }
 
     /**
@@ -374,17 +528,20 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
         
         $fieldType = null;
+        $fieldKind = null;
         
         if (isset($content->sections) && is_array($content->sections)) {
             foreach ($content->sections as $section) {
                 if (isset($section->fields[$fieldName])) {
                     $fieldType = $this->resolveFieldType($section->fields[$fieldName]);
+                    $fieldKind = $this->resolveFieldKind($section->fields[$fieldName]);
                     break;
                 }
                 if (isset($section->subsections) && is_array($section->subsections)) {
                     foreach ($section->subsections as $subsection) {
                         if (isset($subsection->fields[$fieldName])) {
                             $fieldType = $this->resolveFieldType($subsection->fields[$fieldName]);
+                            $fieldKind = $this->resolveFieldKind($subsection->fields[$fieldName]);
                             break 2;
                         }
                     }
@@ -396,11 +553,16 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $event->return = $html;
             return;
         }
+        $targets = $this->getEditableTargets();
+        if ($fieldKind && !in_array($fieldKind, $targets, true)) {
+            $event->return = $html;
+            return;
+        }
 
         // Wrap in editable container with metadata
         $safeAttr = htmlspecialchars($fieldName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $safeType = htmlspecialchars($fieldType, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $out = "<div class=\"fe-editable md-edit\" data-md-name=\"{$safeAttr}\" data-field-type=\"{$safeType}\" data-page=\"{$page->id}\">";
+        $out = "<div class=\"fe-editable md-edit\" data-md-scope=\"field\" data-md-name=\"{$safeAttr}\" data-field-type=\"{$safeType}\" data-page=\"{$page->id}\">";
         $out .= $html;
         $out .= "</div>";
         $event->return = $out;
@@ -435,6 +597,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             }
 
             $mdName = $input->get->text('mdName');
+            $mdScope = $input->get->text('mdScope') ?: 'field';
+            $mdSection = $input->get->text('mdSection');
             $pageId = (int)$input->get->pageId;
             if(!$mdName || !$pageId) {
                 $this->sendJsonError('Missing mdName or pageId', 400);
@@ -460,23 +624,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 $langCode = $lang ? $lang->name : 'default';
                 try {
                     $content = $page->loadContent(null, $lang ? $lang->name : null);
-                    $found = null;
-                    if (isset($content->sections) && is_array($content->sections)) {
-                        foreach ($content->sections as $section) {
-                            if (isset($section->fields[$mdName])) {
-                                $found = $section->fields[$mdName]->markdown ?? '';
-                                break;
-                            }
-                            if (isset($section->subsections)) {
-                                foreach ($section->subsections as $subsection) {
-                                    if (isset($subsection->fields[$mdName])) {
-                                        $found = $subsection->fields[$mdName]->markdown ?? '';
-                                        break 2;
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    $found = $this->findScopedMarkdown($content, $mdScope, $mdName, $mdSection ?? '');
                     $results[$langCode] = (string)($found ?? '');
                 } catch (\Throwable $e) {
                     $results[$langCode] = '';
@@ -527,11 +675,38 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $this->sendJsonError('MarkdownToFields not configured for this page', 400);
         }
 
+        $mdScope = $input->post->text('mdScope') ?: 'field';
+        $mdSection = $input->post->text('mdSection');
+
         if ($isBatch) {
             $fieldsJson = (string)$input->post('fields', 'string');
-            $fields = wireDecodeJSON($fieldsJson);
-            if (!is_array($fields) || !$fields) {
+            $fieldsPayload = wireDecodeJSON($fieldsJson);
+            if (!is_array($fieldsPayload) || !$fieldsPayload) {
                 $this->sendJsonError('Missing fields payload', 400);
+            }
+
+            $fieldEntries = [];
+            if (array_is_list($fieldsPayload)) {
+                foreach ($fieldsPayload as $entry) {
+                    if (!is_array($entry)) continue;
+                    $fieldEntries[] = [
+                        'key' => (string)($entry['key'] ?? ''),
+                        'name' => (string)($entry['name'] ?? ''),
+                        'scope' => (string)($entry['scope'] ?? 'field'),
+                        'section' => (string)($entry['section'] ?? ''),
+                        'markdown' => (string)($entry['markdown'] ?? ''),
+                    ];
+                }
+            } else {
+                foreach ($fieldsPayload as $mdName => $blockMarkdown) {
+                    $fieldEntries[] = [
+                        'key' => (string)$mdName,
+                        'name' => (string)$mdName,
+                        'scope' => 'field',
+                        'section' => '',
+                        'markdown' => (string)$blockMarkdown,
+                    ];
+                }
             }
 
             try {
@@ -541,37 +716,28 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 $skipped = [];
                 $replaced = 0;
 
-                foreach ($fields as $mdName => $blockMarkdown) {
-                    $blockMarkdown = (string)$blockMarkdown;
+                foreach ($fieldEntries as $entry) {
+                    $key = $entry['key'];
+                    $mdName = $entry['name'];
+                    $scope = $entry['scope'] ?: 'field';
+                    $sectionName = $entry['section'];
+                    $blockMarkdown = (string)($entry['markdown'] ?? '');
+
                     if ($mdName === '' || trim($blockMarkdown) === '') {
-                        $skipped[] = $mdName;
+                        $skipped[] = $key;
                         continue;
                     }
 
-                    $oldFieldMarkdown = null;
-                    foreach ($content->sections as $section) {
-                        if (isset($section->fields[$mdName])) {
-                            $oldFieldMarkdown = (string)($section->fields[$mdName]->markdown ?? '');
-                            break;
-                        }
-                        if (isset($section->subsections)) {
-                            foreach ($section->subsections as $subsection) {
-                                if (isset($subsection->fields[$mdName])) {
-                                    $oldFieldMarkdown = (string)($subsection->fields[$mdName]->markdown ?? '');
-                                    break 2;
-                                }
-                            }
-                        }
-                    }
+                    $oldFieldMarkdown = $this->findScopedMarkdown($content, $scope, $mdName, $sectionName);
 
                     if ($oldFieldMarkdown === null) {
-                        $skipped[] = $mdName;
+                        $skipped[] = $key;
                         continue;
                     }
 
                     $updatedMarkdown = str_replace($oldFieldMarkdown, $blockMarkdown, $updatedMarkdown, $count);
                     if ($count === 0) {
-                        $skipped[] = $mdName;
+                        $skipped[] = $key;
                         continue;
                     }
                     $replaced += $count;
@@ -588,31 +754,20 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $languageCode = $langCode !== '' ? $langCode : \ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
             $content = $page->loadContent(null, $languageCode);
             $htmlMap = [];
-            foreach ($fields as $mdName => $blockMarkdown) {
-                $canonicalHtml = null;
-                if (isset($content->sections) && is_array($content->sections)) {
-                    foreach ($content->sections as $s) {
-                        if (isset($s->fields[$mdName]->html)) {
-                            $canonicalHtml = $s->fields[$mdName]->html;
-                            break;
-                        }
-                        if (isset($s->subsections) && is_array($s->subsections)) {
-                            foreach ($s->subsections as $sub) {
-                                if (isset($sub->fields[$mdName]->html)) {
-                                    $canonicalHtml = $sub->fields[$mdName]->html;
-                                    break 2;
-                                }
-                            }
-                        }
-                    }
-                }
+            foreach ($fieldEntries as $entry) {
+                $key = $entry['key'] ?: $entry['name'];
+                $mdName = $entry['name'];
+                $scope = $entry['scope'] ?: 'field';
+                $sectionName = $entry['section'];
+                $blockMarkdown = (string)($entry['markdown'] ?? '');
+                $canonicalHtml = $this->findScopedHtml($content, $scope, $mdName, $sectionName);
                 if ($canonicalHtml && strpos((string)$blockMarkdown, '<') !== false && strpos((string)$blockMarkdown, '>') !== false) {
                     $parsedown = new \Parsedown();
                     $parsedown->setSafeMode(false);
                     $canonicalHtml = $parsedown->text((string)$blockMarkdown);
                 }
                 if ($canonicalHtml !== null) {
-                    $htmlMap[$mdName] = $canonicalHtml;
+                    $htmlMap[$key] = $canonicalHtml;
                 }
             }
 
@@ -659,40 +814,10 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             // Get original field markdown from MarkdownToFields
             // MarkdownToFields handles all field boundary extraction
             $fullMarkdown = $content->getRawDocument();
-            $oldFieldMarkdown = '';
-            foreach ($content->sections as $section) {
-                if (isset($section->fields[$mdName])) {
-                    $oldFieldMarkdown = (string)($section->fields[$mdName]->markdown ?? '');
-                    break;
-                }
-                // Check subsections if they exist
-                if (isset($section->subsections)) {
-                    foreach ($section->subsections as $subsection) {
-                        if (isset($subsection->fields[$mdName])) {
-                            $oldFieldMarkdown = (string)($subsection->fields[$mdName]->markdown ?? '');
-                            break 2;
-                        }
-                    }
-                }
-            }
+            $oldFieldMarkdown = $this->findScopedMarkdown($content, $mdScope, $mdName, $mdSection ?? '');
             
             // Get HTML for unchanged check
-            $oldFieldHtml = null;
-            foreach ($content->sections as $section) {
-                if (isset($section->fields[$mdName])) {
-                    $oldFieldHtml = $section->fields[$mdName]->html;
-                    break;
-                }
-                // Check subsections if they exist
-                if (isset($section->subsections)) {
-                    foreach ($section->subsections as $subsection) {
-                        if (isset($subsection->fields[$mdName])) {
-                            $oldFieldHtml = $subsection->fields[$mdName]->html;
-                            break 2;
-                        }
-                    }
-                }
-            }
+            $oldFieldHtml = $this->findScopedHtml($content, $mdScope, $mdName, $mdSection ?? '');
             
             if ($oldFieldMarkdown === null) {
                 $this->sendJsonError('Field not found in content: ' . $mdName, 400);
@@ -740,28 +865,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             "RESPONSE: loadContent completed, looking for field '{$mdName}' in " . count($content->sections ?? []) . " sections"
         );
         
-        if (isset($content->sections) && is_array($content->sections)) {
-            foreach ($content->sections as $s) {
-                if (isset($s->fields[$mdName]->html)) {
-                    $canonicalHtml = $s->fields[$mdName]->html;
-                    $this->wire->log->save('markdown-front-edit',
-                        "RESPONSE: Found field HTML in section: " . substr($canonicalHtml, 0, 100)
-                    );
-                    break;
-                }
-                if (isset($s->subsections) && is_array($s->subsections)) {
-                    foreach ($s->subsections as $sub) {
-                        if (isset($sub->fields[$mdName]->html)) {
-                            $canonicalHtml = $sub->fields[$mdName]->html;
-                            $this->wire->log->save('markdown-front-edit',
-                                "RESPONSE: Found field HTML in subsection: " . substr($canonicalHtml, 0, 100)
-                            );
-                            break 2;
-                        }
-                    }
-                }
-            }
-        }
+        $canonicalHtml = $this->findScopedHtml($content, $mdScope, $mdName, $mdSection ?? '');
         
         // If the incoming markdown contains raw HTML tags (e.g., <br>), 
         // generate fresh HTML using Parsedown with safe mode disabled to preserve them
@@ -789,6 +893,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
      * Uses $field->type when provided; falls back to HTML tag inspection.
      */
     protected function resolveFieldType($field): string {
+        if ($field instanceof \LetMeDown\FieldContainer) {
+            return 'container';
+        }
         if (is_object($field) && !empty($field->type)) {
             return $field->type;
         }
@@ -805,6 +912,174 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         if (preg_match('/^<blockquote\b/i', $html)) return 'quote';
 
         return 'block';
+    }
+
+    protected function resolveFieldKind($field): string {
+        if ($field instanceof \LetMeDown\FieldContainer) {
+            return 'container';
+        }
+        if (is_object($field) && isset($field->type) && $field->type === 'binding') {
+            return 'bind';
+        }
+        return 'tag';
+    }
+
+    protected function getEditableTargets(): array {
+        $defaults = self::getDefaultData();
+        $targets = $this->editableTargets ?? $defaults['editableTargets'];
+        if (is_string($targets)) {
+            $targets = array_filter(array_map('trim', explode(',', $targets)));
+        }
+        if (!is_array($targets)) {
+            $targets = $defaults['editableTargets'];
+        }
+        return array_values($targets);
+    }
+
+    protected function buildSectionsIndex(?\ProcessWire\Page $page): array {
+        if (!$page || !$page->id || !method_exists($page, 'content')) return [];
+        try {
+            $content = $page->content();
+        } catch (\Throwable $e) {
+            return [];
+        }
+        if (!isset($content->sectionsByName) || !is_array($content->sectionsByName)) return [];
+
+        $sections = [];
+        foreach ($content->sectionsByName as $name => $section) {
+            if (!$name || !$section) continue;
+            $sectionItem = [
+                'name' => (string)$name,
+                'text' => (string)($section->text ?? ''),
+                'markdownB64' => base64_encode((string)($section->markdown ?? '')),
+                'subsections' => [],
+            ];
+            if (isset($section->subsections) && is_array($section->subsections)) {
+                foreach ($section->subsections as $subName => $subsection) {
+                    if (!$subName || !$subsection) continue;
+                    $subEntry = [
+                        'name' => (string)$subName,
+                        'text' => (string)($subsection->text ?? ''),
+                        'markdownB64' => base64_encode((string)($subsection->markdown ?? '')),
+                    ];
+                    $sectionItem['subsections'][] = $subEntry;
+                }
+            }
+            $sections[] = $sectionItem;
+        }
+        return $sections;
+    }
+
+    protected function findScopedMarkdown($content, string $scope, string $name, string $sectionName = ''): ?string {
+        if ($scope === 'block') {
+            if ($sectionName === '' || !isset($content->sectionsByName[$sectionName])) {
+                return null;
+            }
+            $section = $content->sectionsByName[$sectionName];
+            $subName = '';
+            $blockIndex = null;
+            if (strpos($name, '::') !== false) {
+                [$subName, $indexStr] = explode('::', $name, 2);
+                $blockIndex = ctype_digit($indexStr) ? (int)$indexStr : null;
+            } else {
+                $blockIndex = ctype_digit($name) ? (int)$name : null;
+            }
+            if ($blockIndex === null) return null;
+            if ($subName !== '') {
+                if (!isset($section->subsections[$subName])) return null;
+                $subsection = $section->subsections[$subName];
+                if (!isset($subsection->blocks[$blockIndex])) return null;
+                return (string)($subsection->blocks[$blockIndex]->markdown ?? '');
+            }
+            if (!isset($section->blocks[$blockIndex])) return null;
+            return (string)($section->blocks[$blockIndex]->markdown ?? '');
+        }
+        if ($scope === 'section') {
+            if (isset($content->sectionsByName[$name])) {
+                return (string)($content->sectionsByName[$name]->markdown ?? '');
+            }
+            return null;
+        }
+        if ($scope === 'subsection') {
+            if ($sectionName !== '' && isset($content->sectionsByName[$sectionName])) {
+                $section = $content->sectionsByName[$sectionName];
+                if (isset($section->subsections[$name])) {
+                    return (string)($section->subsections[$name]->markdown ?? '');
+                }
+            }
+            return null;
+        }
+
+        if (!isset($content->sections) || !is_array($content->sections)) return null;
+        foreach ($content->sections as $section) {
+            if (isset($section->fields[$name])) {
+                return (string)($section->fields[$name]->markdown ?? '');
+            }
+            if (isset($section->subsections)) {
+                foreach ($section->subsections as $subsection) {
+                    if (isset($subsection->fields[$name])) {
+                        return (string)($subsection->fields[$name]->markdown ?? '');
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    protected function findScopedHtml($content, string $scope, string $name, string $sectionName = ''): ?string {
+        if ($scope === 'block') {
+            if ($sectionName === '' || !isset($content->sectionsByName[$sectionName])) {
+                return null;
+            }
+            $section = $content->sectionsByName[$sectionName];
+            $subName = '';
+            $blockIndex = null;
+            if (strpos($name, '::') !== false) {
+                [$subName, $indexStr] = explode('::', $name, 2);
+                $blockIndex = ctype_digit($indexStr) ? (int)$indexStr : null;
+            } else {
+                $blockIndex = ctype_digit($name) ? (int)$name : null;
+            }
+            if ($blockIndex === null) return null;
+            if ($subName !== '') {
+                if (!isset($section->subsections[$subName])) return null;
+                $subsection = $section->subsections[$subName];
+                if (!isset($subsection->blocks[$blockIndex])) return null;
+                return (string)($subsection->blocks[$blockIndex]->html ?? '');
+            }
+            if (!isset($section->blocks[$blockIndex])) return null;
+            return (string)($section->blocks[$blockIndex]->html ?? '');
+        }
+        if ($scope === 'section') {
+            if (isset($content->sectionsByName[$name])) {
+                return (string)($content->sectionsByName[$name]->html ?? '');
+            }
+            return null;
+        }
+        if ($scope === 'subsection') {
+            if ($sectionName !== '' && isset($content->sectionsByName[$sectionName])) {
+                $section = $content->sectionsByName[$sectionName];
+                if (isset($section->subsections[$name])) {
+                    return (string)($section->subsections[$name]->html ?? '');
+                }
+            }
+            return null;
+        }
+
+        if (!isset($content->sections) || !is_array($content->sections)) return null;
+        foreach ($content->sections as $section) {
+            if (isset($section->fields[$name])) {
+                return (string)($section->fields[$name]->html ?? '');
+            }
+            if (isset($section->subsections)) {
+                foreach ($section->subsections as $subsection) {
+                    if (isset($subsection->fields[$name])) {
+                        return (string)($subsection->fields[$name]->html ?? '');
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     protected function sendJsonError($msg, $code = 400) {

@@ -1,5 +1,7 @@
+
 # Todo
 - Implement a Notion-like editor.
+- Add an edit all document option
 
 # Features
 - Image editor

@@ -18,6 +18,10 @@ import {
 } from "./editor-core.js";
 import { createToolbarButtons } from "./editor-toolbar.js";
 import { renderToolbarButtons } from "./editor-toolbar-renderer.js";
+import { openFullscreenEditorForElement } from "./editor-fullscreen.js";
+import { createOverlayEngine } from "./overlay-engine.js";
+import { resolveDblclickAction } from "./scope-resolver.js";
+import { getSectionEntry, getSubsectionEntry } from "./content-index.js";
 import {
   registerStatusEl,
   markDirty,
@@ -31,11 +35,23 @@ let activeEditor = null;
 let activeTarget = null;
 let activeFieldName = null;
 let activeFieldType = null;
+let activeFieldScope = "field";
+let activeFieldSection = "";
 let toolbarEl = null;
 let toolbarStatusEl = null;
 let toolbarCloseBtn = null;
 let keydownHandler = null;
 let pointerHandler = null;
+let dblclickHandler = null;
+let hoverHandler = null;
+let hoverRaf = null;
+let lastHoverKey = "";
+let lastHoverRect = null;
+let debugLabels =
+  window.MarkdownFrontEditorConfig?.debugLabels ||
+  window.localStorage?.getItem("mfeDebugLabels") === "1";
+const overlayEngine = createOverlayEngine({ debugLabels });
+
 let dirty = false;
 const originalBlockCounts = new WeakMap();
 const originalHtml = new WeakMap();
@@ -44,6 +60,260 @@ const draftByField = new Map();
 const draftMarkdownByField = new Map();
 let suppressUpdates = false;
 const fieldElements = new Map();
+
+function collectSectionTargets() {
+  const fields = Array.from(document.querySelectorAll(".fe-editable"));
+  const sections = new Map();
+  const subsections = new Map();
+
+  fields.forEach((el) => {
+    const sectionName = el.getAttribute("data-md-section") || "";
+    const sectionB64 = el.getAttribute("data-md-section-b64") || "";
+    const subsectionName = el.getAttribute("data-md-subsection") || "";
+    const subsectionB64 = el.getAttribute("data-md-subsection-b64") || "";
+    if (sectionName && sectionB64) {
+      if (!sections.has(sectionName)) {
+        sections.set(sectionName, { b64: sectionB64, rects: [] });
+      }
+      sections.get(sectionName).rects.push(el.getBoundingClientRect());
+    }
+    if (sectionName && subsectionName && subsectionB64) {
+      const key = `${sectionName}::${subsectionName}`;
+      if (!subsections.has(key)) {
+        subsections.set(key, {
+          section: sectionName,
+          name: subsectionName,
+          b64: subsectionB64,
+          rects: [],
+        });
+      }
+      subsections.get(key).rects.push(el.getBoundingClientRect());
+    }
+  });
+
+  const collapseRects = (rects) => {
+    const bounds = rects.reduce(
+      (acc, r) => ({
+        left: Math.min(acc.left, r.left),
+        top: Math.min(acc.top, r.top),
+        right: Math.max(acc.right, r.right),
+        bottom: Math.max(acc.bottom, r.bottom),
+      }),
+      { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity },
+    );
+    return bounds;
+  };
+
+  const sectionTargets = Array.from(sections.entries()).map(([name, data]) => ({
+    scope: "section",
+    name,
+    b64: data.b64,
+    rect: collapseRects(data.rects),
+  }));
+
+  const subsectionTargets = Array.from(subsections.values()).map((data) => ({
+    scope: "subsection",
+    name: data.name,
+    section: data.section,
+    b64: data.b64,
+    rect: collapseRects(data.rects),
+  }));
+
+  return { sectionTargets, subsectionTargets };
+}
+
+function findTargetFromPoint(x, y) {
+  const { sectionTargets, subsectionTargets } = collectSectionTargets();
+  const hit = (rect) =>
+    x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+
+  const sub = subsectionTargets.find((t) => hit(t.rect));
+  if (sub) return sub;
+  const sec = sectionTargets.find((t) => hit(t.rect));
+  if (sec) return sec;
+  return null;
+}
+
+function findSectionFromText(text) {
+  const cfg = window.MarkdownFrontEditorConfig || {};
+  const sections = Array.isArray(cfg.sectionsIndex) ? cfg.sectionsIndex : [];
+  const needle = (text || "").trim();
+  if (!needle) return null;
+
+  const normalize = (value) =>
+    (value || "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const findTextRect = (snippet) => {
+    const search = normalize(snippet);
+    if (!search) return null;
+    const walker = document.createTreeWalker(
+      document.body,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode(node) {
+          const parent = node.parentElement;
+          if (!parent) return NodeFilter.FILTER_REJECT;
+          if (parent.closest("script, style, noscript")) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      },
+    );
+    let current = walker.nextNode();
+    while (current) {
+      const value = normalize(current.nodeValue);
+      const index = value.indexOf(search);
+      if (index >= 0) {
+        const range = document.createRange();
+        range.setStart(current, index);
+        range.setEnd(current, index + search.length);
+        const rect = range.getBoundingClientRect();
+        if (rect && rect.width && rect.height) {
+          return rect;
+        }
+      }
+      current = walker.nextNode();
+    }
+    return null;
+  };
+
+  const getSectionText = (section) => {
+    if (section?.text) return normalize(section.text);
+    if (section?.markdownB64) {
+      try {
+        const decoded = decodeMarkdownBase64(section.markdownB64);
+        return normalize(decoded.replace(/[`*_>#\-\[\]!\(\)]/g, " "));
+      } catch (e) {
+        return "";
+      }
+    }
+    return "";
+  };
+
+  const needleNorm = normalize(needle);
+  for (const section of sections) {
+    const subs = Array.isArray(section.subsections)
+      ? section.subsections
+      : [];
+    for (const sub of subs) {
+      const hay = getSectionText(sub);
+      if (hay && hay.includes(needleNorm)) {
+        const rect = findTextRect(needle);
+        return { scope: "subsection", section: section.name, ...sub, rect };
+      }
+    }
+    const sectionText = getSectionText(section);
+    if (sectionText && sectionText.includes(needleNorm)) {
+      const rect = findTextRect(needle);
+      return { scope: "section", ...section, rect };
+    }
+  }
+  return null;
+}
+
+function normalizeText(value) {
+  return (value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function createVirtualTarget({
+  pageId,
+  scope,
+  name,
+  section = "",
+  markdown,
+}) {
+  const el = document.createElement("div");
+  el.className = "fe-editable md-edit mfe-virtual";
+  el.setAttribute("data-page", pageId);
+  el.setAttribute("data-md-scope", scope);
+  el.setAttribute("data-md-name", name);
+  if (section) {
+    el.setAttribute("data-md-section", section);
+  }
+  if (markdown !== undefined) {
+    el.setAttribute(
+      "data-markdown-b64",
+      btoa(unescape(encodeURIComponent(markdown))),
+    );
+  }
+  return el;
+}
+
+function getEditLabel(scope, name, section) {
+  if (!debugLabels) return "Double click to edit";
+  if (section) {
+    return `Double click to edit (${scope}: ${section} → ${name})`;
+  }
+  if (name) {
+    return `Double click to edit (${scope}: ${name})`;
+  }
+  return `Double click to edit (${scope})`;
+}
+
+function applyEditLabelAttributes(el) {
+  if (!el) return;
+  const scope = el.getAttribute("data-md-scope") || "field";
+  const name = el.getAttribute("data-md-name") || "";
+  const section = el.getAttribute("data-md-section") || "";
+  el.setAttribute("data-mfe-label", getEditLabel(scope, name, section));
+  el.setAttribute("data-mfe-label-debug", debugLabels ? "1" : "0");
+}
+
+function getRectFromChildren(el) {
+  const children = Array.from(el.children);
+  if (!children.length) return null;
+  const rects = children.map((c) => c.getBoundingClientRect());
+  return rects.reduce(
+    (acc, r) => ({
+      left: Math.min(acc.left, r.left),
+      top: Math.min(acc.top, r.top),
+      right: Math.max(acc.right, r.right),
+      bottom: Math.max(acc.bottom, r.bottom),
+    }),
+    { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity },
+  );
+}
+
+function inflateRect(rect, padding = 48) {
+  return {
+    left: rect.left - padding,
+    top: rect.top - padding,
+    right: rect.right + padding,
+    bottom: rect.bottom + padding,
+  };
+}
+
+function isPointInRect(x, y, rect) {
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+function buildFieldId({ pageId, scope, section, name }) {
+  const parts = [
+    String(pageId || ""),
+    scope || "field",
+    section || "",
+    name || "",
+  ];
+  return parts.map((part) => encodeURIComponent(part)).join("|");
+}
+
+function parseFieldId(fieldId) {
+  const [pageId, scope, section, name] = fieldId
+    .split("|")
+    .map((part) => decodeURIComponent(part || ""));
+  return {
+    pageId,
+    scope: scope || "field",
+    section: section || "",
+    name: name || "",
+  };
+}
 
 function renderDraftHtml(editor) {
   if (!editor) return "";
@@ -280,7 +550,7 @@ function getMarkdownFromEditor(editor = activeEditor) {
 }
 
 function saveField(fieldId, markdown) {
-  const [pageId, fieldName] = fieldId.split(":");
+  const { pageId, name: fieldName, scope, section } = parseFieldId(fieldId);
   const target = fieldElements.get(fieldId);
   if (!pageId || !fieldName || !target) {
     return Promise.resolve();
@@ -299,6 +569,10 @@ function saveField(fieldId, markdown) {
       const formData = new FormData();
       formData.append("markdown", finalMarkdown);
       formData.append("mdName", fieldName);
+      formData.append("mdScope", scope || "field");
+      if (section) {
+        formData.append("mdSection", section);
+      }
       formData.append("pageId", pageId);
 
       if (csrf) {
@@ -344,10 +618,16 @@ function saveAllDrafts({ showStatus = true } = {}) {
   const entries = Array.from(draftMarkdownByField.entries());
   const grouped = new Map();
   entries.forEach(([fieldId, markdown]) => {
-    const [pageId, fieldName] = fieldId.split(":");
-    if (!pageId || !fieldName) return;
-    if (!grouped.has(pageId)) grouped.set(pageId, {});
-    grouped.get(pageId)[fieldName] = markdown;
+    const { pageId, name, scope, section } = parseFieldId(fieldId);
+    if (!pageId || !name) return;
+    if (!grouped.has(pageId)) grouped.set(pageId, []);
+    grouped.get(pageId).push({
+      key: fieldId,
+      name,
+      scope: scope || "field",
+      section: section || "",
+      markdown,
+    });
   });
 
   const batchSaves = Array.from(grouped.entries()).map(
@@ -361,12 +641,17 @@ function saveAllDrafts({ showStatus = true } = {}) {
       if (showStatus) setSaved();
     })
     .catch((err) => {
-      console.error("Save error:", err);
+      // save errors are handled by caller
       if (showStatus) setError();
     });
 }
 
 function saveBatch(pageId, fields) {
+  const fieldsByKey = new Map();
+  fields.forEach((field) => {
+    if (!field?.key) return;
+    fieldsByKey.set(field.key, field);
+  });
   return fetchCsrfToken()
     .then((csrf) => {
       const formData = new FormData();
@@ -391,16 +676,17 @@ function saveBatch(pageId, fields) {
     .then((data) => {
       if (!data.status) throw new Error(data.message || "Save failed");
       const htmlMap = data.html || {};
-      Object.entries(htmlMap).forEach(([fieldName, html]) => {
-        const fieldId = `${pageId}:${fieldName}`;
+      Object.entries(htmlMap).forEach(([fieldKey, html]) => {
+        const fieldId = fieldElements.has(fieldKey) ? fieldKey : `${pageId}:${fieldKey}`;
         const target = fieldElements.get(fieldId);
         if (!target) return;
         if (html) {
           originalHtml.set(target, html);
           target.innerHTML = html;
         }
-        const markdown = fields[fieldName];
-        if (markdown) {
+        const fieldData = fieldsByKey.get(fieldId);
+        if (fieldData?.markdown) {
+          const markdown = fieldData.markdown;
           target.dataset.markdown = markdown;
           target.dataset.markdownB64 = btoa(
             unescape(encodeURIComponent(markdown)),
@@ -457,8 +743,9 @@ function createInlineToolbar() {
   toolbarCloseBtn = closeBtn;
 }
 
-async function openInlineEditor(el) {
-  if (!el) return;
+async function openInlineEditorFromPayload(payload) {
+  if (!payload || !payload.element) return;
+  const el = payload.element;
   if (activeTarget === el && activeEditor) return;
 
   if (activeEditor) {
@@ -471,16 +758,26 @@ async function openInlineEditor(el) {
     if (!closed) return;
   }
 
-  const markdownB64 = el.getAttribute("data-markdown-b64");
-  const markdownContent = markdownB64 ? decodeMarkdownBase64(markdownB64) : "";
-  const fieldName = el.getAttribute("data-md-name") || "unknown";
-  const fieldType = el.getAttribute("data-field-type") || "tag";
-  const pageId = el.getAttribute("data-page") || "0";
+  const {
+    markdownContent,
+    fieldName,
+    fieldType,
+    fieldScope,
+    fieldSection,
+    pageId,
+  } = payload;
 
   activeTarget = el;
   activeFieldName = fieldName;
   activeFieldType = fieldType;
-  activeFieldId = `${pageId}:${fieldName}`;
+  activeFieldScope = fieldScope;
+  activeFieldSection = fieldSection;
+  activeFieldId = buildFieldId({
+    pageId,
+    scope: fieldScope,
+    section: fieldSection,
+    name: fieldName,
+  });
   fieldElements.set(activeFieldId, el);
 
   if (!originalHtml.has(el)) {
@@ -523,6 +820,22 @@ async function openInlineEditor(el) {
   setTimeout(() => editor?.view?.focus(), 0);
 }
 
+async function openInlineEditor(el) {
+  if (!el) return;
+  const markdownB64 = el.getAttribute("data-markdown-b64");
+  const markdownContent = markdownB64 ? decodeMarkdownBase64(markdownB64) : "";
+  const payload = {
+    element: el,
+    markdownContent,
+    fieldName: el.getAttribute("data-md-name") || "unknown",
+    fieldType: el.getAttribute("data-field-type") || "tag",
+    fieldScope: el.getAttribute("data-md-scope") || "field",
+    fieldSection: el.getAttribute("data-md-section") || "",
+    pageId: el.getAttribute("data-page") || "0",
+  };
+  return openInlineEditorFromPayload(payload);
+}
+
 function closeInlineEditor({
   saveOnClose = false,
   promptOnClose = false,
@@ -544,6 +857,8 @@ function closeInlineEditor({
     activeTarget = null;
     activeFieldName = null;
     activeFieldType = null;
+    activeFieldScope = "field";
+    activeFieldSection = "";
     activeFieldId = null;
     dirty = false;
 
@@ -608,12 +923,134 @@ function closeInlineEditor({
 function initInlineEditor() {
   document.body.classList.add("mfe-view-inline");
 
-  document.querySelectorAll(".fe-editable").forEach((el) => {
-    el.addEventListener("dblclick", (e) => {
-      e.preventDefault();
-      openInlineEditor(el);
-    });
+  const editables = Array.from(document.querySelectorAll(".fe-editable"));
+  editables.forEach((el) => {
+    applyEditLabelAttributes(el);
   });
+
+  overlayEngine.init();
+
+  if (!dblclickHandler) {
+    dblclickHandler = (e) => {
+      const hit = e.target?.closest?.(".fe-editable");
+      if (!hit) {
+        // no hit
+      }
+
+      e.preventDefault();
+      e.stopPropagation();
+      const action = resolveDblclickAction({
+        event: e,
+        hit,
+        overlayEngine,
+        findTargetFromPoint,
+        findSectionFromText,
+        decodeMarkdownBase64,
+        createVirtualTarget,
+        pageId:
+          document.querySelector(".fe-editable")?.getAttribute("data-page") ||
+          "0",
+      });
+
+      if (!action || action.action === "none") {
+        return;
+      }
+
+      if (action.action === "fullscreen") {
+        openFullscreenEditorForElement(action.target);
+        return;
+      }
+
+      if (action.action === "inline") {
+        openInlineEditor(action.target);
+      }
+    };
+
+    document.addEventListener("dblclick", dblclickHandler, true);
+  }
+
+  if (!hoverHandler) {
+    hoverHandler = (e) => {
+      if (hoverRaf) return;
+      hoverRaf = window.requestAnimationFrame(() => {
+        hoverRaf = null;
+        const containerHit = e.target?.closest?.(
+          '.fe-editable[data-md-scope="field"][data-field-type="container"]',
+        );
+        if (containerHit) {
+          const rect = getRectFromChildren(containerHit);
+          const name = containerHit.getAttribute("data-md-name") || "";
+          const key = `container:${name}`;
+          if (rect && lastHoverKey !== key) {
+            lastHoverKey = key;
+            overlayEngine.setLabel(getEditLabel("container", name, ""));
+            const inflated = inflateRect(rect, 32);
+            overlayEngine.showBox(inflated);
+            lastHoverRect = inflated;
+          }
+          return;
+        }
+
+        const markerHit = overlayEngine.findMarkerTargetFromPoint(
+          e.clientX,
+          e.clientY,
+        );
+        const fallbackSub =
+          markerHit ||
+          overlayEngine.findFieldSubsectionTargetFromPoint(
+            e.clientX,
+            e.clientY,
+          );
+        if (fallbackSub?.rect) {
+          const key = `${fallbackSub.scope}:${fallbackSub.section || ""}:${fallbackSub.name}`;
+          if (lastHoverKey !== key) {
+            lastHoverKey = key;
+            overlayEngine.setLabel(
+              getEditLabel(
+                fallbackSub.scope,
+                fallbackSub.name,
+                fallbackSub.section || "",
+              ),
+            );
+            const inflated = inflateRect(fallbackSub.rect, 16);
+            overlayEngine.showBox(inflated);
+            lastHoverRect = inflated;
+          }
+          return;
+        }
+
+        if (lastHoverRect && isPointInRect(e.clientX, e.clientY, lastHoverRect)) {
+          return;
+        }
+        overlayEngine.hide();
+        lastHoverKey = "";
+      });
+    };
+    document.addEventListener("mousemove", hoverHandler, true);
+    window.addEventListener("scroll", overlayEngine.hide, true);
+    window.addEventListener(
+      "scroll",
+      () => {
+        overlayEngine.invalidate("scroll");
+      },
+      true,
+    );
+    window.addEventListener("resize", () => {
+      overlayEngine.invalidate("resize");
+    });
+    window.addEventListener("load", () => {
+      overlayEngine.invalidate("load");
+    });
+    document.addEventListener(
+      "load",
+      (e) => {
+        if (e.target && e.target.tagName === "IMG") {
+          overlayEngine.invalidate("img-load");
+        }
+      },
+      true,
+    );
+  }
 
   if (!pointerHandler) {
     pointerHandler = () => {};

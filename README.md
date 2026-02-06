@@ -58,6 +58,16 @@ This module is small and opinionated. If something breaks, start by (shaking) ch
 - the permission (`page-edit-front`)
 - the AI
 
+## Architecture (For Future You)
+
+This stays boring on purpose. If you want to add images, components, or translations, plug into these spots:
+
+- `content-index`: builds a front-end map of editable targets.
+- `scope-resolver`: decides what a double-click should open.
+- `overlay-engine`: only draws hover boxes/labels.
+- `views`: inline/fullscreen editors render, no routing logic.
+- `state+mutation`: drafts, save batching, status.
+
 ## License
 
 UBC+P.

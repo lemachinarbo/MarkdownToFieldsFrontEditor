@@ -47,6 +47,9 @@ export function countNonEmptyBlocks(doc) {
 export function createMarkdownParser(schema) {
   const markdownIt = defaultMarkdownParser.tokenizer;
   markdownIt.set({ breaks: true });
+  if (!schema.nodes.image) {
+    markdownIt.disable("image");
+  }
   const tokens = {
     ...defaultMarkdownParser.tokens,
     blockquote: { block: "blockquote" },
@@ -156,11 +159,15 @@ export function getLanguagesConfig() {
   return { langs, current };
 }
 
-export function fetchTranslations(mdName, pageId) {
+export function fetchTranslations(mdName, pageId, scope = "field", section = "") {
+  const scopeParam = scope ? `&mdScope=${encodeURIComponent(scope)}` : "";
+  const sectionParam = section
+    ? `&mdSection=${encodeURIComponent(section)}`
+    : "";
   return fetch(
     `?markdownFrontEditorTranslations=1&mdName=${encodeURIComponent(
       mdName,
-    )}&pageId=${encodeURIComponent(pageId)}`,
+    )}&pageId=${encodeURIComponent(pageId)}${scopeParam}${sectionParam}`,
     { credentials: "same-origin" },
   )
     .then((res) => res.json())
@@ -168,13 +175,24 @@ export function fetchTranslations(mdName, pageId) {
     .catch(() => null);
 }
 
-export function saveTranslation(pageId, mdName, lang, markdown) {
+export function saveTranslation(
+  pageId,
+  mdName,
+  lang,
+  markdown,
+  scope = "field",
+  section = "",
+) {
   return fetchCsrfToken().then((csrf) => {
     const formData = new FormData();
     formData.append("markdown", markdown);
     formData.append("mdName", mdName);
     formData.append("pageId", pageId);
     formData.append("lang", lang);
+    formData.append("mdScope", scope || "field");
+    if (section) {
+      formData.append("mdSection", section);
+    }
 
     if (csrf) {
       formData.append(csrf.name, csrf.value);
@@ -206,7 +224,7 @@ export async function fetchCsrfToken() {
       return { name: match[1], value: match[2] };
     }
   } catch (err) {
-    console.error("Failed to fetch CSRF token:", err);
+    // token fetch errors are handled by callers
   }
   return null;
 }

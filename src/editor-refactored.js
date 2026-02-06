@@ -155,7 +155,7 @@ class MarkdownEditor {
       schema: editorSchema,
       plugins: [
         createPersistencePlugin((markdown) => {
-          console.log("📝 Persisting:", markdown);
+          // persistence logging removed
           this.onSave(markdown);
         }),
         keymap(keyBindings),

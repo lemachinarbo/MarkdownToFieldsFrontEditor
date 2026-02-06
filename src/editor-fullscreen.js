@@ -46,7 +46,11 @@ const dirtyTranslations = new Map();
 let activeTarget = null;
 let activeFieldName = null;
 let activeFieldType = null; // "tag" or "container"
+let activeFieldScope = "field";
+let activeFieldSection = "";
 let activeFieldId = null;
+let activeRawMarkdown = null;
+let activeDisplayMarkdown = null;
 const statusManager = createStatusManager();
 
 function stripTrailingEmptyParagraph(editor) {
@@ -220,7 +224,7 @@ function saveAllEditors() {
       const pageId = activeTarget?.getAttribute("data-page") || "";
       const mdName = activeFieldName || "";
       const markdown = translationsCache?.[lang] ?? "";
-      tasks.push(saveTranslation(pageId, mdName, lang, markdown));
+      tasks.push(saveTranslation(pageId, mdName, lang, markdown, activeFieldScope, activeFieldSection));
       dirtyTranslations.set(lang, false);
     }
   }
@@ -303,7 +307,7 @@ function openSplit() {
   if (translationsCache === null) {
     const pageId = activeTarget?.getAttribute("data-page") || "";
     const mdName = activeFieldName || "";
-    fetchTranslations(mdName, pageId).then((data) => {
+    fetchTranslations(mdName, pageId, activeFieldScope, activeFieldSection).then((data) => {
       translationsCache = data || {};
       setSecondaryLanguage(select.value);
     });
@@ -526,14 +530,6 @@ function highlightExtraContent(editor = activeEditor) {
   const currentBlockCount = countNonEmptyBlocks(editor.state.doc);
 
   const originalBlockCount = getOriginalBlockCount(editor);
-  console.log(
-    "Found blocks:",
-    currentBlockCount,
-    "Original:",
-    originalBlockCount,
-    "Field type:",
-    activeFieldType,
-  );
 
   // Only show warning if user has ADDED blocks beyond the original
   // (This applies to any field - if originalBlockCount is 1, only 1 block should be added)
@@ -562,15 +558,12 @@ function saveEditorContent(editor = activeEditor) {
   if (shouldWarnForExtraContent(activeFieldType, activeFieldName)) {
     const blocks = markdown.split(/\n\s*\n/).filter((p) => p.trim().length > 0);
     markdown = blocks.length > 0 ? blocks[0] : markdown;
-    console.log(
-      "Single-line field: stripped extra paragraphs, saving only first block",
-    );
+    // single-line fields save only first block
   }
 
   // Clear highlights when saving
   clearExtraContentHighlights();
 
-  console.log("Saving markdown:", markdown.substring(0, 100) + "...");
   if (saveCallback && editor === primaryEditor) {
     saveCallback(markdown);
   }
@@ -587,7 +580,7 @@ function saveActiveEditor() {
     if (translationsCache) {
       translationsCache[secondaryLang] = markdown;
     }
-    saveTranslation(pageId, mdName, secondaryLang, markdown);
+    saveTranslation(pageId, mdName, secondaryLang, markdown, activeFieldScope, activeFieldSection);
     return;
   }
   saveEditorContent(activeEditor);
@@ -638,7 +631,11 @@ function closeEditor() {
   activeTarget = null;
   activeFieldName = null;
   activeFieldType = null;
+  activeFieldScope = "field";
+  activeFieldSection = "";
   activeFieldId = null;
+  activeRawMarkdown = null;
+  activeDisplayMarkdown = null;
   translationsCache = null;
   secondaryLang = "";
   editorShell = null;
@@ -663,69 +660,117 @@ function initEditors() {
     el.addEventListener("dblclick", (e) => {
       // Prevent default browser selection
       e.preventDefault();
+      e.stopPropagation();
 
-      // Get markdown from data attribute (set by backend)
-      const markdownB64 = el.getAttribute("data-markdown-b64");
-      const markdownContent = markdownB64 ? decodeMarkdownBase64(markdownB64) : "";
-      const fieldName = el.getAttribute("data-md-name") || "unknown";
-      const fieldType = el.getAttribute("data-field-type") || "tag"; // Field type from backend
+      const parentEditable = el.parentElement?.closest(".fe-editable");
+      const target = e.shiftKey && parentEditable ? parentEditable : el;
 
-      activeTarget = el;
-      activeFieldName = fieldName;
-      activeFieldType = fieldType;
-      activeFieldId = `${el.getAttribute("data-page") || "0"}:${fieldName}`;
-
-      // Save callback
-      const saveCallback = (markdown, resolve, reject) => {
-        fetchCsrfToken().then((csrf) => {
-          const formData = new FormData();
-          formData.append("markdown", markdown);
-          formData.append("mdName", fieldName);
-          formData.append("pageId", el.getAttribute("data-page") || "0");
-
-          if (csrf) {
-            formData.append(csrf.name, csrf.value);
-          }
-
-          fetch(getSaveUrl(), {
-            method: "POST",
-            body: formData,
-            credentials: "same-origin",
-          })
-            .then((res) => {
-              if (!res.ok) throw new Error(`HTTP ${res.status}`);
-              return res.json();
-            })
-            .then((data) => {
-              if (data.status) {
-                if (activeTarget) {
-                  activeTarget.dataset.markdown = markdown;
-                  if (data.html) {
-                    activeTarget.innerHTML = data.html;
-                  }
-                }
-                if (resolve) resolve();
-              } else {
-                alert(`Save failed: ${data.message || "Unknown error"}`);
-                if (reject) reject(new Error(data.message || "Save failed"));
-              }
-            })
-            .catch((err) => {
-              console.error("Save error:", err);
-              alert(`Save error: ${err.message}`);
-              if (reject) reject(err);
-            });
-        });
-      };
-
-      // Open editor with overlay
-      if (activeEditor) {
-        closeEditor();
-      }
-      createOverlay();
-      initEditor(markdownContent, saveCallback, fieldType);
+      openFullscreenEditorForElement(target);
     });
   });
+}
+
+function openFullscreenEditorFromPayload(payload) {
+  if (!payload || !payload.element) return;
+  const target = payload.element;
+  if (activeEditor) {
+    closeEditor();
+  }
+
+  const {
+    markdownContent,
+    fieldName,
+    fieldType,
+    fieldScope,
+    fieldSection,
+    pageId,
+  } = payload;
+
+  activeRawMarkdown = markdownContent;
+  activeDisplayMarkdown = markdownContent;
+  if (markdownContent.includes("<!--")) {
+    activeDisplayMarkdown = markdownContent.replace(/<!--[\s\S]*?-->/g, "").trim();
+  }
+
+  activeTarget = target;
+  activeFieldName = fieldName;
+  activeFieldType = fieldType;
+  activeFieldScope = fieldScope;
+  activeFieldSection = fieldSection;
+  activeFieldId = `${pageId}:${fieldScope}:${fieldSection}:${fieldName}`;
+
+  const saveCallback = (markdown, resolve, reject) => {
+    let finalMarkdown = markdown;
+    if (activeRawMarkdown && activeDisplayMarkdown && activeRawMarkdown !== activeDisplayMarkdown) {
+      finalMarkdown = activeRawMarkdown.replace(activeDisplayMarkdown, markdown);
+    }
+    fetchCsrfToken().then((csrf) => {
+      const formData = new FormData();
+      formData.append("markdown", finalMarkdown);
+      formData.append("mdName", fieldName);
+      formData.append("mdScope", fieldScope || "field");
+      if (fieldSection) {
+        formData.append("mdSection", fieldSection);
+      }
+      formData.append("pageId", pageId);
+
+      if (csrf) {
+        formData.append(csrf.name, csrf.value);
+      }
+
+      fetch(getSaveUrl(), {
+        method: "POST",
+        body: formData,
+        credentials: "same-origin",
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json();
+        })
+        .then((data) => {
+          if (data.status) {
+            if (activeTarget) {
+              activeTarget.dataset.markdown = finalMarkdown;
+              if (data.html) {
+                activeTarget.innerHTML = data.html;
+              }
+            }
+            if (resolve) resolve();
+          } else {
+            alert(`Save failed: ${data.message || "Unknown error"}`);
+            if (reject) reject(new Error(data.message || "Save failed"));
+          }
+        })
+        .catch((err) => {
+          // save errors are handled by caller
+          alert(`Save error: ${err.message}`);
+          if (reject) reject(err);
+        });
+    });
+  };
+
+  createOverlay();
+  if (document.body.classList.contains("mfe-view-inline")) {
+    const overlay = document.querySelector(".mfe-hover-overlay");
+    if (overlay) overlay.style.display = "none";
+  }
+  initEditor(activeDisplayMarkdown, saveCallback, fieldType);
+}
+
+export function openFullscreenEditorForElement(target) {
+  if (!target) return;
+  const markdownB64 = target.getAttribute("data-markdown-b64");
+  const markdownContent = markdownB64 ? decodeMarkdownBase64(markdownB64) : "";
+  const payload = {
+    element: target,
+    markdownContent,
+    fieldName: target.getAttribute("data-md-name") || "unknown",
+    fieldType: target.getAttribute("data-field-type") || "tag",
+    fieldScope: target.getAttribute("data-md-scope") || "field",
+    fieldSection: target.getAttribute("data-md-section") || "",
+    pageId: target.getAttribute("data-page") || "0",
+  };
+  return openFullscreenEditorFromPayload(payload);
 }
 
 /**

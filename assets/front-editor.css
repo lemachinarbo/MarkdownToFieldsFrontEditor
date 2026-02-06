@@ -6,30 +6,113 @@
   outline-offset: 4px;
 }
 
+.fe-editable[data-md-scope="section"],
+.fe-editable[data-md-scope="subsection"],
+.fe-editable[data-field-type="container"] {
+  display: contents;
+  outline: none;
+}
+
+.fe-editable[data-field-type="container"]:hover > *,
+.fe-editable[data-md-scope="section"]:hover > *,
+.fe-editable[data-md-scope="subsection"]:hover > * {
+  outline: 1px dashed rgba(0, 122, 255, 0.6);
+  outline-offset: 4px;
+}
+
+.mfe-hover-overlay {
+  position: fixed;
+  border: 1px dashed rgba(0, 122, 255, 0.6);
+  border-radius: 0;
+  pointer-events: none;
+  z-index: 99998;
+  box-shadow: none;
+  background: transparent;
+}
+
+.mfe-hover-overlay[data-mode="edge"] {
+  border: 0;
+  border-top: 1px dashed rgba(0, 122, 255, 0.6);
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+:root {
+  --mfe-label-bg: rgba(240, 248, 255, 0.98);
+  --mfe-label-border: rgba(37, 99, 235, 0.45);
+  --mfe-label-color: #2563eb;
+  --mfe-label-radius: 10px 10px 0 0;
+  --mfe-label-font-size: 10px;
+  --mfe-label-font-weight: 600;
+  --mfe-label-letter-spacing: 0.02em;
+  --mfe-label-padding: 4px 10px;
+  --mfe-label-offset-y: -25px;
+}
+
+.mfe-hover-overlay .mfe-hover-label {
+  position: absolute;
+  top: calc(var(--mfe-label-offset-y) + 6px);
+  right: -1px;
+  padding: var(--mfe-label-padding);
+  font-size: var(--mfe-label-font-size);
+  font-weight: var(--mfe-label-font-weight);
+  text-transform: uppercase;
+  letter-spacing: var(--mfe-label-letter-spacing);
+  line-height: 1;
+  font-family: inherit;
+  color: var(--mfe-label-color);
+  background: var(--mfe-label-bg);
+  border: 1px dashed var(--mfe-label-border);
+  border-bottom: 0;
+  border-radius: var(--mfe-label-radius);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.mfe-hover-overlay .mfe-hover-label[data-debug="false"] {
+  text-transform: uppercase;
+  letter-spacing: var(--mfe-label-letter-spacing);
+}
+
+.mfe-hover-overlay[data-mode="edge"] .mfe-hover-label {
+  top: calc(var(--mfe-label-offset-y) + 1px);
+}
+
+.mfe-view-fullscreen .mfe-hover-overlay {
+  display: none !important;
+}
+
+.mfe-view-fullscreen .fe-editable:hover > * {
+  outline: none !important;
+}
+
 .fe-editable:hover {
   outline: 1px dashed rgba(0, 122, 255, 0.6);
   outline-offset: 4px;
 }
 
 .fe-editable::after {
-  content: "Double click to edit";
+  content: attr(data-mfe-label);
   position: absolute;
-  top: -25px;
-  right: -4px;
-  padding: 4px 10px;
-  border-radius: 10px 10px 0 0;
-  background: rgba(240, 248, 255, 0.98);
-  color: #2563eb;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  border: 1px dashed rgba(37, 99, 235, 0.45);
+  top: calc(var(--mfe-label-offset-y) + 1px);
+  right: -5px;
+  padding: var(--mfe-label-padding);
+  border-radius: var(--mfe-label-radius);
+  background: var(--mfe-label-bg);
+  color: var(--mfe-label-color);
+  font-size: var(--mfe-label-font-size);
+  font-weight: var(--mfe-label-font-weight);
+  letter-spacing: var(--mfe-label-letter-spacing);
+  border: 1px dashed var(--mfe-label-border);
   border-bottom: 0;
   text-transform: uppercase;
   pointer-events: none;
   opacity: 0;
   transform: translateY(4px);
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
 }
 .fe-editable:hover::after {
   opacity: 1;
