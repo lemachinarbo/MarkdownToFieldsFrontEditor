@@ -238,3 +238,83 @@ export async function fetchCsrfToken() {
   }
   return null;
 }
+/**
+ * Syncs document fragments that are delimited by MFE comment markers.
+ * This is used for sections and subsections that don't have a wrapper div.
+ * @param {Object} htmlMap - The map of element IDs to HTML content from the server
+ * @returns {number} - The number of blocks updated
+ */
+export function syncComments(htmlMap) {
+  if (!htmlMap || typeof htmlMap !== "object") return 0;
+
+  const walker = document.createTreeWalker(
+    document.body,
+    NodeFilter.SHOW_COMMENT,
+    null,
+    false,
+  );
+
+  let node;
+  let count = 0;
+  const nodesToProcess = [];
+
+  // 1. Gather all start markers
+  while ((node = walker.nextNode())) {
+    const text = node.nodeValue.trim();
+    if (text.startsWith("mfe:") && text.includes(":start ")) {
+      nodesToProcess.push(node);
+    }
+  }
+
+  // 2. Process each start marker
+  nodesToProcess.forEach((startNode) => {
+    const text = startNode.nodeValue.trim(); // e.g. "mfe:subsection:start columns::left"
+    const parts = text.split(" ");
+    if (parts.length < 2) return;
+
+    const opParts = parts[0].split(":"); // ["mfe", "subsection", "start"]
+    const type = opParts[1]; // "subsection" or "section"
+    const rawName = parts[1]; // "columns::left" or "intro"
+    const normalizedName = rawName.replace("::", ":");
+    const mapKey = `${type}:${normalizedName}`;
+
+    const newHtml = htmlMap[mapKey];
+    if (newHtml) {
+      console.log(`[MFE] Syncing comment block: ${mapKey}`);
+
+      // Find the corresponding end marker
+      let endNode = null;
+      let curr = startNode.nextSibling;
+      const nodesToRemove = [];
+
+      const endMarkerText = `mfe:${type}:end ${rawName}`;
+
+      while (curr) {
+        if (
+          curr.nodeType === Node.COMMENT_NODE &&
+          curr.nodeValue.trim() === endMarkerText
+        ) {
+          endNode = curr;
+          break;
+        }
+        nodesToRemove.push(curr);
+        curr = curr.nextSibling;
+      }
+
+      if (endNode) {
+        // Remove old content
+        nodesToRemove.forEach((n) => n.remove());
+
+        // Insert new content
+        const temp = document.createElement("div");
+        temp.innerHTML = newHtml;
+        while (temp.firstChild) {
+          endNode.parentNode.insertBefore(temp.firstChild, endNode);
+        }
+        count++;
+      }
+    }
+  });
+
+  return count;
+}

@@ -119,3 +119,53 @@
   opacity: 1;
   transform: translateY(0);
 }
+
+/* TipTap Editable Image Styles */
+.mfe-tiptap-image-container {
+  display: inline-block;
+  position: relative;
+  line-height: 0;
+  transition: all 0.2s ease;
+  outline: 1px dashed rgba(0, 122, 255, 0);
+  outline-offset: 2px;
+  cursor: pointer;
+  max-width: var(--mfe-image-max-width, 100%);
+}
+
+.mfe-tiptap-image-container:hover {
+  outline: 1px dashed rgba(0, 122, 255, 0.6);
+}
+
+.mfe-tiptap-image-container .mfe-tiptap-image-label {
+  position: absolute;
+  top: -24px;
+  right: -1px;
+  padding: var(--mfe-label-padding);
+  font-size: var(--mfe-label-font-size);
+  font-weight: var(--mfe-label-font-weight);
+  text-transform: uppercase;
+  letter-spacing: var(--mfe-label-letter-spacing);
+  line-height: 1;
+  color: var(--mfe-label-color);
+  background: var(--mfe-label-bg);
+  border: 1px dashed var(--mfe-label-border);
+  border-bottom: 0;
+  border-radius: var(--mfe-label-radius);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 10;
+}
+
+.mfe-tiptap-image-container:hover .mfe-tiptap-image-label {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.mfe-tiptap-image-container img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}

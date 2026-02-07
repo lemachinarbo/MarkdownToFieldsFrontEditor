@@ -16,6 +16,7 @@ import {
   decodeHtmlEntitiesInFences,
   getSaveUrl,
   fetchCsrfToken,
+  syncComments,
 } from "./editor-core.js";
 import { createToolbarButtons } from "./editor-toolbar.js";
 import { renderToolbarButtons } from "./editor-toolbar-renderer.js";
@@ -522,7 +523,8 @@ function createEditorInstance(host, fieldType, fieldName) {
                 if (!attributes.src) return {};
                 
                 // If it's already an absolute URL or starts with /, use as-is
-                if (attributes.src.match(/^(https?:|\/)/)) {
+                // Supports picker URLs starting with ? or protocol-relative //
+                if (attributes.src.match(/^(https?:|\/|\?|\/\/)/)) {
                   return { src: attributes.src };
                 }
                 
@@ -543,6 +545,40 @@ function createEditorInstance(host, fieldType, fieldName) {
             },
           };
         },
+        addNodeView() {
+          return ({ node, HTMLAttributes, getPos, editor }) => {
+            const container = document.createElement('span');
+            container.classList.add('mfe-tiptap-image-container');
+
+            const img = document.createElement('img');
+            
+            // Set attributes. TipTap's HTMLAttributes already contains the resolved src from renderHTML.
+            Object.entries(HTMLAttributes).forEach(([key, value]) => {
+              if (value !== null && value !== undefined) {
+                img.setAttribute(key, value);
+              }
+            });
+
+            const label = document.createElement('span');
+            label.classList.add('mfe-tiptap-image-label');
+            label.innerText = 'edit';
+
+            container.append(img, label);
+
+            // Handle double click for image picker
+            container.ondblclick = (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (window.mfeOpenImagePicker) {
+                window.mfeOpenImagePicker(node.attrs);
+              }
+            };
+
+            return {
+              dom: container,
+            };
+          };
+        },
         addProseMirrorPlugins() {
           return [
             new Plugin({
@@ -550,7 +586,7 @@ function createEditorInstance(host, fieldType, fieldName) {
                 handleDoubleClickOn: (view, pos, node, nodePos, event, direct) => {
                   if (node.type.name === "image") {
                     if (window.mfeOpenImagePicker) {
-                      window.mfeOpenImagePicker();
+                      window.mfeOpenImagePicker(node.attrs);
                     }
                     return true;
                   }
@@ -630,6 +666,7 @@ function saveField(fieldId, markdown) {
         formData.append("mdSection", section);
       }
       formData.append("pageId", pageId);
+      formData.append("fieldId", fieldId);
 
       if (csrf) {
         formData.append(csrf.name, csrf.value);
@@ -647,9 +684,56 @@ function saveField(fieldId, markdown) {
     })
     .then((data) => {
       if (!data.status) throw new Error(data.message || "Save failed");
-      if (data.html) {
-        originalHtml.set(target, data.html);
-        target.innerHTML = data.html;
+
+      if (data.sectionsIndex) {
+        console.log("[MFE] Hydrating global sectionsIndex from response");
+        window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
+        window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;
+      }
+
+      if (data.html || data.htmlMap) {
+        const htmlMap = data.htmlMap || (typeof data.html === 'object' ? data.html : {});
+        const primaryHtml = typeof data.html === 'string' ? data.html : (htmlMap[fieldId] || htmlMap[mdName]);
+        
+        // 1. Update ALL .fe-editable elements on the page that match something in the map
+        document.querySelectorAll(".fe-editable").forEach((el) => {
+          const elName = el.getAttribute("data-md-name");
+          const elScope = el.getAttribute("data-md-scope") || "field";
+          const elSection = el.getAttribute("data-md-section") || "";
+          const elPageId = el.getAttribute("data-page");
+          const elId = `${elPageId}:${elScope}:${elSection}:${elName}`;
+          
+          let html = htmlMap[elId] || htmlMap[elName] || htmlMap[`${elScope}:${elName}`] || htmlMap[`${elScope}:${elSection}:${elName}`];
+          
+          // Fuzzy match for scoped keys
+          if (!html) {
+            for (const [key, value] of Object.entries(htmlMap)) {
+              if (elId.endsWith(':' + key)) {
+                html = value;
+                break;
+              }
+            }
+          }
+
+          if (html) {
+            console.log(`[MFE] Syncing element ${elId}`);
+            originalHtml.set(el, html);
+            
+            // If this is the active editor, update TipTap state
+            if (el === activeTarget && activeEditor) {
+              console.log(`[MFE] Updating active inline editor with final rendered HTML`);
+              const selection = activeEditor.state.selection;
+              activeEditor.commands.setContent(html, false);
+              try { activeEditor.commands.setTextSelection(selection); } catch (e) {}
+            } else {
+              el.innerHTML = html;
+            }
+          }
+        });
+
+        // 2. Sync fragments delimited by comment markers (e.g. Subsections)
+        const commentCount = syncComments(htmlMap);
+        console.log(`[MFE] Sync complete. Updated ${commentCount} comment blocks.`);
       }
       target.dataset.markdown = finalMarkdown;
       target.dataset.markdownB64 = btoa(
@@ -731,15 +815,47 @@ function saveBatch(pageId, fields) {
     })
     .then((data) => {
       if (!data.status) throw new Error(data.message || "Save failed");
-      const htmlMap = data.html || {};
+      
+      if (data.sectionsIndex) {
+        console.log("[MFE] Hydrating global sectionsIndex from batch response");
+        window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
+        window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;
+      }
+
+      const htmlMap = data.htmlMap || (typeof data.html === 'object' ? data.html : {});
       Object.entries(htmlMap).forEach(([fieldKey, html]) => {
-        const fieldId = fieldElements.has(fieldKey) ? fieldKey : `${pageId}:${fieldKey}`;
+        // Try to match by fieldId (full) or fieldKey (name)
+        let fieldId = fieldKey;
+        if (!fieldElements.has(fieldId)) {
+          // Fuzzy match: check if any fieldId ends with :fieldKey
+          for (const [id, _] of fieldElements) {
+            if (id === fieldKey || id.endsWith(':' + fieldKey) || id.startsWith(fieldKey + ':')) {
+              fieldId = id;
+              break;
+            }
+          }
+        }
+        
         const target = fieldElements.get(fieldId);
         if (!target) return;
-        if (html) {
+        
+        // Always update the stored original HTML and dataset
+        if (html && typeof html === 'string') {
+          console.log(`[MFE] Received HTML for ${fieldId}, length: ${html.length}`);
           originalHtml.set(target, html);
-          target.innerHTML = html;
+          
+          // Update TipTap or DOM
+          if (target === activeTarget && activeEditor) {
+            console.log(`[MFE] Live refreshing active editor ${fieldId}`);
+            const selection = activeEditor.state.selection;
+            activeEditor.commands.setContent(html, false);
+            try { activeEditor.commands.setTextSelection(selection); } catch (e) {}
+          } else {
+            console.log(`[MFE] Syncing HTML to non-active / background target ${fieldId}`);
+            target.innerHTML = html;
+          }
         }
+
         const fieldData = fieldsByKey.get(fieldId);
         if (fieldData?.markdown) {
           const markdown = fieldData.markdown;
@@ -752,24 +868,43 @@ function saveBatch(pageId, fields) {
         draftByField.delete(fieldId);
         draftMarkdownByField.delete(fieldId);
       });
+
+      // Sync fragments delimited by comment markers (e.g. Subsections)
+      const commentCount = syncComments(htmlMap);
+      if (commentCount > 0) {
+        console.log(`[MFE] Batch sync complete. Updated ${commentCount} comment blocks.`);
+      }
     });
 }
 
 /**
  * Open image picker and insert selected image
  */
-function openImagePickerInline() {
+function openImagePickerInline(initialData = null) {
   if (!activeEditor) return;
 
   createImagePicker({
+    initialData,
     onSelect: (imageData) => {
-      // imageData is { filename, url }
-      // Insert image at current cursor position
-      activeEditor.chain().focus().setImage({ 
-        src: imageData.url, 
-        alt: "",
-        originalFilename: imageData.filename
-      }).run();
+      // imageData is { filename, url, alt }
+      if (!activeEditor) return;
+
+      const { selection } = activeEditor.state;
+      const isImageSelected = selection.node && selection.node.type.name === 'image';
+
+      if (isImageSelected) {
+        activeEditor.chain().focus().updateAttributes('image', {
+          src: imageData.url,
+          alt: imageData.alt || "",
+          originalFilename: imageData.filename
+        }).run();
+      } else {
+        activeEditor.chain().focus().setImage({ 
+          src: imageData.url, 
+          alt: imageData.alt || "",
+          originalFilename: imageData.filename 
+        }).run();
+      }
       
       // Mark as dirty
       dirty = true;
@@ -786,8 +921,14 @@ function openImagePickerInline() {
   });
 }
 
-// Override global function for inline editor context
-if (!window.mfeOpenImagePicker) {
+// Override global check to ensure picker uses our inline context when active
+if (window.mfeOpenImagePicker) {
+  const originalOpen = window.mfeOpenImagePicker;
+  window.mfeOpenImagePicker = (data) => {
+    if (activeEditor) return openImagePickerInline(data);
+    return originalOpen(data);
+  };
+} else {
   window.mfeOpenImagePicker = openImagePickerInline;
 }
 
@@ -966,9 +1107,11 @@ function closeInlineEditor({
     target.classList.remove("mfe-inline-active");
     if (persistDraft && hasDraft && editorForDraft) {
       const rendered = renderDraftHtml(editorForDraft);
+      console.log(`[MFE] Closing: applying draft HTML to ${fieldId}`);
       target.innerHTML = rendered;
     } else {
       const finalHtml = originalHtml.get(target) || "";
+      console.log(`[MFE] Closing: applying HTML from memory for ${fieldId}. Length: ${finalHtml.length}. Preview: ${finalHtml.substring(0, 50)}...`);
       target.innerHTML = finalHtml;
     }
   };

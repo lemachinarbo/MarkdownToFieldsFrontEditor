@@ -29,6 +29,7 @@ import {
   saveTranslation,
   getSaveUrl,
   fetchCsrfToken,
+  syncComments,
 } from "./editor-core.js";
 import { buildContentIndex, getSectionEntry, getSubsectionEntry } from "./content-index.js";
 import { createImagePicker } from "./image-picker.js";
@@ -165,7 +166,8 @@ function createEditorInstance(element, fieldType, fieldName) {
                 if (!attributes.src) return {};
                 
                 // If it's already an absolute URL or starts with /, use as-is
-                if (attributes.src.match(/^(https?:|\/)/)) {
+                // Supports picker URLs starting with ? or protocol-relative //
+                if (attributes.src.match(/^(https?:|\/|\?|\/\/)/)) {
                   return { src: attributes.src };
                 }
                 
@@ -186,6 +188,40 @@ function createEditorInstance(element, fieldType, fieldName) {
             },
           };
         },
+        addNodeView() {
+          return ({ node, HTMLAttributes, getPos, editor }) => {
+            const container = document.createElement('span');
+            container.classList.add('mfe-tiptap-image-container');
+
+            const img = document.createElement('img');
+            
+            // Set attributes. TipTap's HTMLAttributes already contains the resolved src from renderHTML.
+            Object.entries(HTMLAttributes).forEach(([key, value]) => {
+              if (value !== null && value !== undefined) {
+                img.setAttribute(key, value);
+              }
+            });
+
+            const label = document.createElement('span');
+            label.classList.add('mfe-tiptap-image-label');
+            label.innerText = 'edit';
+
+            container.append(img, label);
+
+            // Handle double click for image picker
+            container.ondblclick = (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (window.mfeOpenImagePicker) {
+                window.mfeOpenImagePicker(node.attrs);
+              }
+            };
+
+            return {
+              dom: container,
+            };
+          };
+        },
         addProseMirrorPlugins() {
           return [
             new Plugin({
@@ -193,7 +229,7 @@ function createEditorInstance(element, fieldType, fieldName) {
                 handleDoubleClickOn: (view, pos, node, nodePos, event, direct) => {
                   if (node.type.name === "image") {
                     if (window.mfeOpenImagePicker) {
-                      window.mfeOpenImagePicker();
+                      window.mfeOpenImagePicker(node.attrs);
                     }
                     return true;
                   }
@@ -497,20 +533,33 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
 /**
  * Open image picker and insert selected image
  */
-function openImagePicker() {
+function openImagePicker(initialData = null) {
   const editor = activeEditor || primaryEditor;
   if (!editor) return;
 
   createImagePicker({
+    initialData,
     onSelect: (imageData) => {
-      // imageData is { filename, url }
-      // Insert image with full URL for display, but originalFilename for saving
+      // imageData is { filename, url, alt }
       const editor = activeEditor || primaryEditor;
-      editor.chain().focus().setImage({ 
-        src: imageData.url, 
-        alt: "",
-        originalFilename: imageData.filename 
-      }).run();
+      if (!editor) return;
+
+      const { selection } = editor.state;
+      const isImageSelected = selection.node && selection.node.type.name === 'image';
+
+      if (isImageSelected) {
+        editor.chain().focus().updateAttributes('image', {
+          src: imageData.url,
+          alt: imageData.alt || "",
+          originalFilename: imageData.filename
+        }).run();
+      } else {
+        editor.chain().focus().setImage({ 
+          src: imageData.url, 
+          alt: imageData.alt || "",
+          originalFilename: imageData.filename 
+        }).run();
+      }
       
       // Mark as dirty
       if (editor === primaryEditor) {
@@ -530,7 +579,7 @@ function openImagePicker() {
   });
 }
 
-// Expose globally for toolbar button
+// Expose globally for toolbar button and extension
 window.mfeOpenImagePicker = openImagePicker;
 
 /**
@@ -1044,6 +1093,7 @@ function openFullscreenEditorFromPayload(payload) {
         formData.append("mdSection", fieldSection);
       }
       formData.append("pageId", pageId);
+      formData.append("fieldId", activeFieldId);
 
       if (csrf) {
         formData.append(csrf.name, csrf.value);
@@ -1059,13 +1109,75 @@ function openFullscreenEditorFromPayload(payload) {
           return res.json();
         })
         .then((data) => {
+          console.log("[MFE] Save response received:", data);
           if (data.status) {
-            if (activeTarget) {
+            // Priority: use htmlMap if available (full page map)
+            const htmlMap = data.htmlMap || (typeof data.html === 'object' ? data.html : {});
+            // Fallback for single field update (legacy or direct)
+            const primaryHtml = typeof data.html === 'string' ? data.html : (htmlMap[activeFieldId] || htmlMap[fieldName]);
+            
+            const markdowns = data.markdowns || {};
+            
+            if (data.sectionsIndex) {
+              console.log("[MFE] Hydrating global sectionsIndex from response");
+              window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
+              window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;
+            }
+
+            if (primaryHtml) {
+              const srcMatch = primaryHtml.match(/<img[^>]+src=["\']([^"\']+)["\']/);
+              console.log("[MFE] Received HTML for active field. First img src:", srcMatch ? srcMatch[1] : "not found");
+            }
+
+            // 1. Update EVERY .fe-editable element on the page
+            let matchedCount = 0;
+            document.querySelectorAll(".fe-editable").forEach((el) => {
+              const elPageId = el.getAttribute("data-page");
+              const elName = el.getAttribute("data-md-name");
+              const elScope = el.getAttribute("data-md-scope") || "field";
+              const elSection = el.getAttribute("data-md-section") || "";
+              const elId = `${elPageId}:${elScope}:${elSection}:${elName}`;
+              
+              let html = htmlMap[elId] || htmlMap[elName] || htmlMap[`${elScope}:${elName}`] || htmlMap[`${elScope}:${elSection}:${elName}`];
+              
+              // Fuzzy suffix match
+              if (!html) {
+                for (const [key, value] of Object.entries(htmlMap)) {
+                  if (key && (elId.endsWith(':' + key) || key.endsWith(':' + elId))) {
+                    console.log(`[MFE] Fuzzy match found: elId='${elId}' matches mapKey='${key}'`);
+                    html = value;
+                    break;
+                  }
+                }
+              }
+
+              if (html) {
+                console.log(`[MFE] Syncing element: ${elId}`);
+                el.innerHTML = html;
+                matchedCount++;
+                
+                if (markdowns[elId] || markdowns[elName]) {
+                  el.dataset.markdown = markdowns[elId] || markdowns[elName];
+                }
+              }
+            });
+
+            // 2. Sync fragments delimited by comment markers (e.g. Subsections)
+            const commentCount = syncComments(htmlMap);
+            console.log(`[MFE] Full-page sync complete. Updated ${matchedCount} elements and ${commentCount} comment blocks.`);
+
+            // 3. Extra safety for active editor
+            if (activeTarget && primaryHtml) {
               activeTarget.dataset.markdown = finalMarkdown;
-              if (data.html) {
-                activeTarget.innerHTML = data.html;
+              
+              if (primaryEditor) {
+                console.log("[MFE] Live refreshing active Tiptap editor content");
+                const selection = primaryEditor.state.selection;
+                primaryEditor.commands.setContent(primaryHtml, false);
+                try { primaryEditor.commands.setTextSelection(selection); } catch (e) {}
               }
             }
+            
             if (resolve) resolve();
           } else {
             alert(`Save failed: ${data.message || "Unknown error"}`);

@@ -846,8 +846,17 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 }
             }
 
+            $allHtml = $this->getAllFieldsHtml($content);
+            $finalHtmlMap = array_merge($allHtml, $htmlMap);
+
             header('Content-Type: application/json');
-            echo json_encode(['status' => 1, 'html' => $htmlMap, 'skipped' => $skipped ?? []]);
+            echo json_encode([
+                'status' => 1, 
+                'html' => $finalHtmlMap, 
+                'htmlMap' => $finalHtmlMap,
+                'sectionsIndex' => $this->buildSectionsIndex($page),
+                'skipped' => $skipped ?? []
+            ]);
             exit;
         }
 
@@ -897,16 +906,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             if ($oldFieldMarkdown === null) {
                 $this->sendJsonError('Field not found in content: ' . $mdName, 400);
             }
-            
-            // Check if content is actually unchanged - if so, return cached HTML without re-parsing
-            if ($blockMarkdown === trim($oldFieldMarkdown)) {
-                $this->wire->log->save('markdown-front-edit',
-                    "RESPONSE: Content unchanged, returning cached HTML (preserves HTML tags)"
-                );
-                header('Content-Type: application/json');
-                echo json_encode(['status' => 1, 'html' => $oldFieldHtml]);
-                exit;
-            }
+            // Proceed with save even if unchanged to ensure fresh sync and HTML generation
+            $this->wire->log->save('markdown-front-edit', "REQUEST: Beginning save process for '{$mdName}'");
             
             // Simple string replacement - preserves all markdown formatting
             $updatedMarkdown = str_replace($oldFieldMarkdown, $blockMarkdown, $fullMarkdown, $count);
@@ -929,38 +930,64 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             // Trigger sync to process images and update field values
             \ProcessWire\MarkdownToFields::sync($page);
             
+            // CLEAR CACHE AND RE-FETCH FRESH DATA (Bypass trait cache)
+            $this->wire->pages->uncache($page);
+            $page = $this->wire->pages->get($pageId);
+            
+            // Use MarkdownFileIO directly to ensure we get fresh disk content
+            $ioClass = '\\ProcessWire\\MarkdownFileIO';
+            $languageResolver = '\\ProcessWire\\MarkdownLanguageResolver';
+            $languageCode = $langCode !== '' ? $langCode : $languageResolver::getLanguageCode($page);
+            $content = $ioClass::loadLanguageMarkdown($page, $languageCode);
+            
+            if (!$content) {
+                throw new \ProcessWire\WireException("Failed to reload fresh content after save.");
+            }
+
+            $this->wire->log->save('markdown-front-edit', "RESPONSE: loadContent completed via direct IO");
+
         } catch (\Throwable $e) {
             $this->sendJsonError('Failed to update markdown: ' . $e->getMessage(), 500);
         }
 
-        $languageCode = $langCode !== '' ? $langCode : \ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
-        $content = $page->loadContent(null, $languageCode);
-        $canonicalHtml = null;
+        // Generate full page map
+        $allHtml = $this->getAllFieldsHtml($content);
         
-        $this->wire->log->save('markdown-front-edit',
-            "RESPONSE: loadContent completed, looking for field '{$mdName}' in " . count($content->sections ?? []) . " sections"
-        );
-        
+        // Target field specifics
         $canonicalHtml = $this->findScopedHtml($content, $mdScope, $mdName, $mdSection ?? '');
         
-        // If the incoming markdown contains raw HTML tags (e.g., <br>), 
-        // generate fresh HTML using Parsedown with safe mode disabled to preserve them
+        // Log the src attributed of the first image found to verify update
+        preg_match('/<img[^>]+src=["\']([^"\']+)["\']/', $canonicalHtml ?: '', $matches);
+        $srcInfo = $matches ? "Primary Src: " . $matches[1] : "No image found in HTML";
+        
+        $this->wire->log->save('markdown-front-edit',
+            "RESPONSE: Final HTML. Field: {$mdName}. " . $srcInfo
+        );
+        
+        // If the incoming markdown contains raw HTML tags, preserve them
         if ($canonicalHtml && strpos($blockMarkdown, '<') !== false && strpos($blockMarkdown, '>') !== false) {
-            $this->wire->log->save('markdown-front-edit',
-                "RESPONSE: Markdown contains HTML tags, regenerating with safe HTML support"
-            );
-            // Use Parsedown directly with safe mode disabled to preserve raw HTML
             $parsedown = new \Parsedown();
             $parsedown->setSafeMode(false);
             $canonicalHtml = $parsedown->text($blockMarkdown);
+            $this->wire->log->save('markdown-front-edit', "RESPONSE: Markdown contains HTML tags, regenerated with Parsedown");
         }
         
-        if ($canonicalHtml === null) {
-            $this->sendJsonError('Field not found after sync: ' . $mdName, 500);
+        $requestedFieldId = $this->wire->input->post->fieldId;
+        if ($requestedFieldId) {
+            $allHtml[$requestedFieldId] = $canonicalHtml;
+        }
+        if (!isset($allHtml[$mdName])) {
+            $allHtml[$mdName] = $canonicalHtml;
         }
 
         header('Content-Type: application/json');
-        echo json_encode(['status' => 1, 'html' => $canonicalHtml]);
+        echo json_encode([
+            'status' => 1, 
+            'html' => $canonicalHtml, // For fallback
+            'htmlMap' => $allHtml,    // Primary source for syncing
+            'sectionsIndex' => $this->buildSectionsIndex($page),
+            'fieldId' => $requestedFieldId
+        ]);
         exit;
     }
 
@@ -1180,6 +1207,51 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         if (!$enabled) return false;
         return in_array($template->name, $enabled, true);
+    }
+
+    protected function getAllFieldsHtml($content): array {
+        $htmlMap = [];
+        // Use sectionsByName to get string keys (e.g., "columns", "intro")
+        $sections = isset($content->sectionsByName) ? $content->sectionsByName : (isset($content->sections) ? $content->sections : []);
+        if (!is_array($sections) && !($sections instanceof \Traversable)) return $htmlMap;
+
+        foreach ($sections as $sectionName => $section) {
+            $sectionName = (string)$sectionName;
+            // Whole section
+            if (isset($section->html)) {
+                $htmlMap["section:{$sectionName}"] = (string)$section->html;
+            }
+            
+            // Fields in section scope
+            if (isset($section->fields) && is_array($section->fields)) {
+                foreach ($section->fields as $fieldName => $field) {
+                    if (isset($field->html)) {
+                        $htmlMap["field:{$sectionName}:{$fieldName}"] = (string)$field->html;
+                    }
+                }
+            }
+            
+            // Subsections - use subsectionsByName if available
+            $subsections = isset($section->subsectionsByName) ? $section->subsectionsByName : (isset($section->subsections) ? $section->subsections : []);
+            if (is_array($subsections) || ($subsections instanceof \Traversable)) {
+                foreach ($subsections as $subName => $subsection) {
+                    $subName = (string)$subName;
+                    // Whole subsection
+                    if (isset($subsection->html)) {
+                        $htmlMap["subsection:{$sectionName}:{$subName}"] = (string)$subsection->html;
+                    }
+                    
+                    if (isset($subsection->fields) && is_array($subsection->fields)) {
+                        foreach ($subsection->fields as $fieldName => $field) {
+                            if (isset($field->html)) {
+                                $htmlMap["subsection:{$sectionName}:{$subName}:{$fieldName}"] = (string)$field->html;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return $htmlMap;
     }
 
 }
