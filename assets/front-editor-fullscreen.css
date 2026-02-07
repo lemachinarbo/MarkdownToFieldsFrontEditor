@@ -2,8 +2,6 @@ body.mfe-no-scroll {
   overflow: hidden;
 }
 
-
-
 .mfe-view-fullscreen .mfe-overlay {
   position: fixed;
   top: 0;
@@ -12,13 +10,14 @@ body.mfe-no-scroll {
   bottom: 0;
   z-index: 10000;
   background: #ffffff;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   overflow: hidden;
 }
 
 .mfe-view-fullscreen .mfe-editor-shell {
   display: flex;
-  gap: 0;
+  gap: 32px;
 }
 
 .mfe-view-fullscreen .mfe-editor-pane {
@@ -26,13 +25,13 @@ body.mfe-no-scroll {
   min-width: 0;
   position: relative;
   padding-top: 0;
-  margin-top: 80px;
+  margin-top: 0;
 }
 
 .mfe-view-fullscreen .mfe-editor-pane--secondary {
   position: relative;
   border-left: 1px solid rgba(15, 23, 42, 0.12);
-  padding-left: 0;
+  padding-left: 32px;
 }
 
 .mfe-view-fullscreen .mfe-editor-pane--secondary::before {
@@ -40,7 +39,7 @@ body.mfe-no-scroll {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -1px;
+  left: 0;
   width: 1px;
   background: linear-gradient(
     to bottom,
@@ -96,22 +95,21 @@ body.mfe-no-scroll {
 }
 
 .mfe-view-fullscreen .mfe-container {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(100% - 48px, 980px);
-  max-width: 980px;
+  position: relative;
+  width: 100%;
+  max-width: none;
   padding: 0;
-  height: 100vh;
+  margin: 0 auto;
+  height: 100%;
   overflow-y: auto;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   scrollbar-width: thin;
   scrollbar-color: rgba(15, 23, 42, 0.2) transparent;
 }
 
 .mfe-view-fullscreen .mfe-breadcrumbs {
-  margin-top: 120px;
+  margin-top: 0;
   margin-bottom: 0;
   padding: 0 32px;
   font-size: 12px;
@@ -119,33 +117,41 @@ body.mfe-no-scroll {
   letter-spacing: 0.01em;
 }
 
+.mfe-view-fullscreen .mfe-breadcrumb-item {
+  font-size: 12px;
+}
+
 .mfe-view-fullscreen .mfe-breadcrumb-link {
   background: transparent;
   border: 0;
-  color: inherit;
-  font: inherit;
   padding: 0;
   margin: 0;
+  font: inherit;
   cursor: pointer;
   text-decoration: none;
+  color: #0f172a;
+  transition: text-decoration 0.15s;
 }
 
 .mfe-view-fullscreen .mfe-breadcrumb-link:hover {
   text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
 }
 
 .mfe-view-fullscreen .mfe-breadcrumb-current {
   color: #0f172a;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .mfe-view-fullscreen .mfe-breadcrumb-disabled {
   color: #94a3b8;
-  font-weight: 500;
+  font-weight: 400;
+  cursor: default;
 }
 
 .mfe-view-fullscreen .mfe-breadcrumb-sep {
-  color: #94a3b8;
+  color: #cbd5e1;
 }
 
 .mfe-view-fullscreen .mfe-container::-webkit-scrollbar {
@@ -171,14 +177,14 @@ body.mfe-no-scroll {
   font-size: 16px;
   line-height: 1.7;
   max-width: none;
-  padding: 0 40px 40px 40px;
+  padding: 0 0 40px 0;
   color: #1f2937;
 }
 
 .mfe-view-fullscreen .mfe-editor-pane--primary .mfe-editor,
 .mfe-view-fullscreen .mfe-editor-pane--secondary .mfe-editor {
-  padding-left: 32px;
-  padding-right: 32px;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .mfe-view-fullscreen .mfe-editor a {
@@ -193,12 +199,15 @@ body.mfe-no-scroll {
   border: 1px solid rgba(15, 23, 42, 0.12);
   font-size: 11px;
   line-height: 1.4;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   color: #475569;
   vertical-align: middle;
 }
 
+/* OLD: Toolbar styles removed - now handled in front-editor.css for menubar */
+/*
 .mfe-view-fullscreen .mfe-toolbar {
   display: flex;
   gap: 4px;
@@ -219,6 +228,7 @@ body.mfe-no-scroll {
   z-index: 10001;
   flex-wrap: wrap;
 }
+*/
 
 .mfe-view-fullscreen .mfe-toolbar .editor-toolbar-btn {
   padding: 4px 8px;
@@ -242,7 +252,8 @@ body.mfe-no-scroll {
   align-items: center;
   justify-content: center;
   letter-spacing: 0.01em;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   outline: none;
 }
 
@@ -310,13 +321,27 @@ body.mfe-no-scroll {
 
 /* Show warning separator line after first child block when there are multiple blocks */
 /* Target first p/h1-h6 child that is not the only child (i.e., has siblings) */
-.mfe-view-fullscreen .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > p:nth-child(1):not(:only-child)::after,
-.mfe-view-fullscreen .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > h1:nth-child(1):not(:only-child)::after,
-.mfe-view-fullscreen .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > h2:nth-child(1):not(:only-child)::after,
-.mfe-view-fullscreen .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > h3:nth-child(1):not(:only-child)::after,
-.mfe-view-fullscreen .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > h4:nth-child(1):not(:only-child)::after,
-.mfe-view-fullscreen .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > h5:nth-child(1):not(:only-child)::after,
-.mfe-view-fullscreen .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"] > h6:nth-child(1):not(:only-child)::after {
+.mfe-view-fullscreen
+  .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
+  > p:nth-child(1):not(:only-child)::after,
+.mfe-view-fullscreen
+  .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
+  > h1:nth-child(1):not(:only-child)::after,
+.mfe-view-fullscreen
+  .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
+  > h2:nth-child(1):not(:only-child)::after,
+.mfe-view-fullscreen
+  .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
+  > h3:nth-child(1):not(:only-child)::after,
+.mfe-view-fullscreen
+  .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
+  > h4:nth-child(1):not(:only-child)::after,
+.mfe-view-fullscreen
+  .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
+  > h5:nth-child(1):not(:only-child)::after,
+.mfe-view-fullscreen
+  .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
+  > h6:nth-child(1):not(:only-child)::after {
   content: "This field saves only one line. Everything below won’t be saved.";
   display: block;
   margin: 24px 0 18px;
@@ -326,8 +351,11 @@ body.mfe-no-scroll {
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  background: linear-gradient(rgba(180, 83, 9, 0.25), rgba(180, 83, 9, 0.25)) center / 100% 1px no-repeat;
-  text-shadow: 0 0 6px #fff, 0 0 6px #fff;
+  background: linear-gradient(rgba(180, 83, 9, 0.25), rgba(180, 83, 9, 0.25))
+    center / 100% 1px no-repeat;
+  text-shadow:
+    0 0 6px #fff,
+    0 0 6px #fff;
 }
 
 /* Hide ProseMirror trailing break placeholder */
@@ -335,8 +363,6 @@ body.mfe-no-scroll {
   opacity: 0;
   height: 0;
 }
-
-
 
 .mfe-view-fullscreen .ProseMirror {
   position: relative;

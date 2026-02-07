@@ -1,208 +1,173 @@
 import { fetchCsrfToken } from "./editor-core.js";
+import { openWindow, closeTopWindow } from "./window-manager.js";
 
 /**
- * Image Picker Overlay
- * 
- * Displays available images from the source folder and allows users to select
- * an image to insert into the markdown editor.
+ * Image Picker Overlay - Revamped UI
+ *
+ * Displays a fullscreen, minimal split-view layout for selecting images.
+ * Left: Sidebar with preview and metadata.
+ * Right: Remote URL field and masonry image gallery.
  */
 
 export function createImagePicker({ onSelect, onClose, initialData = null }) {
-  let selectedImage = initialData ? { 
-    filename: initialData.originalFilename || initialData.filename || "",
-    url: initialData.src || initialData.url || "" 
-  } : null;
+  let selectedImage = initialData
+    ? {
+        filename: initialData.originalFilename || initialData.filename || "",
+        url: initialData.src || initialData.url || "",
+      }
+    : null;
 
   // Internal helper to resolve local filenames to ProcessWire asset paths
   function resolveImageUrl(url) {
     if (!url) return "";
-    // If it's already an absolute URL or starts with /, use as-is
     if (url.match(/^(https?:|\/)/)) return url;
-    
+
     // For relative URLs (filenames), try to resolve to page assets
-    const pageId = document.querySelector(".fe-editable")?.getAttribute("data-page");
+    const pageId = document
+      .querySelector(".fe-editable")
+      ?.getAttribute("data-page");
     if (pageId) {
       return `/site/assets/files/${pageId}/${url}`;
     }
     return url;
   }
 
-  // Determine initial tab: if we have a URL that looks remote, start on remote tab
   const isRemote = selectedImage?.url.startsWith("http");
-  let activeTab = isRemote ? "remote" : "local";
 
-  const overlay = document.createElement("div");
-  overlay.className = "mfe-image-picker-overlay";
-  overlay.setAttribute("data-image-picker", "true");
-
+  // Create the main container that will be passed to openWindow
   const container = document.createElement("div");
   container.className = "mfe-image-picker-container";
 
-  const header = document.createElement("div");
-  header.className = "mfe-image-picker-header";
-  header.innerHTML = `
-    <h3>Image Picker</h3>
-    <button type="button" class="mfe-image-picker-close" title="Close">×</button>
+  // --- LEFT COLUMN: SIDEBAR ---
+  const sidebar = document.createElement("div");
+  sidebar.className = "mfe-picker-sidebar";
+
+  const previewArea = document.createElement("div");
+  previewArea.className = "mfe-picker-preview-wrapper";
+
+  const placeholder = document.createElement("div");
+  placeholder.className = "mfe-picker-preview-placeholder";
+  placeholder.innerHTML = selectedImage
+    ? `<img src="${escapeHtml(resolveImageUrl(selectedImage.url))}" alt="">`
+    : "No image selected";
+  previewArea.appendChild(placeholder);
+
+  const metadata = document.createElement("div");
+  metadata.className = "mfe-picker-metadata";
+
+  const filenameLabel = document.createElement("div");
+  filenameLabel.className = "mfe-picker-filename-label";
+  filenameLabel.textContent =
+    selectedImage && !isRemote ? `image: ${selectedImage.filename}` : "";
+
+  const altGroup = document.createElement("div");
+  altGroup.className = "mfe-picker-field-group";
+  altGroup.innerHTML = `
+    <label>Alt name:</label>
+    <input type="text" id="mfe-picker-alt-input" value="${escapeHtml(initialData?.alt || "")}" placeholder="Describe the image...">
   `;
 
-  // Tab Switcher
-  const tabSwitcher = document.createElement("div");
-  tabSwitcher.className = "mfe-picker-tabs";
-  tabSwitcher.innerHTML = `
-    <button type="button" class="mfe-tab-btn ${activeTab === "local" ? "is-active" : ""}" data-tab="local">Local Gallery</button>
-    <button type="button" class="mfe-tab-btn ${activeTab === "remote" ? "is-active" : ""}" data-tab="remote">Remote URL</button>
-  `;
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "mfe-picker-insert-btn";
+  addBtn.textContent = "Add image";
+  addBtn.disabled = !selectedImage;
 
-  // Selection/Preview Area (Permanent)
-  const selectionArea = document.createElement("div");
-  selectionArea.className = "mfe-image-picker-selection";
-  selectionArea.innerHTML = `
-    <div class="mfe-image-selection-preview">
-      <div class="mfe-preview-placeholder">${selectedImage ? `<img src="${escapeHtml(resolveImageUrl(selectedImage.url))}" alt="">` : "No image selected"}</div>
+  metadata.append(filenameLabel, altGroup, addBtn);
+  sidebar.append(previewArea, metadata);
+
+  // --- RIGHT COLUMN: GALLERY PANE ---
+  const galleryPane = document.createElement("div");
+  galleryPane.className = "mfe-picker-gallery-pane";
+
+  const remoteSection = document.createElement("div");
+  remoteSection.className = "mfe-picker-remote-section";
+  remoteSection.innerHTML = `
+    <label>Select a remote image</label>
+    <input type="url" id="mfe-picker-remote-input" placeholder="http://" value="${isRemote ? escapeHtml(selectedImage.url) : ""}">
+    <div class="mfe-picker-separator-text">
+      <span>OR</span>
     </div>
-    <div class="mfe-image-selection-fields">
-      <div class="mfe-field-group mfe-remote-url-group ${activeTab === "remote" ? "" : "is-hidden"}">
-        <label for="mfe-remote-url">Image URL</label>
-        <input type="url" id="mfe-remote-url" placeholder="https://example.com/image.jpg" value="${isRemote ? escapeHtml(selectedImage.url) : ""}">
-      </div>
-      <div class="mfe-field-group">
-        <label for="mfe-image-alt">Alt Text</label>
-        <input type="text" id="mfe-image-alt" placeholder="Describe the image..." value="${escapeHtml(initialData?.alt || "")}">
-      </div>
-      <div class="mfe-selection-info">
-        <span class="mfe-selected-filename">${selectedImage && !isRemote ? escapeHtml(selectedImage.filename) : ""}</span>
-      </div>
+  `;
+
+  const gallerySection = document.createElement("div");
+  gallerySection.className = "mfe-picker-gallery-section";
+  gallerySection.innerHTML = `
+    <label>Pick from the gallery</label>
+    <div class="mfe-picker-gallery-grid">
+      <div class="mfe-picker-loading">Loading images...</div>
     </div>
   `;
 
-  // Tab Contents
-  const tabContent = document.createElement("div");
-  tabContent.className = "mfe-picker-tab-content";
+  galleryPane.append(remoteSection, gallerySection);
+  container.append(sidebar, galleryPane);
 
-  // Local Tab (Grid)
-  const grid = document.createElement("div");
-  grid.className = `mfe-image-picker-grid ${activeTab === "local" ? "is-visible" : "is-hidden"}`;
-  grid.innerHTML = '<div class="mfe-image-picker-loading">Loading gallery...</div>';
-
-  // Remote Tab (Empty)
-  const remoteTab = document.createElement("div");
-  remoteTab.className = `mfe-remote-tab-info ${activeTab === "remote" ? "is-visible" : "is-hidden"}`;
-  remoteTab.innerHTML = "";
-
-  const footer = document.createElement("div");
-  footer.className = "mfe-image-picker-footer";
-  footer.innerHTML = `
-    <button type="button" class="mfe-btn mfe-btn-secondary mfe-picker-cancel">Cancel</button>
-    <button type="button" class="mfe-btn mfe-btn-primary mfe-picker-confirm" ${!selectedImage ? "disabled" : ""}>Insert Image</button>
-  `;
-
-  container.appendChild(header);
-  container.appendChild(tabSwitcher);
-  container.appendChild(selectionArea);
-  tabContent.appendChild(grid);
-  tabContent.appendChild(remoteTab);
-  container.appendChild(tabContent);
-  container.appendChild(footer);
-  overlay.appendChild(container);
-
-  // Tab Switching Logic
-  tabSwitcher.querySelectorAll(".mfe-tab-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const tab = btn.getAttribute("data-tab");
-      activeTab = tab;
-      
-      tabSwitcher.querySelectorAll(".mfe-tab-btn").forEach(b => b.classList.remove("is-active"));
-      btn.classList.add("is-active");
-      
-      grid.className = `mfe-image-picker-grid ${tab === "local" ? "is-visible" : "is-hidden"}`;
-      remoteTab.className = `mfe-remote-tab-info ${tab === "remote" ? "is-visible" : "is-hidden"}`;
-      
-      // Toggle Remote URL field visibility
-      const urlGroup = selectionArea.querySelector(".mfe-remote-url-group");
-      if (tab === "remote") {
-        urlGroup.classList.remove("is-hidden");
-      } else {
-        urlGroup.classList.add("is-hidden");
-      }
-    });
+  // Open the window
+  const win = openWindow({
+    id: "mfe-image-picker",
+    content: container,
+    onClose: onClose,
+    showMenuBar: true,
+    menuBarDisabled: true,
+    breadcrumbLabel: "Image Picker",
+    className: "mfe-image-picker-window",
+    background: "white",
   });
 
-  // Remote URL Change Logic
-  const remoteUrlInput = selectionArea.querySelector("#mfe-remote-url");
-  remoteUrlInput.addEventListener("input", (e) => {
+  // --- LOGIC ---
+
+  function updatePreview(url) {
+    if (url) {
+      placeholder.innerHTML = `<img src="${escapeHtml(resolveImageUrl(url))}" alt="">`;
+    } else {
+      placeholder.innerHTML = "No image selected";
+    }
+  }
+
+  // Remote URL Change
+  const remoteInput = remoteSection.querySelector("#mfe-picker-remote-input");
+  remoteInput.addEventListener("input", (e) => {
     const url = e.target.value.trim();
     if (url) {
       selectedImage = { filename: "", url: url };
       updatePreview(url);
-      confirmBtn.disabled = false;
-      // Clear filename info since it's remote
-      selectionArea.querySelector(".mfe-selected-filename").textContent = "";
+      filenameLabel.textContent = "";
+      addBtn.disabled = false;
+      // Deselect gallery items
+      gallerySection
+        .querySelectorAll(".mfe-gallery-item")
+        .forEach((i) => i.classList.remove("is-selected"));
     } else {
       selectedImage = null;
       updatePreview(null);
-      confirmBtn.disabled = true;
+      addBtn.disabled = true;
     }
   });
 
-  function updatePreview(url) {
-    const preview = selectionArea.querySelector(".mfe-preview-placeholder");
-    if (url) {
-      // Resolve URL for the preview specifically
-      preview.innerHTML = `<img src="${escapeHtml(resolveImageUrl(url))}" alt="">`;
-    } else {
-      preview.innerHTML = "No image selected";
-    }
-  }
-
-  // Close button handlers
-  header.querySelector(".mfe-image-picker-close").addEventListener("click", closePicker);
-  footer.querySelector(".mfe-picker-cancel").addEventListener("click", closePicker);
-
-  const confirmBtn = footer.querySelector(".mfe-picker-confirm");
-  confirmBtn.addEventListener("click", () => {
-    const altInput = selectionArea.querySelector("#mfe-image-alt");
+  // Insert Action
+  addBtn.addEventListener("click", () => {
+    const altInput = sidebar.querySelector("#mfe-picker-alt-input");
     if (selectedImage && onSelect) {
       onSelect({
-        filename: selectedImage.filename, // empty for remote
+        filename: selectedImage.filename,
         url: selectedImage.url,
-        alt: altInput.value
+        alt: altInput.value,
       });
     }
-    closePicker();
+    closeTopWindow();
   });
-
-  // Close on overlay click
-  overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) closePicker();
-  });
-
-  // Close on Escape key
-  const handleEscape = (e) => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      closePicker();
-    }
-  };
-  document.addEventListener("keydown", handleEscape, true);
-
-  function closePicker() {
-    document.removeEventListener("keydown", handleEscape, true);
-    overlay.remove();
-    if (onClose) onClose();
-  }
 
   function loadImages() {
-    const pageId = document.querySelector(".fe-editable")?.getAttribute("data-page") || "0";
-    
+    const pageId =
+      document.querySelector(".fe-editable")?.getAttribute("data-page") || "0";
+    const grid = gallerySection.querySelector(".mfe-picker-gallery-grid");
+
     return fetchCsrfToken()
       .then((csrf) => {
         const formData = new FormData();
         formData.append("action", "listImages");
         formData.append("pageId", pageId);
-        if (csrf) {
-          formData.append(csrf.name, csrf.value);
-        }
+        if (csrf) formData.append(csrf.name, csrf.value);
 
         return fetch(window.MarkdownFrontEditorConfig?.saveUrl || "./", {
           method: "POST",
@@ -215,48 +180,49 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
         return res.json();
       })
       .then((data) => {
-        if (!data.status) throw new Error(data.message || "Failed to load images");
+        if (!data.status)
+          throw new Error(data.message || "Failed to load images");
         renderImages(data.images || []);
       })
       .catch((err) => {
-        grid.innerHTML = `<div class="mfe-image-picker-error">Error loading images: ${err.message}</div>`;
+        grid.innerHTML = `<div class="mfe-picker-error">Error: ${err.message}</div>`;
       });
   }
 
   function renderImages(images) {
+    const grid = gallerySection.querySelector(".mfe-picker-gallery-grid");
     if (images.length === 0) {
-      grid.innerHTML = '<div class="mfe-image-picker-empty">No images found in source folder</div>';
+      grid.innerHTML = '<div class="mfe-picker-empty">No images found.</div>';
       return;
     }
 
     grid.innerHTML = "";
     images.forEach((image) => {
       const item = document.createElement("div");
-      item.className = "mfe-image-picker-item";
-      // Highlight if current image is this filename
+      item.className = "mfe-gallery-item";
       if (selectedImage && selectedImage.filename === image.filename) {
         item.classList.add("is-selected");
       }
 
-      item.innerHTML = `
-        <img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.filename)}" loading="lazy">
-        <div class="mfe-image-picker-filename">${escapeHtml(image.filename)}</div>
-      `;
-      
-      item.addEventListener("click", () => {
-        // Update selection
-        selectedImage = { filename: image.filename, url: image.url };
-        
-        // Update UI
-        container.querySelectorAll(".mfe-image-picker-item").forEach(i => i.classList.remove("is-selected"));
-        item.classList.add("is-selected");
-        
-        updatePreview(image.url);
-        
-        const info = selectionArea.querySelector(".mfe-selected-filename");
-        info.textContent = image.filename;
+      const img = document.createElement("img");
+      img.src = image.url;
+      img.alt = image.filename;
+      img.loading = "lazy";
 
-        confirmBtn.disabled = false;
+      item.appendChild(img);
+
+      item.addEventListener("click", () => {
+        selectedImage = { filename: image.filename, url: image.url };
+
+        gallerySection
+          .querySelectorAll(".mfe-gallery-item")
+          .forEach((i) => i.classList.remove("is-selected"));
+        item.classList.add("is-selected");
+
+        updatePreview(image.url);
+        filenameLabel.textContent = `image: ${image.filename}`;
+        remoteInput.value = ""; // Clear remote input on gallery selection
+        addBtn.disabled = false;
       });
 
       grid.appendChild(item);
@@ -270,8 +236,7 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
     return div.innerHTML;
   }
 
-  document.body.appendChild(overlay);
   loadImages();
 
-  return { close: closePicker };
+  return win;
 }

@@ -31,8 +31,13 @@ import {
   fetchCsrfToken,
   syncComments,
 } from "./editor-core.js";
-import { buildContentIndex, getSectionEntry, getSubsectionEntry } from "./content-index.js";
+import {
+  buildContentIndex,
+  getSectionEntry,
+  getSubsectionEntry,
+} from "./content-index.js";
 import { createImagePicker } from "./image-picker.js";
+import { openWindow, closeTopWindow, closeWindow } from "./window-manager.js";
 
 let activeEditor = null;
 let primaryEditor = null;
@@ -114,13 +119,11 @@ function createEditorInstance(element, fieldType, fieldName) {
               state.doc.descendants((node, pos, parent) => {
                 if (!node.isText) return;
                 if (parent?.type?.name === "codeBlock") return;
-                if (node.marks?.some((mark) => mark.type.name === "code")) return;
+                if (node.marks?.some((mark) => mark.type.name === "code"))
+                  return;
 
                 inlineHtmlTags.forEach((tag) => {
-                  const re = new RegExp(
-                    `<\\s*\\/?\\s*${tag}\\b[^>]*>`,
-                    "gi",
-                  );
+                  const re = new RegExp(`<\\s*\\/?\\s*${tag}\\b[^>]*>`, "gi");
                   let match;
                   while ((match = re.exec(node.text)) !== null) {
                     const from = pos + match.index;
@@ -161,24 +164,26 @@ function createEditorInstance(element, fieldType, fieldName) {
             ...this.parent?.(),
             src: {
               default: null,
-              parseHTML: element => element.getAttribute('src'),
-              renderHTML: attributes => {
+              parseHTML: (element) => element.getAttribute("src"),
+              renderHTML: (attributes) => {
                 if (!attributes.src) return {};
-                
+
                 // If it's already an absolute URL or starts with /, use as-is
                 // Supports picker URLs starting with ? or protocol-relative //
                 if (attributes.src.match(/^(https?:|\/|\?|\/\/)/)) {
                   return { src: attributes.src };
                 }
-                
+
                 // For relative URLs, try to resolve to page assets
-                const pageId = document.querySelector('.fe-editable')?.getAttribute('data-page');
+                const pageId = document
+                  .querySelector(".fe-editable")
+                  ?.getAttribute("data-page");
                 if (pageId) {
                   // Use ProcessWire's page assets URL pattern
                   const assetUrl = `/site/assets/files/${pageId}/${attributes.src}`;
                   return { src: assetUrl };
                 }
-                
+
                 // Fallback to original src
                 return { src: attributes.src };
               },
@@ -190,11 +195,11 @@ function createEditorInstance(element, fieldType, fieldName) {
         },
         addNodeView() {
           return ({ node, HTMLAttributes, getPos, editor }) => {
-            const container = document.createElement('span');
-            container.classList.add('mfe-tiptap-image-container');
+            const container = document.createElement("span");
+            container.classList.add("mfe-tiptap-image-container");
 
-            const img = document.createElement('img');
-            
+            const img = document.createElement("img");
+
             // Set attributes. TipTap's HTMLAttributes already contains the resolved src from renderHTML.
             Object.entries(HTMLAttributes).forEach(([key, value]) => {
               if (value !== null && value !== undefined) {
@@ -202,9 +207,9 @@ function createEditorInstance(element, fieldType, fieldName) {
               }
             });
 
-            const label = document.createElement('span');
-            label.classList.add('mfe-tiptap-image-label');
-            label.innerText = 'edit';
+            const label = document.createElement("span");
+            label.classList.add("mfe-tiptap-image-label");
+            label.innerText = "edit";
 
             container.append(img, label);
 
@@ -226,7 +231,14 @@ function createEditorInstance(element, fieldType, fieldName) {
           return [
             new Plugin({
               props: {
-                handleDoubleClickOn: (view, pos, node, nodePos, event, direct) => {
+                handleDoubleClickOn: (
+                  view,
+                  pos,
+                  node,
+                  nodePos,
+                  event,
+                  direct,
+                ) => {
                   if (node.type.name === "image") {
                     if (window.mfeOpenImagePicker) {
                       window.mfeOpenImagePicker(node.attrs);
@@ -244,7 +256,7 @@ function createEditorInstance(element, fieldType, fieldName) {
         allowBase64: false,
       }),
       InlineHtmlLabel,
-      EscapeKeyExtension,
+      // EscapeKeyExtension, - DEPRECATED: WindowManager now handles global Escape
     ],
     content: "",
     editorProps: {
@@ -318,7 +330,16 @@ function saveAllEditors() {
       const pageId = activeTarget?.getAttribute("data-page") || "";
       const mdName = activeFieldName || "";
       const markdown = translationsCache?.[lang] ?? "";
-      tasks.push(saveTranslation(pageId, mdName, lang, markdown, activeFieldScope, activeFieldSection));
+      tasks.push(
+        saveTranslation(
+          pageId,
+          mdName,
+          lang,
+          markdown,
+          activeFieldScope,
+          activeFieldSection,
+        ),
+      );
       dirtyTranslations.set(lang, false);
     }
   }
@@ -401,7 +422,12 @@ function openSplit() {
   if (translationsCache === null) {
     const pageId = activeTarget?.getAttribute("data-page") || "";
     const mdName = activeFieldName || "";
-    fetchTranslations(mdName, pageId, activeFieldScope, activeFieldSection).then((data) => {
+    fetchTranslations(
+      mdName,
+      pageId,
+      activeFieldScope,
+      activeFieldSection,
+    ).then((data) => {
       translationsCache = data || {};
       setSecondaryLanguage(select.value);
     });
@@ -438,19 +464,19 @@ function setSecondaryLanguage(lang) {
   dirtyTranslations.set(lang, false);
 }
 
-// Custom extension to handle Escape key
-const EscapeKeyExtension = Extension.create({
-  name: "escapeKeyExtension",
-
-  addKeyboardShortcuts() {
-    return {
-      Escape: () => {
-        closeEditor();
-        return true;
-      },
-    };
-  },
-});
+// Custom extension to handle Escape key - DEPRECATED: WindowManager now handles global Escape
+// const EscapeKeyExtension = Extension.create({
+//   name: "escapeKeyExtension",
+//
+//   addKeyboardShortcuts() {
+//     return {
+//       Escape: () => {
+//         closeEditor();
+//         return true;
+//       },
+//     };
+//   },
+// });
 
 /**
  * Initialize the editor for a specific field
@@ -459,35 +485,22 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
   activeFieldType = fieldType;
   saveCallback = onSave;
 
-  // Create overlay (zen mode - full white screen)
-  const overlay = document.createElement("div");
-  overlay.setAttribute("data-editor-overlay", "true");
-  overlay.className = "mfe-overlay";
-  overlay.addEventListener("dblclick", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-  });
-  document.body.appendChild(overlay);
-  document.body.classList.add("mfe-no-scroll");
-  document.body.classList.add("mfe-view-fullscreen");
-  overlayEl = overlay;
-
   // Create container (starts at top, centered)
   const container = document.createElement("div");
   container.setAttribute("data-editor-container", "true");
-  container.setAttribute("data-field-type", fieldType); // Add field type as data attribute
+  container.setAttribute("data-field-type", fieldType);
   container.className = "mfe-container";
   container.addEventListener("dblclick", (e) => {
     e.preventDefault();
     e.stopPropagation();
   });
-  overlay.appendChild(container);
   editorContainer = container;
 
-  breadcrumbsEl = document.createElement("div");
-  breadcrumbsEl.className = "mfe-breadcrumbs";
-  renderBreadcrumbs();
-  container.appendChild(breadcrumbsEl);
+  // OLD: breadcrumbs are now handled by WindowManager
+  // Don't create breadcrumbs here anymore
+  // breadcrumbsEl = document.createElement("div");
+  // breadcrumbsEl.className = "mfe-breadcrumbs";
+  // container.appendChild(breadcrumbsEl);
 
   editorShell = document.createElement("div");
   editorShell.className = "mfe-editor-shell";
@@ -496,16 +509,13 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
   const primaryPane = document.createElement("div");
   primaryPane.className = "mfe-editor-pane mfe-editor-pane--primary";
   const primaryHeader = document.createElement("div");
-  primaryHeader.className = "mfe-editor-pane-header mfe-editor-pane-header--spacer";
+  primaryHeader.className =
+    "mfe-editor-pane-header mfe-editor-pane-header--spacer";
   primaryPane.appendChild(primaryHeader);
   editorShell.appendChild(primaryPane);
 
   // Create primary editor
-  primaryEditor = createEditorInstance(
-    primaryPane,
-    fieldType,
-    activeFieldName,
-  );
+  primaryEditor = createEditorInstance(primaryPane, fieldType, activeFieldName);
   activeEditor = primaryEditor;
 
   // Parse markdown into editor schema and set content
@@ -520,14 +530,78 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
   primaryDirty = false;
   dirtyTranslations.clear();
 
-  // Create toolbar
-  createToolbar(container, overlay);
+  // Create toolbar (will be moved to menu bar after window opens)
+  const toolbar = createToolbar(); // Returns the toolbar element, not appended yet
+
+  // Build breadcrumb hierarchy for window manager
+  const breadcrumbItems = buildBreadcrumbItems();
+
+  // Open the window
+  const win = openWindow({
+    id: "mfe-editor",
+    content: container,
+    onClose: cleanupEditorOnly,
+    showMenuBar: true,
+    menuBarDisabled: false,
+    breadcrumbItems: breadcrumbItems,
+    breadcrumbClickHandler: handleBreadcrumbClick,
+    className: "mfe-editor-window",
+    background: "white",
+    onMount: (overlay, windowInstance) => {
+      // Attach toolbar to the menu bar after window is created
+      const menuBarInner = overlay.querySelector("[data-mfe-menubar-inner]");
+      if (menuBarInner && toolbar) {
+        menuBarInner.appendChild(toolbar);
+      }
+    },
+  });
+
+  overlayEl = win.dom;
+  document.body.classList.add("mfe-view-fullscreen");
 
   // Setup keyboard shortcuts
   setupKeyboardShortcuts();
 
   // Focus editor
   setTimeout(() => primaryEditor.view.focus(), 0);
+}
+
+function cleanupEditorOnly() {
+  if (secondaryEditor) {
+    secondaryEditor.destroy();
+    secondaryEditor = null;
+  }
+  if (primaryEditor) {
+    primaryEditor.destroy();
+    primaryEditor = null;
+  }
+  activeEditor = null;
+
+  // Remove keyboard event listener
+  if (keydownHandler) {
+    document.removeEventListener("keydown", keydownHandler, true);
+    keydownHandler = null;
+  }
+
+  document.body.classList.remove("mfe-view-fullscreen");
+  statusManager.reset();
+
+  saveCallback = null;
+  activeTarget = null;
+  activeFieldName = null;
+  activeFieldType = null;
+  activeFieldScope = "field";
+  activeFieldSection = "";
+  activeFieldId = null;
+  activeRawMarkdown = null;
+  activeDisplayMarkdown = null;
+  translationsCache = null;
+  secondaryLang = "";
+  editorShell = null;
+  editorContainer = null;
+  overlayEl = null;
+  splitPane = null;
+  breadcrumbsEl = null;
 }
 
 /**
@@ -545,22 +619,31 @@ function openImagePicker(initialData = null) {
       if (!editor) return;
 
       const { selection } = editor.state;
-      const isImageSelected = selection.node && selection.node.type.name === 'image';
+      const isImageSelected =
+        selection.node && selection.node.type.name === "image";
 
       if (isImageSelected) {
-        editor.chain().focus().updateAttributes('image', {
-          src: imageData.url,
-          alt: imageData.alt || "",
-          originalFilename: imageData.filename
-        }).run();
+        editor
+          .chain()
+          .focus()
+          .updateAttributes("image", {
+            src: imageData.url,
+            alt: imageData.alt || "",
+            originalFilename: imageData.filename,
+          })
+          .run();
       } else {
-        editor.chain().focus().setImage({ 
-          src: imageData.url, 
-          alt: imageData.alt || "",
-          originalFilename: imageData.filename 
-        }).run();
+        editor
+          .chain()
+          .focus()
+          .setImage({
+            src: imageData.url,
+            alt: imageData.alt || "",
+            originalFilename: imageData.filename,
+          })
+          .run();
       }
-      
+
       // Mark as dirty
       if (editor === primaryEditor) {
         primaryDirty = true;
@@ -585,7 +668,7 @@ window.mfeOpenImagePicker = openImagePicker;
 /**
  * Create the toolbar
  */
-function createToolbar(container, overlay) {
+function createToolbar() {
   const toolbar = document.createElement("div");
   toolbar.id = "editor-toolbar"; // Add ID for easy selection
   toolbar.className = "mfe-toolbar";
@@ -609,57 +692,53 @@ function createToolbar(container, overlay) {
   saveStatusEl = statusEl;
   statusManager.registerStatusEl(statusEl);
 
-  const closeBtn = document.createElement("button");
-  closeBtn.type = "button";
-  closeBtn.className = "editor-toolbar-btn mfe-inline-close";
-  closeBtn.title = "Close (Esc)";
-  closeBtn.innerHTML = "×";
-  closeBtn.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    closeEditor();
-  });
-
-  toolbar.appendChild(closeBtn);
-  overlay.appendChild(toolbar);
+  return toolbar;
 }
 
 /**
  * Setup keyboard shortcuts
  */
 function setupKeyboardShortcuts() {
-  if (keydownHandler) return;
-  const handler = (e) => {
-    // Handle Escape without checking activeEditor - always close on Escape
-    if (e.key === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      closeEditor();
-      return;
-    }
+  if (keydownHandler) {
+    document.removeEventListener("keydown", keydownHandler, true);
+  }
 
+  const handler = (e) => {
     if (!activeEditor) return;
 
+    // Handle Ctrl/Cmd+S for save
+    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      e.preventDefault();
+      e.stopPropagation();
+      saveAllEditors();
+      return; // Important: return to avoid processing other cases
+    }
+
+    // Handle other Ctrl/Cmd shortcuts
     if (e.ctrlKey || e.metaKey) {
       switch (e.key.toLowerCase()) {
         case "b":
           e.preventDefault();
           activeEditor.chain().focus().toggleBold().run();
-          break;
+          return;
         case "i":
           e.preventDefault();
           activeEditor.chain().focus().toggleItalic().run();
-          break;
-        case "s":
+          return;
+        case "k":
           e.preventDefault();
-          saveAllEditors();
-          break;
+          // show link prompt
+          const url = prompt("Enter URL:");
+          if (url) {
+            activeEditor.chain().focus().setLink({ href: url }).run();
+          }
+          return;
       }
     }
   };
 
-  document.addEventListener("keydown", handler, true);
   keydownHandler = handler;
+  document.addEventListener("keydown", keydownHandler, true);
 }
 
 /**
@@ -705,6 +784,27 @@ function highlightExtraContent(editor = activeEditor) {
  */
 function clearExtraContentHighlights() {}
 
+/**
+ * Build a breadcrumb label for the window hierarchy
+ */
+function buildBreadcrumbLabel() {
+  const scope = activeFieldScope || "field";
+  const name = activeFieldName || "Untitled";
+  const section =
+    activeFieldSection || activeTarget?.getAttribute?.("data-md-section") || "";
+  const type = activeFieldType || "tag";
+
+  if (scope === "section") {
+    return `Section: ${name}`;
+  } else if (scope === "subsection") {
+    return `Sub: ${name}`;
+  } else if (type === "container") {
+    return `Container: ${name}`;
+  } else {
+    return `Field: ${name}`;
+  }
+}
+
 function buildBreadcrumbParts() {
   const scope = activeFieldScope || "field";
   const name = activeFieldName || "";
@@ -718,9 +818,7 @@ function buildBreadcrumbParts() {
   const type = activeFieldType || "";
   const isContainer = type === "container";
   const sectionName =
-    section ||
-    sectionFromSubsection ||
-    (scope === "section" ? name : "");
+    section || sectionFromSubsection || (scope === "section" ? name : "");
 
   const parts = [];
   if (sectionName) {
@@ -748,6 +846,39 @@ function buildBreadcrumbParts() {
   }
 
   return parts;
+}
+
+function buildBreadcrumbItems() {
+  const parts = buildBreadcrumbParts();
+  const currentTarget = getBreadcrumbsCurrentTarget();
+  const sectionName =
+    activeFieldSection ||
+    activeTarget?.getAttribute?.("data-md-section") ||
+    (activeFieldScope === "section" ? activeFieldName : "") ||
+    (activeFieldScope === "subsection"
+      ? findSectionNameForSubsection(activeFieldName)
+      : "");
+  const sectionEntry = sectionName ? getSectionEntry(sectionName) : null;
+  const sectionHasContent =
+    Boolean(sectionEntry?.markdownB64) &&
+    sectionEntry.markdownB64.trim() !== "";
+
+  return parts.map((part) => {
+    const sectionDisabled = part.target === "section" && !sectionHasContent;
+    if (part.target === currentTarget || sectionDisabled) {
+      return {
+        label: part.label,
+        target: part.target,
+        state: sectionDisabled ? "disabled" : "current",
+      };
+    }
+
+    return {
+      label: part.label,
+      target: part.target,
+      state: "link",
+    };
+  });
 }
 
 function getBreadcrumbsCurrentTarget() {
@@ -842,81 +973,25 @@ function saveActiveEditor() {
     if (translationsCache) {
       translationsCache[secondaryLang] = markdown;
     }
-    saveTranslation(pageId, mdName, secondaryLang, markdown, activeFieldScope, activeFieldSection);
+    saveTranslation(
+      pageId,
+      mdName,
+      secondaryLang,
+      markdown,
+      activeFieldScope,
+      activeFieldSection,
+    );
     return;
   }
   saveEditorContent(activeEditor);
 }
 
-/**
- * Close the editor
- */
 function closeEditor() {
-  if (secondaryEditor) {
-    secondaryEditor.destroy();
-    secondaryEditor = null;
-  }
-  if (primaryEditor) {
-    primaryEditor.destroy();
-    primaryEditor = null;
-  }
-  activeEditor = null;
-
-  // Remove keyboard event listener
-  if (keydownHandler) {
-    document.removeEventListener("keydown", keydownHandler, true);
-    keydownHandler = null;
-  }
-  if (breadcrumbsEl?.dataset?.listener) {
-    breadcrumbsEl.removeEventListener("click", handleBreadcrumbClick);
-    delete breadcrumbsEl.dataset.listener;
-  }
-
-  // Remove editor container
-  const container = document.querySelector("[data-editor-container]");
-  if (container) {
-    container.remove();
-  }
-
-  // Remove overlay and all its contents
-  const overlay = document.querySelector("[data-editor-overlay]");
-  if (overlay) {
-    overlay.remove();
-  }
-
-  // Fallback: remove any remaining editor elements
-  document
-    .querySelectorAll("[data-editor-overlay], [data-editor-container]")
-    .forEach((el) => el.remove());
-
-  document.body.classList.remove("mfe-no-scroll");
-  document.body.classList.remove("mfe-view-fullscreen");
-  statusManager.reset();
-
-  saveCallback = null;
-  activeTarget = null;
-  activeFieldName = null;
-  activeFieldType = null;
-  activeFieldScope = "field";
-  activeFieldSection = "";
-  activeFieldId = null;
-  activeRawMarkdown = null;
-  activeDisplayMarkdown = null;
-  translationsCache = null;
-  secondaryLang = "";
-  editorShell = null;
-  editorContainer = null;
-  overlayEl = null;
-  splitPane = null;
-  breadcrumbsEl = null;
+  closeWindow("mfe-editor");
 }
 
 function createOverlay() {
-  const overlay = document.createElement("div");
-  overlay.setAttribute("data-editor-overlay", "true");
-  overlay.className = "mfe-backdrop";
-  overlay.addEventListener("click", closeEditor);
-  document.body.appendChild(overlay);
+  // Deprecated, use WindowManager
 }
 
 /**
@@ -949,13 +1024,33 @@ function findSectionNameForSubsection(subName) {
 }
 
 function handleBreadcrumbClick(e) {
-  const target = e.target?.closest?.(".mfe-breadcrumb-link");
-  if (!target) return;
+  // Find the breadcrumb link element
+  const target = e.target?.closest(".mfe-breadcrumb-link");
+
+  console.log("[mfe] breadcrumb click handler called", {
+    target,
+    hasTarget: !!target,
+    activeTarget: !!activeTarget,
+    eventTarget: e.target,
+    eventTargetClass: e.target?.className,
+  });
+
+  if (!target) {
+    console.log("[mfe] no target found in handleBreadcrumbClick");
+    return;
+  }
   e.preventDefault();
   e.stopPropagation();
 
   const type = target.getAttribute("data-breadcrumb-target");
-  if (!type || !activeTarget) return;
+  console.log("[mfe] breadcrumb type and activeTarget", {
+    type,
+    activeTarget: !!activeTarget,
+  });
+  if (!type || !activeTarget) {
+    console.log("[mfe] early return: !type or !activeTarget");
+    return;
+  }
 
   console.log("[mfe] breadcrumb click", {
     type,
@@ -979,11 +1074,16 @@ function handleBreadcrumbClick(e) {
   if (type === "section") {
     id = sectionName ? `section:${sectionName}` : "";
   } else if (type === "subsection") {
-    id = sectionName && fieldName ? `subsection:${sectionName}:${fieldName}` : "";
+    id =
+      sectionName && fieldName ? `subsection:${sectionName}:${fieldName}` : "";
   } else if (type === "container") {
-    id = fieldName ? `field:${sectionName ? `${sectionName}:` : ""}${fieldName}` : "";
+    id = fieldName
+      ? `field:${sectionName ? `${sectionName}:` : ""}${fieldName}`
+      : "";
   } else if (type === "field") {
-    id = fieldName ? `field:${sectionName ? `${sectionName}:` : ""}${fieldName}` : "";
+    id = fieldName
+      ? `field:${sectionName ? `${sectionName}:` : ""}${fieldName}`
+      : "";
   }
 
   const indexed = id ? index.byId.get(id) : null;
@@ -1002,7 +1102,10 @@ function handleBreadcrumbClick(e) {
   if (indexed?.markdownB64) {
     const virtual = document.createElement("div");
     virtual.className = "fe-editable md-edit mfe-virtual";
-    virtual.setAttribute("data-page", activeTarget.getAttribute("data-page") || "0");
+    virtual.setAttribute(
+      "data-page",
+      activeTarget.getAttribute("data-page") || "0",
+    );
     virtual.setAttribute("data-md-scope", indexed.scope || type);
     virtual.setAttribute("data-md-name", indexed.name || fieldName);
     if (indexed.section) {
@@ -1032,7 +1135,9 @@ function handleBreadcrumbClick(e) {
 
   if (type === "subsection") {
     const entry =
-      sectionName && fieldName ? getSubsectionEntry(sectionName, fieldName) : null;
+      sectionName && fieldName
+        ? getSubsectionEntry(sectionName, fieldName)
+        : null;
     if (entry) {
       const virtual = document.createElement("div");
       virtual.className = "fe-editable md-edit mfe-virtual";
@@ -1069,7 +1174,9 @@ function openFullscreenEditorFromPayload(payload) {
   activeRawMarkdown = markdownContent;
   activeDisplayMarkdown = markdownContent;
   if (markdownContent.includes("<!--")) {
-    activeDisplayMarkdown = markdownContent.replace(/<!--[\s\S]*?-->/g, "").trim();
+    activeDisplayMarkdown = markdownContent
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .trim();
   }
 
   activeTarget = target;
@@ -1081,8 +1188,15 @@ function openFullscreenEditorFromPayload(payload) {
 
   const saveCallback = (markdown, resolve, reject) => {
     let finalMarkdown = markdown;
-    if (activeRawMarkdown && activeDisplayMarkdown && activeRawMarkdown !== activeDisplayMarkdown) {
-      finalMarkdown = activeRawMarkdown.replace(activeDisplayMarkdown, markdown);
+    if (
+      activeRawMarkdown &&
+      activeDisplayMarkdown &&
+      activeRawMarkdown !== activeDisplayMarkdown
+    ) {
+      finalMarkdown = activeRawMarkdown.replace(
+        activeDisplayMarkdown,
+        markdown,
+      );
     }
     fetchCsrfToken().then((csrf) => {
       const formData = new FormData();
@@ -1112,21 +1226,32 @@ function openFullscreenEditorFromPayload(payload) {
           console.log("[MFE] Save response received:", data);
           if (data.status) {
             // Priority: use htmlMap if available (full page map)
-            const htmlMap = data.htmlMap || (typeof data.html === 'object' ? data.html : {});
+            const htmlMap =
+              data.htmlMap || (typeof data.html === "object" ? data.html : {});
             // Fallback for single field update (legacy or direct)
-            const primaryHtml = typeof data.html === 'string' ? data.html : (htmlMap[activeFieldId] || htmlMap[fieldName]);
-            
+            const primaryHtml =
+              typeof data.html === "string"
+                ? data.html
+                : htmlMap[activeFieldId] || htmlMap[fieldName];
+
             const markdowns = data.markdowns || {};
-            
+
             if (data.sectionsIndex) {
               console.log("[MFE] Hydrating global sectionsIndex from response");
-              window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
-              window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;
+              window.MarkdownFrontEditorConfig =
+                window.MarkdownFrontEditorConfig || {};
+              window.MarkdownFrontEditorConfig.sectionsIndex =
+                data.sectionsIndex;
             }
 
             if (primaryHtml) {
-              const srcMatch = primaryHtml.match(/<img[^>]+src=["\']([^"\']+)["\']/);
-              console.log("[MFE] Received HTML for active field. First img src:", srcMatch ? srcMatch[1] : "not found");
+              const srcMatch = primaryHtml.match(
+                /<img[^>]+src=["\']([^"\']+)["\']/,
+              );
+              console.log(
+                "[MFE] Received HTML for active field. First img src:",
+                srcMatch ? srcMatch[1] : "not found",
+              );
             }
 
             // 1. Update EVERY .fe-editable element on the page
@@ -1137,14 +1262,23 @@ function openFullscreenEditorFromPayload(payload) {
               const elScope = el.getAttribute("data-md-scope") || "field";
               const elSection = el.getAttribute("data-md-section") || "";
               const elId = `${elPageId}:${elScope}:${elSection}:${elName}`;
-              
-              let html = htmlMap[elId] || htmlMap[elName] || htmlMap[`${elScope}:${elName}`] || htmlMap[`${elScope}:${elSection}:${elName}`];
-              
+
+              let html =
+                htmlMap[elId] ||
+                htmlMap[elName] ||
+                htmlMap[`${elScope}:${elName}`] ||
+                htmlMap[`${elScope}:${elSection}:${elName}`];
+
               // Fuzzy suffix match
               if (!html) {
                 for (const [key, value] of Object.entries(htmlMap)) {
-                  if (key && (elId.endsWith(':' + key) || key.endsWith(':' + elId))) {
-                    console.log(`[MFE] Fuzzy match found: elId='${elId}' matches mapKey='${key}'`);
+                  if (
+                    key &&
+                    (elId.endsWith(":" + key) || key.endsWith(":" + elId))
+                  ) {
+                    console.log(
+                      `[MFE] Fuzzy match found: elId='${elId}' matches mapKey='${key}'`,
+                    );
                     html = value;
                     break;
                   }
@@ -1155,7 +1289,7 @@ function openFullscreenEditorFromPayload(payload) {
                 console.log(`[MFE] Syncing element: ${elId}`);
                 el.innerHTML = html;
                 matchedCount++;
-                
+
                 if (markdowns[elId] || markdowns[elName]) {
                   el.dataset.markdown = markdowns[elId] || markdowns[elName];
                 }
@@ -1164,20 +1298,26 @@ function openFullscreenEditorFromPayload(payload) {
 
             // 2. Sync fragments delimited by comment markers (e.g. Subsections)
             const commentCount = syncComments(htmlMap);
-            console.log(`[MFE] Full-page sync complete. Updated ${matchedCount} elements and ${commentCount} comment blocks.`);
+            console.log(
+              `[MFE] Full-page sync complete. Updated ${matchedCount} elements and ${commentCount} comment blocks.`,
+            );
 
             // 3. Extra safety for active editor
             if (activeTarget && primaryHtml) {
               activeTarget.dataset.markdown = finalMarkdown;
-              
+
               if (primaryEditor) {
-                console.log("[MFE] Live refreshing active Tiptap editor content");
+                console.log(
+                  "[MFE] Live refreshing active Tiptap editor content",
+                );
                 const selection = primaryEditor.state.selection;
                 primaryEditor.commands.setContent(primaryHtml, false);
-                try { primaryEditor.commands.setTextSelection(selection); } catch (e) {}
+                try {
+                  primaryEditor.commands.setTextSelection(selection);
+                } catch (e) {}
               }
             }
-            
+
             if (resolve) resolve();
           } else {
             alert(`Save failed: ${data.message || "Unknown error"}`);
@@ -1192,7 +1332,6 @@ function openFullscreenEditorFromPayload(payload) {
     });
   };
 
-  createOverlay();
   if (document.body.classList.contains("mfe-view-inline")) {
     const overlay = document.querySelector(".mfe-hover-overlay");
     if (overlay) overlay.style.display = "none";
@@ -1227,14 +1366,8 @@ window.MarkdownFrontEditor = {
    * @param {function} onSave - Save callback
    * @param {string} fieldType - Field type: "tag" or "container" (default: "tag")
    */
+  // Initialize new editor via initEditor (which uses WindowManager)
   edit(markdownContent, onSave, fieldType = "tag") {
-    // Close existing editor
-    if (activeEditor) {
-      closeEditor();
-    }
-
-    // Initialize new editor with overlay
-    createOverlay();
     initEditor(markdownContent, onSave, fieldType);
   },
 

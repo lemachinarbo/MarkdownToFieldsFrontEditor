@@ -49,6 +49,7 @@
   --mfe-label-padding: 4px 10px;
   --mfe-label-offset-y: -25px;
   --mfe-image-max-width: 200px;
+  --mfe-scrollbar-gutter: 15px;
 }
 
 .mfe-hover-overlay .mfe-hover-label {
@@ -115,9 +116,252 @@
     opacity 0.2s ease,
     transform 0.2s ease;
 }
+
 .fe-editable:hover::after {
   opacity: 1;
   transform: translateY(0);
+}
+/* Window Manager & Overlays */
+.mfe-window-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: white;
+  z-index: 100000;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+}
+
+.mfe-window-inner {
+  width: min(100% - 48px, 1024px);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+}
+
+.mfe-window-menubar {
+}
+
+.mfe-window-menubar .mfe-window-inner {
+  height: 100%;
+  justify-content: center;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 0 12px;
+  width: 100%;
+}
+
+.mfe-window-breadcrumbs .mfe-window-inner {
+  justify-content: flex-start;
+}
+
+/* ELEMENT 1: Menu Bar */
+.mfe-window-menubar {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(calc(-50% - var(--mfe-scrollbar-gutter) / 2));
+  width: min(100% - 48px, 1024px);
+  height: 48px;
+  border-bottom: 0;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  background: white;
+  transition:
+    opacity 0.2s,
+    filter 0.2s;
+  z-index: 100001;
+}
+
+.mfe-window-menubar[data-menubar-disabled="true"],
+.mfe-menubar-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+  filter: grayscale(50%);
+}
+
+.mfe-window-menubar[data-menubar-disabled="true"]::before,
+.mfe-menubar-disabled::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.3);
+  pointer-events: none;
+}
+
+/* ELEMENT 2: Breadcrumbs */
+.mfe-window-breadcrumbs {
+  position: relative;
+  flex-shrink: 0;
+  height: auto;
+  min-height: auto;
+  border-bottom: none;
+  display: flex;
+  align-items: center;
+  padding: 96px 0 48px 0;
+  background: transparent;
+  gap: 0;
+  font-size: 11px;
+}
+
+.mfe-breadcrumb-item {
+  font-size: 11px;
+  font-weight: 400;
+  color: #64748b;
+  white-space: nowrap;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.mfe-breadcrumb-item.mfe-breadcrumb-current {
+  color: #64748b;
+  font-weight: 400;
+}
+
+.mfe-breadcrumb-item.mfe-breadcrumb-disabled {
+  color: #64748b;
+  font-weight: 400;
+  cursor: default;
+}
+
+.mfe-breadcrumb-item.mfe-breadcrumb-link {
+  color: #64748b;
+  cursor: pointer;
+  text-decoration: none;
+  transition: text-decoration 0.15s;
+}
+
+.mfe-breadcrumb-item.mfe-breadcrumb-link:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.mfe-breadcrumb-separator {
+  font-size: 11px;
+  color: #64748b;
+  padding: 0 6px;
+  font-weight: 400;
+}
+
+.mfe-breadcrumb-link {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 11px;
+  color: #64748b;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.mfe-breadcrumb-link:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+/* ELEMENT 3: Close Button */
+.mfe-window-close-btn {
+  position: fixed;
+  top: 12px;
+  right: calc(12px + var(--mfe-scrollbar-gutter) / 2);
+  background: transparent;
+  border: none;
+  font-size: 28px;
+  line-height: 1;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 4px;
+  z-index: 100002;
+  transition: color 0.2s;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mfe-window-close-btn:hover {
+  color: #0f172a;
+}
+
+/* ELEMENT 4: Content Container */
+/* ELEMENT 3: Content Container */
+.mfe-window-container {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: stretch;
+}
+
+.mfe-window-content {
+  flex: 1 1 auto;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.mfe-window-content-inner {
+  flex: 1;
+  display: block;
+  /* padding-left: 32px; */
+  /* padding-right: 32px; */
+}
+
+/* Toolbar styling for menu bar */
+.mfe-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 0;
+  height: 100%;
+  margin: 0;
+  width: 100%;
+  justify-content: center;
+}
+
+.mfe-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #475569;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mfe-toolbar button:hover {
+  background-color: rgba(15, 23, 42, 0.05);
+  color: #1e293b;
+}
+
+.mfe-toolbar button:active,
+.mfe-toolbar button[data-active="true"] {
+  background-color: rgba(37, 99, 235, 0.1);
+  color: #2563eb;
+  border-color: rgba(37, 99, 235, 0.3);
 }
 
 /* TipTap Editable Image Styles */
@@ -155,7 +399,9 @@
   pointer-events: none;
   opacity: 0;
   transform: translateY(4px);
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
   z-index: 10;
 }
 
