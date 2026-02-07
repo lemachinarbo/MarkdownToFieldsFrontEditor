@@ -140,6 +140,11 @@
   vertical-align: middle;
 }
 
+.mfe-view-inline .mfe-inline-editor img {
+  max-width: var(--mfe-image-max-width, 100%);
+  height: auto;
+}
+
 .mfe-view-inline .mfe-inline-editor a {
   pointer-events: none;
 }

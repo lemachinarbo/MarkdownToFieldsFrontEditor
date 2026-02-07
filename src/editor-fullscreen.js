@@ -8,6 +8,7 @@
 import { Editor, Extension } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
+import Image from "@tiptap/extension-image";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { common, createLowlight } from "lowlight";
 import { Plugin } from "prosemirror-state";
@@ -30,6 +31,7 @@ import {
   fetchCsrfToken,
 } from "./editor-core.js";
 import { buildContentIndex, getSectionEntry, getSubsectionEntry } from "./content-index.js";
+import { createImagePicker } from "./image-picker.js";
 
 let activeEditor = null;
 let primaryEditor = null;
@@ -151,6 +153,59 @@ function createEditorInstance(element, fieldType, fieldName) {
       Link.configure({
         openOnClick: false,
         linkOnPaste: true,
+      }),
+      Image.extend({
+        addAttributes() {
+          return {
+            ...this.parent?.(),
+            src: {
+              default: null,
+              parseHTML: element => element.getAttribute('src'),
+              renderHTML: attributes => {
+                if (!attributes.src) return {};
+                
+                // If it's already an absolute URL or starts with /, use as-is
+                if (attributes.src.match(/^(https?:|\/)/)) {
+                  return { src: attributes.src };
+                }
+                
+                // For relative URLs, try to resolve to page assets
+                const pageId = document.querySelector('.fe-editable')?.getAttribute('data-page');
+                if (pageId) {
+                  // Use ProcessWire's page assets URL pattern
+                  const assetUrl = `/site/assets/files/${pageId}/${attributes.src}`;
+                  return { src: assetUrl };
+                }
+                
+                // Fallback to original src
+                return { src: attributes.src };
+              },
+            },
+            originalFilename: {
+              default: null,
+            },
+          };
+        },
+        addProseMirrorPlugins() {
+          return [
+            new Plugin({
+              props: {
+                handleDoubleClickOn: (view, pos, node, nodePos, event, direct) => {
+                  if (node.type.name === "image") {
+                    if (window.mfeOpenImagePicker) {
+                      window.mfeOpenImagePicker();
+                    }
+                    return true;
+                  }
+                  return false;
+                },
+              },
+            }),
+          ];
+        },
+      }).configure({
+        inline: true,
+        allowBase64: false,
       }),
       InlineHtmlLabel,
       EscapeKeyExtension,
@@ -440,6 +495,45 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
 }
 
 /**
+ * Open image picker and insert selected image
+ */
+function openImagePicker() {
+  const editor = activeEditor || primaryEditor;
+  if (!editor) return;
+
+  createImagePicker({
+    onSelect: (imageData) => {
+      // imageData is { filename, url }
+      // Insert image with full URL for display, but originalFilename for saving
+      const editor = activeEditor || primaryEditor;
+      editor.chain().focus().setImage({ 
+        src: imageData.url, 
+        alt: "",
+        originalFilename: imageData.filename 
+      }).run();
+      
+      // Mark as dirty
+      if (editor === primaryEditor) {
+        primaryDirty = true;
+        if (activeFieldId) {
+          statusManager.markDirty(activeFieldId);
+        }
+      }
+      if (editor === secondaryEditor && secondaryLang) {
+        dirtyTranslations.set(secondaryLang, true);
+      }
+    },
+    onClose: () => {
+      // Refocus editor after picker closes
+      setTimeout(() => editor.view.focus(), 0);
+    },
+  });
+}
+
+// Expose globally for toolbar button
+window.mfeOpenImagePicker = openImagePicker;
+
+/**
  * Create the toolbar
  */
 function createToolbar(container, overlay) {
@@ -456,7 +550,7 @@ function createToolbar(container, overlay) {
 
   const configButtons =
     window.MarkdownFrontEditorConfig?.toolbarButtons ||
-    "bold,italic,strike,paragraph,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,link,unlink,|,code,codeblock,clear,split";
+    "bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,code,codeblock,clear,|,split";
   const { statusEl } = renderToolbarButtons({
     toolbar,
     buttons,

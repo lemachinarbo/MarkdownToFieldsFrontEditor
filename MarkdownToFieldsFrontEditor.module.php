@@ -14,7 +14,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
             'summary' => 'Frontend editor for MarkdownToFields.',
-            'version' =>  '0.4.1',
+            'version' =>  '0.4.2',
             'autoload' => true,
             'singular' => true,
             'requires' => ['MarkdownToFields'],
@@ -27,8 +27,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
     public static function getDefaultData() {
         return [
             'view' => 'fullscreen',
-            'toolbarButtons' => 'bold,italic,strike,paragraph,link,unlink,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split',
+            'toolbarButtons' => 'bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split',
             'editableTargets' => ['tag', 'container', 'section', 'subsection'],
+            'allowedImageExtensions' => 'jpg,jpeg,png,gif,webp,svg',
         ];
     }
 
@@ -44,8 +45,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $f = \ProcessWire\wire('modules')->get('InputfieldText');
         $f->name = 'toolbarButtons';
         $f->label = 'Toolbar Buttons';
-        $f->description = 'Comma-separated list of toolbar buttons to show. Use "|" as a separator. Available: bold, italic, strike, code, codeblock, paragraph, h1-h6, ul, ol, blockquote, link, unlink, clear, split. Save is always shown at the end.';
-        $f->notes = 'Defaults: bold,italic,strike,paragraph,link,unlink,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split';
+        $f->description = 'Comma-separated list of toolbar buttons to show. Use "|" as a separator. Available: bold, italic, strike, code, codeblock, paragraph, h1-h6, ul, ol, blockquote, link, unlink, image, clear, split. Save is always shown at the end.';
+        $f->notes = 'Defaults: bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split';
         $f->value = !empty($data['toolbarButtons']) ? $data['toolbarButtons'] : $defaults['toolbarButtons'];
         $f->columnWidth = 100;
         $inputfields->add($f);
@@ -204,8 +205,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $fullscreenCssVersion = is_file($fullscreenCssPath) ? (string) filemtime($fullscreenCssPath) : (string) time();
         $fullscreenCssHref = $url . 'assets/front-editor-fullscreen.css?v=' . $fullscreenCssVersion;
 
+        $imagePickerCssPath = $modulePath . 'assets/image-picker.css';
+        $imagePickerCssVersion = is_file($imagePickerCssPath) ? (string) filemtime($imagePickerCssPath) : (string) time();
+        $imagePickerCssHref = $url . 'assets/image-picker.css?v=' . $imagePickerCssVersion;
+
         $viewCssLink = "<link rel=\"stylesheet\" href=\"{$inlineCssHref}\">";
         $viewCssLink .= "<link rel=\"stylesheet\" href=\"{$fullscreenCssHref}\">";
+        $viewCssLink .= "<link rel=\"stylesheet\" href=\"{$imagePickerCssHref}\">";
         
         // Load bundled ProseMirror editor (single file, no external dependencies)
         $moduleScript = "<script src=\"{$url}dist/editor.bundle.js?v={$version}\"></script>";
@@ -636,6 +642,72 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             exit;
         }
 
+        // List images endpoint
+        if ($input->post->text('action') === 'listImages') {
+            $user = $this->wire()->user;
+            if(!$user->isLoggedIn() || !$user->hasPermission('page-edit-front')) {
+                $this->sendJsonError('Forbidden', 403);
+            }
+
+            // CSRF validation
+            try { $this->wire()->session->CSRF->validate(); }
+            catch(\Exception $e) { $this->sendJsonError('Failed CSRF check', 403); }
+
+            $pageId = (int)$input->post->pageId;
+            if(!$pageId) $this->sendJsonError('Missing pageId', 400);
+
+            $page = $this->wire()->pages->get($pageId);
+            if(!$page->id) $this->sendJsonError('Page not found', 404);
+
+            // Get image source paths from MarkdownToFields config
+            $mdConfig = $this->wire()->modules->get('MarkdownToFields');
+            $imageSourcePaths = [];
+            
+            if ($mdConfig && isset($mdConfig->imageSourcePaths)) {
+                $paths = $mdConfig->imageSourcePaths;
+                if (is_string($paths)) {
+                    $imageSourcePaths = array_filter(array_map('trim', explode(',', $paths)));
+                } elseif (is_array($paths)) {
+                    $imageSourcePaths = $paths;
+                }
+            }
+
+            // Default to site/images/ if not configured
+            if (empty($imageSourcePaths)) {
+                $imageSourcePaths = [$this->wire()->config->paths->root . 'site/images/'];
+            }
+
+            $images = [];
+            $allowedExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
+
+            foreach ($imageSourcePaths as $sourcePath) {
+                $fullPath = $sourcePath;
+                if (!is_dir($fullPath)) continue;
+
+                $files = new \DirectoryIterator($fullPath);
+                foreach ($files as $file) {
+                    if ($file->isDot() || $file->isDir()) continue;
+                    
+                    $ext = strtolower($file->getExtension());
+                    if (!in_array($ext, $allowedExtensions, true)) continue;
+
+                    $filename = $file->getFilename();
+                    $relativePath = str_replace($this->wire()->config->paths->root, '/', $fullPath);
+                    $url = rtrim($relativePath, '/') . '/' . $filename;
+
+                    $images[] = [
+                        'filename' => $filename,
+                        'url' => $url,
+                        'size' => $file->getSize(),
+                    ];
+                }
+            }
+
+            header('Content-Type: application/json');
+            echo json_encode(['status' => 1, 'images' => $images]);
+            exit;
+        }
+
         // Save endpoint
         if(!$input->get->markdownFrontEditorSave) return;
 
@@ -746,6 +818,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 if ($replaced > 0) {
                     $languageCode = $langCode !== '' ? $langCode : \ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
                     \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $updatedMarkdown, $languageCode);
+                    
+                    // Trigger sync to process images and update field values
+                    \ProcessWire\MarkdownToFields::sync($page);
                 }
             } catch (\Throwable $e) {
                 $this->sendJsonError('Failed to update markdown: ' . $e->getMessage(), 500);
@@ -849,9 +924,10 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $updatedMarkdown, $languageCode);
             
             $frontRaw = $content->getFrontmatterRaw();
-            $this->wire->log->save('markdown-front-edit',
-                "SAVE: After save - file updated (frontmatter=" . ($frontRaw !== null ? "1" : "0") . ")"
-            );
+            $this->wire->log->save('markdown-front-edit', "SUCCESS: Markdown file updated");
+            
+            // Trigger sync to process images and update field values
+            \ProcessWire\MarkdownToFields::sync($page);
             
         } catch (\Throwable $e) {
             $this->sendJsonError('Failed to update markdown: ' . $e->getMessage(), 500);

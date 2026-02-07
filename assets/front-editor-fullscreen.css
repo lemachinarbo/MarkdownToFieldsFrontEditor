@@ -493,7 +493,7 @@ body.mfe-no-scroll {
 }
 
 .mfe-view-fullscreen .ProseMirror img {
-  max-width: 100%;
+  max-width: var(--mfe-image-max-width, 100%);
   height: auto;
 }
 

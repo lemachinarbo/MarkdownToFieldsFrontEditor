@@ -2,6 +2,7 @@ export function renderToolbarButtons({ toolbar, buttons, configButtons, getEdito
   const resolveEditor = () => (typeof getEditor === "function" ? getEditor() : null);
 
   const buttonMap = new Map(buttons.map((btn) => [btn.key, btn]));
+
   const configOrder = configButtons
     .split(",")
     .map((btn) => btn.trim())

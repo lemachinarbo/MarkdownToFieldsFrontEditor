@@ -1,6 +1,7 @@
 import { Editor, Extension } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
+import Image from "@tiptap/extension-image";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { common, createLowlight } from "lowlight";
 import { Plugin } from "prosemirror-state";
@@ -22,6 +23,7 @@ import { openFullscreenEditorForElement } from "./editor-fullscreen.js";
 import { createOverlayEngine } from "./overlay-engine.js";
 import { resolveDblclickAction } from "./scope-resolver.js";
 import { getSectionEntry, getSubsectionEntry } from "./content-index.js";
+import { createImagePicker } from "./image-picker.js";
 import {
   registerStatusEl,
   markDirty,
@@ -509,6 +511,59 @@ function createEditorInstance(host, fieldType, fieldName) {
         openOnClick: false,
         linkOnPaste: true,
       }),
+      Image.extend({
+        addAttributes() {
+          return {
+            ...this.parent?.(),
+            src: {
+              default: null,
+              parseHTML: element => element.getAttribute('src'),
+              renderHTML: attributes => {
+                if (!attributes.src) return {};
+                
+                // If it's already an absolute URL or starts with /, use as-is
+                if (attributes.src.match(/^(https?:|\/)/)) {
+                  return { src: attributes.src };
+                }
+                
+                // For relative URLs, try to resolve to page assets
+                const pageId = document.querySelector('.fe-editable')?.getAttribute('data-page');
+                if (pageId) {
+                  // Use ProcessWire's page assets URL pattern
+                  const assetUrl = `/site/assets/files/${pageId}/${attributes.src}`;
+                  return { src: assetUrl };
+                }
+                
+                // Fallback to original src
+                return { src: attributes.src };
+              },
+            },
+            originalFilename: {
+              default: null,
+            },
+          };
+        },
+        addProseMirrorPlugins() {
+          return [
+            new Plugin({
+              props: {
+                handleDoubleClickOn: (view, pos, node, nodePos, event, direct) => {
+                  if (node.type.name === "image") {
+                    if (window.mfeOpenImagePicker) {
+                      window.mfeOpenImagePicker();
+                    }
+                    return true;
+                  }
+                  return false;
+                },
+              },
+            }),
+          ];
+        },
+      }).configure({
+        inline: true,
+        allowBase64: false,
+      }),
       InlineHtmlLabel,
       EscapeKeyExtension,
     ],
@@ -700,6 +755,42 @@ function saveBatch(pageId, fields) {
     });
 }
 
+/**
+ * Open image picker and insert selected image
+ */
+function openImagePickerInline() {
+  if (!activeEditor) return;
+
+  createImagePicker({
+    onSelect: (imageData) => {
+      // imageData is { filename, url }
+      // Insert image at current cursor position
+      activeEditor.chain().focus().setImage({ 
+        src: imageData.url, 
+        alt: "",
+        originalFilename: imageData.filename
+      }).run();
+      
+      // Mark as dirty
+      dirty = true;
+      if (activeFieldId) {
+        markDirty(activeFieldId);
+        const markdown = decodeHtmlEntitiesInFences(getMarkdownFromEditor(activeEditor));
+        draftMarkdownByField.set(activeFieldId, markdown);
+      }
+    },
+    onClose: () => {
+      // Refocus editor after picker closes
+      setTimeout(() => activeEditor?.view?.focus(), 0);
+    },
+  });
+}
+
+// Override global function for inline editor context
+if (!window.mfeOpenImagePicker) {
+  window.mfeOpenImagePicker = openImagePickerInline;
+}
+
 function createInlineToolbar() {
   if (toolbarEl) {
     return;
@@ -715,7 +806,7 @@ function createInlineToolbar() {
 
   const configButtons =
     window.MarkdownFrontEditorConfig?.toolbarButtons ||
-    "bold,italic,strike,paragraph,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,link,unlink,|,code,codeblock,clear";
+    "bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,code,codeblock,clear,|,split";
 
   const { statusEl } = renderToolbarButtons({
     toolbar,

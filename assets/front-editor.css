@@ -48,6 +48,7 @@
   --mfe-label-letter-spacing: 0.02em;
   --mfe-label-padding: 4px 10px;
   --mfe-label-offset-y: -25px;
+  --mfe-image-max-width: 200px;
 }
 
 .mfe-hover-overlay .mfe-hover-label {
