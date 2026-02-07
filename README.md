@@ -25,6 +25,9 @@ It is NOT a standalone module. It only works **together** with MarkdownToFields.
 
 ## What's New
 
+**0.4.2-beta**
+- Partial image support (visualize images in editor and replace them on double click).
+
 **0.4.1**
 - Breadcrumbs in fullscreen allow you to edit ancestors (section > subsection > container > field).
 - Section breadcrumb is disabled when the section has no direct content.
