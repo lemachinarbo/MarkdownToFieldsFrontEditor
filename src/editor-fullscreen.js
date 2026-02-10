@@ -376,6 +376,13 @@ function toggleSplit() {
   }
 }
 
+function toggleMarkers() {
+  document.body.classList.toggle("mfe-hide-markers");
+  console.log("[mfe] markers toggled", {
+    hidden: document.body.classList.contains("mfe-hide-markers"),
+  });
+}
+
 function openSplit() {
   if (!editorShell || secondaryEditor) return;
   const { langs, current } = getLanguagesConfig();
@@ -684,11 +691,12 @@ function createToolbar() {
     getEditor: () => activeEditor,
     onSave: saveAllEditors,
     onToggleSplit: toggleSplit,
+    onToggleMarkers: toggleMarkers,
   });
 
   const configButtons =
     window.MarkdownFrontEditorConfig?.toolbarButtons ||
-    "bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,code,codeblock,clear,|,split";
+    "bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,code,codeblock,clear,|,split,markers";
   const { statusEl } = renderToolbarButtons({
     toolbar,
     buttons,

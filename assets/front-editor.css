@@ -431,6 +431,10 @@
   pointer-events: none;
 }
 
+.mfe-hide-markers .mfe-marker {
+  display: none;
+}
+
 .mfe-marker::before {
   content: "[" attr(data-mfe-marker) "]";
   color: #6b7280;

@@ -934,6 +934,7 @@ function createInlineToolbar() {
     getEditor: () => activeEditor,
     onSave: () => saveAllDrafts({ showStatus: true }),
     onToggleSplit: null,
+    onToggleMarkers: null,
   });
 
   const configButtons =

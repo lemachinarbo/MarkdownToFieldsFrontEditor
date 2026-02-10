@@ -27,7 +27,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
     public static function getDefaultData() {
         return [
             'view' => 'fullscreen',
-            'toolbarButtons' => 'bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split',
+            'toolbarButtons' => 'bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split,markers',
             'editableTargets' => ['tag', 'container', 'section', 'subsection'],
             'allowedImageExtensions' => 'jpg,jpeg,png,gif,webp,svg',
         ];
@@ -45,8 +45,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $f = \ProcessWire\wire('modules')->get('InputfieldText');
         $f->name = 'toolbarButtons';
         $f->label = 'Toolbar Buttons';
-        $f->description = 'Comma-separated list of toolbar buttons to show. Use "|" as a separator. Available: bold, italic, strike, code, codeblock, paragraph, h1-h6, ul, ol, blockquote, link, unlink, image, clear, split. Save is always shown at the end.';
-        $f->notes = 'Defaults: bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split';
+        $f->description = 'Comma-separated list of toolbar buttons to show. Use "|" as a separator. Available: bold, italic, strike, code, codeblock, paragraph, h1-h6, ul, ol, blockquote, link, unlink, image, clear, split, markers. Save is always shown at the end.';
+        $f->notes = 'Defaults: bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split,markers';
         $f->value = !empty($data['toolbarButtons']) ? $data['toolbarButtons'] : $defaults['toolbarButtons'];
         $f->columnWidth = 100;
         $inputfields->add($f);
