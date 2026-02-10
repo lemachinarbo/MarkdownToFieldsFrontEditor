@@ -1273,6 +1273,27 @@ function initInlineEditor() {
           return;
         }
 
+        const targetEl = e.target;
+        const fallbackSection = findSectionFromText(targetEl?.textContent || "");
+        if (fallbackSection?.scope === "section" && fallbackSection?.name) {
+          const host = targetEl?.closest
+            ? targetEl.closest("section") ||
+              targetEl.closest("article") ||
+              targetEl.closest("[data-mfe-section-host]") ||
+              targetEl
+            : null;
+          const rect = host ? host.getBoundingClientRect() : null;
+          const key = `section:${fallbackSection.name}`;
+          if (rect && lastHoverKey !== key) {
+            lastHoverKey = key;
+            overlayEngine.setLabel(getEditLabel("section", fallbackSection.name, ""));
+            const inflated = inflateRect(rect, 16);
+            overlayEngine.showBox(inflated);
+            lastHoverRect = inflated;
+          }
+          return;
+        }
+
         if (lastHoverRect && isPointInRect(e.clientX, e.clientY, lastHoverRect)) {
           return;
         }

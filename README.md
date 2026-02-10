@@ -67,6 +67,13 @@ Notes:
 
 If a section only contains subsections, it may not have its own content. In that case the section breadcrumb is shown but not clickable.
 
+### Template Output Notes
+
+- Rendering `->html` preserves the original MarkdownToFields HTML, so the editor can auto‑wrap fields and show **rollover** zones.
+- Rendering `->text` (or otherwise transforming the HTML) breaks that exact match, so **field rollovers won’t appear**.
+  - In this case, the **section** can still be edited via double‑click (fallback using the section index).
+  - Because there is no explicit section wrapper in the DOM, the hover/rollover can appear large or even not visible depending on the layout (for example, full‑width/absolute sections). We’ll improve this later.
+
 ## Requirements
 
 - ProcessWire + MarkdownToFields
