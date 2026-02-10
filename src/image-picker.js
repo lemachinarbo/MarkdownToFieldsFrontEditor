@@ -161,6 +161,7 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
     const pageId =
       document.querySelector(".fe-editable")?.getAttribute("data-page") || "0";
     const grid = gallerySection.querySelector(".mfe-picker-gallery-grid");
+    const saveUrl = window.MarkdownFrontEditorConfig?.saveUrl || "./";
 
     return fetchCsrfToken()
       .then((csrf) => {
@@ -169,7 +170,7 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
         formData.append("pageId", pageId);
         if (csrf) formData.append(csrf.name, csrf.value);
 
-        return fetch(window.MarkdownFrontEditorConfig?.saveUrl || "./", {
+        return fetch(saveUrl, {
           method: "POST",
           body: formData,
           credentials: "same-origin",

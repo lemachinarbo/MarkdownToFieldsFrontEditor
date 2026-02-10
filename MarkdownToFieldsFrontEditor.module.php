@@ -659,32 +659,63 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $page = $this->wire()->pages->get($pageId);
             if(!$page->id) $this->sendJsonError('Page not found', 404);
 
-            // Get image source paths from MarkdownToFields config
-            $mdConfig = $this->wire()->modules->get('MarkdownToFields');
+            // Get image source paths (config override first, then module config)
             $imageSourcePaths = [];
-            
-            if ($mdConfig && isset($mdConfig->imageSourcePaths)) {
-                $paths = $mdConfig->imageSourcePaths;
-                if (is_string($paths)) {
-                    $imageSourcePaths = array_filter(array_map('trim', explode(',', $paths)));
-                } elseif (is_array($paths)) {
-                    $imageSourcePaths = $paths;
+            $cfg = $this->wire()->config->MarkdownToFields ?? [];
+            $paths = $cfg['imageSourcePaths'] ?? [];
+            if (is_string($paths)) {
+                $imageSourcePaths = array_filter(array_map('trim', explode(',', $paths)));
+            } elseif (is_array($paths)) {
+                $imageSourcePaths = $paths;
+            }
+
+            if (empty($imageSourcePaths)) {
+                $mdConfig = $this->wire()->modules->get('MarkdownToFields');
+                if ($mdConfig && isset($mdConfig->imageSourcePaths)) {
+                    $paths = $mdConfig->imageSourcePaths;
+                    if (is_string($paths)) {
+                        $imageSourcePaths = array_filter(array_map('trim', explode(',', $paths)));
+                    } elseif (is_array($paths)) {
+                        $imageSourcePaths = $paths;
+                    }
                 }
             }
 
             // Default to site/images/ if not configured
             if (empty($imageSourcePaths)) {
-                $imageSourcePaths = [$this->wire()->config->paths->root . 'site/images/'];
+                $imageSourcePaths = [$this->wire()->config->paths->site . 'images/'];
             }
 
             $images = [];
+            $missingDirs = [];
             $allowedExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
+            $warnedOutsideRoot = false;
+
+            $cfg = $this->wire()->config;
+            $sitePath = rtrim((string)($cfg->paths->site ?? ''), '/') . '/';
+            $siteImages = $sitePath . 'images/';
+            $siteUrl = rtrim((string)($cfg->urls->site ?? '/site/'), '/') . '/';
+            $projectRoot = rtrim((string)($cfg->paths->projectRoot ?? ''), '/') . '/';
+            $projectSiteImages = $projectRoot !== '/' ? $projectRoot . 'src/site/images/' : '';
+            $rootPath = rtrim((string)($cfg->paths->root ?? ''), '/') . '/';
+
+            // Normalize trailing slash for reliable comparisons
+            $siteImagesNorm = rtrim($siteImages, '/') . '/';
+            $projectSiteImagesNorm = $projectSiteImages ? rtrim($projectSiteImages, '/') . '/' : '';
 
             foreach ($imageSourcePaths as $sourcePath) {
                 $fullPath = $sourcePath;
-                if (!is_dir($fullPath)) continue;
+                if (!is_dir($fullPath)) {
+                    $missingDirs[] = $fullPath;
+                    continue;
+                }
 
-                $files = new \DirectoryIterator($fullPath);
+                try {
+                    $files = new \DirectoryIterator($fullPath);
+                } catch (\Throwable $e) {
+                    $missingDirs[] = $fullPath;
+                    continue;
+                }
                 foreach ($files as $file) {
                     if ($file->isDot() || $file->isDir()) continue;
                     
@@ -692,8 +723,24 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                     if (!in_array($ext, $allowedExtensions, true)) continue;
 
                     $filename = $file->getFilename();
-                    $relativePath = str_replace($this->wire()->config->paths->root, '/', $fullPath);
-                    $url = rtrim($relativePath, '/') . '/' . $filename;
+                    $fullPathNorm = rtrim($fullPath, '/') . '/';
+
+                    if ($fullPathNorm === $siteImagesNorm || ($projectSiteImagesNorm && $fullPathNorm === $projectSiteImagesNorm)) {
+                        $url = $siteUrl . 'images/' . $filename;
+                    } elseif ($sitePath && str_starts_with($fullPathNorm, $sitePath)) {
+                        $relativePath = ltrim(substr($fullPathNorm, strlen($sitePath)), '/');
+                        $url = $siteUrl . rtrim($relativePath, '/') . '/' . $filename;
+                    } else {
+                        if (!$warnedOutsideRoot && $rootPath && !str_starts_with($fullPathNorm, $rootPath)) {
+                            $this->wire()->log->save('markdown-front-edit', sprintf(
+                                "LIST_IMAGES warning: path outside root/site: %s",
+                                $fullPathNorm
+                            ));
+                            $warnedOutsideRoot = true;
+                        }
+                        $relativePath = $rootPath ? str_replace($rootPath, '/', $fullPathNorm) : $fullPathNorm;
+                        $url = rtrim($relativePath, '/') . '/' . $filename;
+                    }
 
                     $images[] = [
                         'filename' => $filename,
@@ -702,6 +749,14 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                     ];
                 }
             }
+
+            $this->wire()->log->save('markdown-front-edit', sprintf(
+                "LIST_IMAGES pageId=%d paths=%s missing=%s count=%d",
+                $pageId,
+                json_encode(array_values($imageSourcePaths)),
+                json_encode(array_values($missingDirs)),
+                count($images)
+            ));
 
             header('Content-Type: application/json');
             echo json_encode(['status' => 1, 'images' => $images]);
@@ -749,6 +804,11 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         $mdScope = $input->post->text('mdScope') ?: 'field';
         $mdSection = $input->post->text('mdSection');
+        $fieldId = $input->post->text('fieldId');
+        $postKeys = implode(',', array_keys($_POST ?? []));
+        $this->wire->log->save('markdown-front-edit',
+            "SAVE_REQUEST pageId={$pageId} mdScope='{$mdScope}' mdSection='{$mdSection}' fieldId='{$fieldId}' lang='{$langCode}' batch=" . ($isBatch ? '1' : '0') . " postKeys='{$postKeys}'"
+        );
 
         if ($isBatch) {
             $fieldsJson = (string)$input->post('fields', 'string');
@@ -761,22 +821,42 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             if (array_is_list($fieldsPayload)) {
                 foreach ($fieldsPayload as $entry) {
                     if (!is_array($entry)) continue;
+                    $md = (string)($entry['markdown'] ?? '');
+                    $img = '';
+                    if (preg_match('/<img[^>]+src=["\']([^"\']+)["\']/', $md, $m)) {
+                        $img = $m[1];
+                    } elseif (preg_match('/!\\[[^\\]]*\\]\\(([^)]+)\\)/', $md, $m)) {
+                        $img = $m[1];
+                    }
+                    $this->wire->log->save('markdown-front-edit',
+                        "BATCH_FIELD key='" . (string)($entry['key'] ?? '') . "' name='" . (string)($entry['name'] ?? '') . "' scope='" . (string)($entry['scope'] ?? '') . "' section='" . (string)($entry['section'] ?? '') . "' mdLen=" . strlen($md) . " image='{$img}'"
+                    );
                     $fieldEntries[] = [
                         'key' => (string)($entry['key'] ?? ''),
                         'name' => (string)($entry['name'] ?? ''),
                         'scope' => (string)($entry['scope'] ?? 'field'),
                         'section' => (string)($entry['section'] ?? ''),
-                        'markdown' => (string)($entry['markdown'] ?? ''),
+                        'markdown' => $md,
                     ];
                 }
             } else {
                 foreach ($fieldsPayload as $mdName => $blockMarkdown) {
+                    $md = (string)$blockMarkdown;
+                    $img = '';
+                    if (preg_match('/<img[^>]+src=["\']([^"\']+)["\']/', $md, $m)) {
+                        $img = $m[1];
+                    } elseif (preg_match('/!\\[[^\\]]*\\]\\(([^)]+)\\)/', $md, $m)) {
+                        $img = $m[1];
+                    }
+                    $this->wire->log->save('markdown-front-edit',
+                        "BATCH_FIELD key='{$mdName}' name='{$mdName}' scope='field' section='' mdLen=" . strlen($md) . " image='{$img}'"
+                    );
                     $fieldEntries[] = [
                         'key' => (string)$mdName,
                         'name' => (string)$mdName,
                         'scope' => 'field',
                         'section' => '',
-                        'markdown' => (string)$blockMarkdown,
+                        'markdown' => $md,
                     ];
                 }
             }
@@ -872,8 +952,14 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $markdownLen = strlen((string)$markdown);
         $markdownLines = $markdownLen ? (substr_count((string)$markdown, "\n") + 1) : 0;
         $markdownPreview = $markdownLen ? substr(str_replace(["\r", "\n"], ["\\r", "\\n"], (string)$markdown), 0, 120) : '';
+        $imgPreview = '';
+        if (preg_match('/<img[^>]+src=["\']([^"\']+)["\']/', $markdown, $m)) {
+            $imgPreview = $m[1];
+        } elseif (preg_match('/!\\[[^\\]]*\\]\\(([^)]+)\\)/', $markdown, $m)) {
+            $imgPreview = $m[1];
+        }
         $this->wire->log->save('markdown-front-edit',
-            "PAYLOAD mdName='{$mdName}' pageId={$pageId} markdownLen={$markdownLen} markdownLines={$markdownLines} markdownPreview='{$markdownPreview}'"
+            "PAYLOAD mdName='{$mdName}' pageId={$pageId} markdownLen={$markdownLen} markdownLines={$markdownLines} markdownPreview='{$markdownPreview}' image='{$imgPreview}'"
         );
 
         // Use markdown directly - no conversion
@@ -955,6 +1041,12 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         
         // Target field specifics
         $canonicalHtml = $this->findScopedHtml($content, $mdScope, $mdName, $mdSection ?? '');
+        $canonicalMd = $this->findScopedMarkdown($content, $mdScope, $mdName, $mdSection ?? '');
+        if ($canonicalMd === null) {
+            $this->wire->log->save('markdown-front-edit',
+                "RESPONSE: Field not found after save mdName='{$mdName}' scope='{$mdScope}' section='{$mdSection}'"
+            );
+        }
         
         // Log the src attributed of the first image found to verify update
         preg_match('/<img[^>]+src=["\']([^"\']+)["\']/', $canonicalHtml ?: '', $matches);
@@ -1046,30 +1138,60 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         } catch (\Throwable $e) {
             return [];
         }
-        if (!isset($content->sectionsByName) || !is_array($content->sectionsByName)) return [];
-
         $sections = [];
-        foreach ($content->sectionsByName as $name => $section) {
-            if (!$name || !$section) continue;
-            $sectionItem = [
-                'name' => (string)$name,
-                'text' => (string)($section->text ?? ''),
-                'markdownB64' => base64_encode((string)($section->markdown ?? '')),
-                'subsections' => [],
-            ];
-            if (isset($section->subsections) && is_array($section->subsections)) {
-                foreach ($section->subsections as $subName => $subsection) {
-                    if (!$subName || !$subsection) continue;
-                    $subEntry = [
-                        'name' => (string)$subName,
-                        'text' => (string)($subsection->text ?? ''),
-                        'markdownB64' => base64_encode((string)($subsection->markdown ?? '')),
-                    ];
-                    $sectionItem['subsections'][] = $subEntry;
+
+        if (isset($content->sectionsByName) && is_array($content->sectionsByName)) {
+            foreach ($content->sectionsByName as $name => $section) {
+                if (!$name || !$section) continue;
+                $sectionItem = [
+                    'name' => (string)$name,
+                    'text' => (string)($section->text ?? ''),
+                    'markdownB64' => base64_encode((string)($section->markdown ?? '')),
+                    'subsections' => [],
+                ];
+                if (isset($section->subsections) && is_array($section->subsections)) {
+                    foreach ($section->subsections as $subName => $subsection) {
+                        if (!$subName || !$subsection) continue;
+                        $subEntry = [
+                            'name' => (string)$subName,
+                            'text' => (string)($subsection->text ?? ''),
+                            'markdownB64' => base64_encode((string)($subsection->markdown ?? '')),
+                        ];
+                        $sectionItem['subsections'][] = $subEntry;
+                    }
                 }
+                $sections[] = $sectionItem;
             }
-            $sections[] = $sectionItem;
+            return $sections;
         }
+
+        if (isset($content->sections) && is_array($content->sections)) {
+            foreach ($content->sections as $section) {
+                if (!$section) continue;
+                $name = (string)($section->name ?? '');
+                if ($name === '') continue;
+                $sectionItem = [
+                    'name' => $name,
+                    'text' => (string)($section->text ?? ''),
+                    'markdownB64' => base64_encode((string)($section->markdown ?? '')),
+                    'subsections' => [],
+                ];
+                if (isset($section->subsections) && is_array($section->subsections)) {
+                    foreach ($section->subsections as $subName => $subsection) {
+                        $subNameStr = is_string($subName) ? (string)$subName : (string)($subsection->name ?? '');
+                        if ($subNameStr === '' || !$subsection) continue;
+                        $subEntry = [
+                            'name' => $subNameStr,
+                            'text' => (string)($subsection->text ?? ''),
+                            'markdownB64' => base64_encode((string)($subsection->markdown ?? '')),
+                        ];
+                        $sectionItem['subsections'][] = $subEntry;
+                    }
+                }
+                $sections[] = $sectionItem;
+            }
+        }
+
         return $sections;
     }
 

@@ -415,3 +415,80 @@
   max-width: 100%;
   height: auto;
 }
+
+.mfe-marker {
+  display: block;
+  width: 100%;
+  margin: 10px 0;
+  padding: 4px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f3f3f3;
+  color: transparent;
+  font-size: 0;
+  line-height: 1.4;
+  user-select: none;
+  pointer-events: none;
+}
+
+.mfe-marker::before {
+  content: "[" attr(data-mfe-marker) "]";
+  color: #6b7280;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+}
+
+.mfe-marker--section {
+  background: #eeeeee;
+  border-color: #e1e1e1;
+  text-align: center;
+}
+
+.mfe-marker--section::before {
+  color: #555;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.mfe-marker--sub {
+  background: #f3f3f3;
+  border-color: #e6e6e6;
+  text-align: left;
+}
+
+.mfe-marker--sub::before {
+  color: #666;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+
+.mfe-marker--field {
+  display: inline-block;
+  width: auto;
+  background: #f3f3f3;
+  border-color: #e5e7eb;
+  border-left: 4px solid #d0d0d0;
+  padding-left: 8px;
+}
+
+.mfe-marker--field::before {
+  color: #666;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.mfe-marker--close {
+  background: #e8e8e8;
+  border-color: #dedede;
+}
+
+.mfe-marker--close::before {
+  color: #888;
+  font-size: 10px;
+  font-style: italic;
+  letter-spacing: 0.06em;
+}

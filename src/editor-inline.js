@@ -10,7 +10,7 @@ import {
   inlineHtmlTags,
   shouldWarnForExtraContent,
   countNonEmptyBlocks,
-  createMarkdownParser,
+  renderMarkdownToHtml,
   markdownSerializer,
   decodeMarkdownBase64,
   decodeHtmlEntitiesInFences,
@@ -18,6 +18,7 @@ import {
   fetchCsrfToken,
   syncComments,
 } from "./editor-core.js";
+import { Marker } from "./marker-extension.js";
 import { createToolbarButtons } from "./editor-toolbar.js";
 import { renderToolbarButtons } from "./editor-toolbar-renderer.js";
 import { openFullscreenEditorForElement } from "./editor-fullscreen.js";
@@ -505,6 +506,7 @@ function createEditorInstance(host, fieldType, fieldName) {
         codeBlock: false,
         link: false,
       }),
+      Marker,
       CodeBlockLowlight.configure({
         lowlight,
       }),
@@ -686,7 +688,6 @@ function saveField(fieldId, markdown) {
       if (!data.status) throw new Error(data.message || "Save failed");
 
       if (data.sectionsIndex) {
-        console.log("[MFE] Hydrating global sectionsIndex from response");
         window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
         window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;
       }
@@ -716,12 +717,10 @@ function saveField(fieldId, markdown) {
           }
 
           if (html) {
-            console.log(`[MFE] Syncing element ${elId}`);
             originalHtml.set(el, html);
             
             // If this is the active editor, update TipTap state
             if (el === activeTarget && activeEditor) {
-              console.log(`[MFE] Updating active inline editor with final rendered HTML`);
               const selection = activeEditor.state.selection;
               activeEditor.commands.setContent(html, false);
               try { activeEditor.commands.setTextSelection(selection); } catch (e) {}
@@ -732,8 +731,7 @@ function saveField(fieldId, markdown) {
         });
 
         // 2. Sync fragments delimited by comment markers (e.g. Subsections)
-        const commentCount = syncComments(htmlMap);
-        console.log(`[MFE] Sync complete. Updated ${commentCount} comment blocks.`);
+        syncComments(htmlMap);
       }
       target.dataset.markdown = finalMarkdown;
       target.dataset.markdownB64 = btoa(
@@ -817,7 +815,6 @@ function saveBatch(pageId, fields) {
       if (!data.status) throw new Error(data.message || "Save failed");
       
       if (data.sectionsIndex) {
-        console.log("[MFE] Hydrating global sectionsIndex from batch response");
         window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
         window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;
       }
@@ -841,17 +838,14 @@ function saveBatch(pageId, fields) {
         
         // Always update the stored original HTML and dataset
         if (html && typeof html === 'string') {
-          console.log(`[MFE] Received HTML for ${fieldId}, length: ${html.length}`);
           originalHtml.set(target, html);
           
           // Update TipTap or DOM
           if (target === activeTarget && activeEditor) {
-            console.log(`[MFE] Live refreshing active editor ${fieldId}`);
             const selection = activeEditor.state.selection;
             activeEditor.commands.setContent(html, false);
             try { activeEditor.commands.setTextSelection(selection); } catch (e) {}
           } else {
-            console.log(`[MFE] Syncing HTML to non-active / background target ${fieldId}`);
             target.innerHTML = html;
           }
         }
@@ -870,10 +864,7 @@ function saveBatch(pageId, fields) {
       });
 
       // Sync fragments delimited by comment markers (e.g. Subsections)
-      const commentCount = syncComments(htmlMap);
-      if (commentCount > 0) {
-        console.log(`[MFE] Batch sync complete. Updated ${commentCount} comment blocks.`);
-      }
+      syncComments(htmlMap);
     });
 }
 
@@ -1033,9 +1024,8 @@ async function openInlineEditorFromPayload(payload) {
     dirty = true;
     markDirty(activeFieldId);
   } else {
-    const parser = createMarkdownParser(activeEditor.schema);
-    const doc = parser.parse(markdownContent || "");
-    activeEditor.commands.setContent(doc.toJSON(), false);
+    const html = renderMarkdownToHtml(markdownContent || "");
+    activeEditor.commands.setContent(html, false);
     dirty = false;
     clearDirty(activeFieldId);
     draftMarkdownByField.delete(activeFieldId);
@@ -1107,11 +1097,9 @@ function closeInlineEditor({
     target.classList.remove("mfe-inline-active");
     if (persistDraft && hasDraft && editorForDraft) {
       const rendered = renderDraftHtml(editorForDraft);
-      console.log(`[MFE] Closing: applying draft HTML to ${fieldId}`);
       target.innerHTML = rendered;
     } else {
       const finalHtml = originalHtml.get(target) || "";
-      console.log(`[MFE] Closing: applying HTML from memory for ${fieldId}. Length: ${finalHtml.length}. Preview: ${finalHtml.substring(0, 50)}...`);
       target.innerHTML = finalHtml;
     }
   };
@@ -1191,23 +1179,7 @@ function initInlineEditor() {
       });
 
       if (!action || action.action === "none") {
-        if (debugClicks) {
-          console.log("[mfe] dblclick:none", {
-            targetTag: e.target?.tagName || null,
-            reason: action?.reason || null,
-          });
-        }
         return;
-      }
-
-      if (debugClicks) {
-        console.log("[mfe] dblclick:action", {
-          action: action.action,
-          reason: action.reason,
-          targetName: action.target?.getAttribute?.("data-md-name") || null,
-          targetScope: action.target?.getAttribute?.("data-md-scope") || null,
-          targetType: action.target?.getAttribute?.("data-field-type") || null,
-        });
       }
 
       if (action.action === "fullscreen") {

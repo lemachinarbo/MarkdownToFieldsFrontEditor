@@ -47,6 +47,29 @@ export function countNonEmptyBlocks(doc) {
 export function createMarkdownParser(schema) {
   const markdownIt = defaultMarkdownParser.tokenizer;
   markdownIt.set({ breaks: true });
+  if (!markdownIt.__mfeMarker) {
+    markdownIt.block.ruler.before("html_block", "mfe_marker", (state, startLine, endLine, silent) => {
+      const pos = state.bMarks[startLine] + state.tShift[startLine];
+      const max = state.eMarks[startLine];
+      if (pos >= max) return false;
+      const line = state.src.slice(pos, max);
+      const match = line.match(/^\s*<!--\s*([a-zA-Z0-9_:-]+)\s*-->\s*$/);
+      if (!match) return false;
+      if (silent) return true;
+
+      markdownIt.__mfeMarkerHits = (markdownIt.__mfeMarkerHits || 0) + 1;
+      if (markdownIt.__mfeMarkerHits > 5000) {
+        return false;
+      }
+
+      const token = state.push("mfe_marker", "", 0);
+      token.meta = { name: match[1] };
+      token.block = true;
+      state.line = startLine + 1;
+      return true;
+    });
+    markdownIt.__mfeMarker = true;
+  }
   if (!schema.nodes.image) {
     markdownIt.disable("image");
   }
@@ -80,6 +103,10 @@ export function createMarkdownParser(schema) {
     strong: { mark: "bold" },
     link: defaultMarkdownParser.tokens.link,
     image: defaultMarkdownParser.tokens.image,
+    mfe_marker: {
+      block: "mfeMarker",
+      getAttrs: (tok) => ({ name: tok.meta?.name || "" }),
+    },
   };
 
   if (!schema.nodes.codeBlock) {
@@ -93,6 +120,22 @@ export function createMarkdownParser(schema) {
   return new MarkdownParser(schema, markdownIt, tokens);
 }
 
+export function renderMarkdownToHtml(markdown) {
+  const src = markdown || "";
+  const md = defaultMarkdownParser.tokenizer;
+  md.set({ breaks: true, html: true });
+  const withPlaceholders = src.replace(
+    /^\s*<!--\s*([a-zA-Z0-9_:-]+)\s*-->\s*$/gm,
+    (_, name) => `\n\n[[MFE_MARKER:${name}]]\n\n`,
+  );
+  let html = md.render(withPlaceholders);
+  html = html.replace(
+    /<p>\s*\[\[MFE_MARKER:([a-zA-Z0-9_:-]+)\]\]\s*<\/p>/g,
+    '<div data-mfe-marker="$1"></div>',
+  );
+  return html;
+}
+
 export const markdownSerializer = new MarkdownSerializer(
   {
     blockquote: defaultMarkdownSerializer.nodes.blockquote,
@@ -104,7 +147,7 @@ export const markdownSerializer = new MarkdownSerializer(
     listItem: defaultMarkdownSerializer.nodes.list_item,
     paragraph: defaultMarkdownSerializer.nodes.paragraph,
     image(state, node) {
-      const src = node.attrs.originalFilename || node.attrs.src;
+      const src = node.attrs.src || node.attrs.originalFilename;
       state.write(
         "![" +
           state.esc(node.attrs.alt || "") +
@@ -113,6 +156,12 @@ export const markdownSerializer = new MarkdownSerializer(
           (node.attrs.title ? ' "' + state.esc(node.attrs.title) + '"' : "") +
           ")",
       );
+    },
+    mfeMarker(state, node) {
+      const name = node.attrs.name || "";
+      state.write(`<!-- ${name} -->`);
+      state.ensureNewLine();
+      state.atBlockStart = true;
     },
     hardBreak(state) {
       state.write("\n");
@@ -280,8 +329,6 @@ export function syncComments(htmlMap) {
 
     const newHtml = htmlMap[mapKey];
     if (newHtml) {
-      console.log(`[MFE] Syncing comment block: ${mapKey}`);
-
       // Find the corresponding end marker
       let endNode = null;
       let curr = startNode.nextSibling;

@@ -20,7 +20,7 @@ import {
   inlineHtmlTags,
   shouldWarnForExtraContent,
   countNonEmptyBlocks,
-  createMarkdownParser,
+  renderMarkdownToHtml,
   markdownSerializer,
   decodeMarkdownBase64,
   decodeHtmlEntitiesInFences,
@@ -31,6 +31,7 @@ import {
   fetchCsrfToken,
   syncComments,
 } from "./editor-core.js";
+import { Marker } from "./marker-extension.js";
 import {
   buildContentIndex,
   getSectionEntry,
@@ -44,6 +45,7 @@ let primaryEditor = null;
 let secondaryEditor = null;
 let secondaryLang = "";
 let translationsCache = null;
+const translationsCacheByFieldId = new Map();
 const originalBlockCounts = new WeakMap();
 let editorShell = null;
 let editorContainer = null;
@@ -151,6 +153,7 @@ function createEditorInstance(element, fieldType, fieldName) {
         codeBlock: false,
         link: false,
       }),
+      Marker,
       CodeBlockLowlight.configure({
         lowlight,
       }),
@@ -288,6 +291,9 @@ function createEditorInstance(element, fieldType, fieldName) {
       dirtyTranslations.set(secondaryLang, true);
       translationsCache = translationsCache || {};
       translationsCache[secondaryLang] = getMarkdownFromEditor(editor);
+      if (activeFieldId) {
+        translationsCacheByFieldId.set(activeFieldId, translationsCache);
+      }
     }
   });
 
@@ -429,6 +435,9 @@ function openSplit() {
       activeFieldSection,
     ).then((data) => {
       translationsCache = data || {};
+      if (activeFieldId) {
+        translationsCacheByFieldId.set(activeFieldId, translationsCache);
+      }
       setSecondaryLanguage(select.value);
     });
   } else {
@@ -453,9 +462,8 @@ function setSecondaryLanguage(lang) {
   if (!secondaryEditor) return;
   secondaryLang = lang;
   const markdown = translationsCache?.[lang] ?? "";
-  const parser = createMarkdownParser(secondaryEditor.schema);
-  const doc = parser.parse(markdown || "");
-  secondaryEditor.commands.setContent(doc.toJSON(), false);
+  const html = renderMarkdownToHtml(markdown || "");
+  secondaryEditor.commands.setContent(html, false);
   if (shouldWarnForExtraContent(activeFieldType, activeFieldName)) {
     stripTrailingEmptyParagraph(secondaryEditor);
   }
@@ -519,9 +527,8 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
   activeEditor = primaryEditor;
 
   // Parse markdown into editor schema and set content
-  const parser = createMarkdownParser(primaryEditor.schema);
-  const doc = parser.parse(markdownContent || "");
-  primaryEditor.commands.setContent(doc.toJSON(), false);
+  const html = renderMarkdownToHtml(markdownContent || "");
+  primaryEditor.commands.setContent(html, false);
   if (shouldWarnForExtraContent(fieldType, activeFieldName)) {
     stripTrailingEmptyParagraph(primaryEditor);
   }
@@ -555,7 +562,6 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
       }
     },
   });
-
   overlayEl = win.dom;
   document.body.classList.add("mfe-view-fullscreen");
 
@@ -1027,38 +1033,16 @@ function handleBreadcrumbClick(e) {
   // Find the breadcrumb link element
   const target = e.target?.closest(".mfe-breadcrumb-link");
 
-  console.log("[mfe] breadcrumb click handler called", {
-    target,
-    hasTarget: !!target,
-    activeTarget: !!activeTarget,
-    eventTarget: e.target,
-    eventTargetClass: e.target?.className,
-  });
-
   if (!target) {
-    console.log("[mfe] no target found in handleBreadcrumbClick");
     return;
   }
   e.preventDefault();
   e.stopPropagation();
 
   const type = target.getAttribute("data-breadcrumb-target");
-  console.log("[mfe] breadcrumb type and activeTarget", {
-    type,
-    activeTarget: !!activeTarget,
-  });
   if (!type || !activeTarget) {
-    console.log("[mfe] early return: !type or !activeTarget");
     return;
   }
-
-  console.log("[mfe] breadcrumb click", {
-    type,
-    activeScope: activeFieldScope,
-    activeName: activeFieldName,
-    activeSection: activeFieldSection,
-    activeType: activeFieldType,
-  });
 
   const index = buildContentIndex();
   const sectionName =
@@ -1087,13 +1071,6 @@ function handleBreadcrumbClick(e) {
   }
 
   const indexed = id ? index.byId.get(id) : null;
-  console.log("[mfe] breadcrumb target", {
-    id,
-    hasElement: Boolean(indexed?.element),
-    hasMarkdown: Boolean(indexed?.markdownB64),
-    sectionName,
-    fieldName,
-  });
   if (indexed?.element) {
     openFullscreenEditorForElement(indexed.element);
     return;
@@ -1108,6 +1085,9 @@ function handleBreadcrumbClick(e) {
     );
     virtual.setAttribute("data-md-scope", indexed.scope || type);
     virtual.setAttribute("data-md-name", indexed.name || fieldName);
+    if (indexed.scope === "section") {
+      virtual.setAttribute("data-field-type", "container");
+    }
     if (indexed.section) {
       virtual.setAttribute("data-md-section", indexed.section);
     }
@@ -1127,6 +1107,7 @@ function handleBreadcrumbClick(e) {
       );
       virtual.setAttribute("data-md-scope", "section");
       virtual.setAttribute("data-md-name", sectionName);
+      virtual.setAttribute("data-field-type", "container");
       virtual.setAttribute("data-markdown-b64", entry.markdownB64 || "");
       openFullscreenEditorForElement(virtual);
       return;
@@ -1147,6 +1128,7 @@ function handleBreadcrumbClick(e) {
       );
       virtual.setAttribute("data-md-scope", "subsection");
       virtual.setAttribute("data-md-name", fieldName);
+      virtual.setAttribute("data-field-type", "container");
       virtual.setAttribute("data-md-section", sectionName);
       virtual.setAttribute("data-markdown-b64", entry.markdownB64 || "");
       openFullscreenEditorForElement(virtual);
@@ -1173,11 +1155,6 @@ function openFullscreenEditorFromPayload(payload) {
 
   activeRawMarkdown = markdownContent;
   activeDisplayMarkdown = markdownContent;
-  if (markdownContent.includes("<!--")) {
-    activeDisplayMarkdown = markdownContent
-      .replace(/<!--[\s\S]*?-->/g, "")
-      .trim();
-  }
 
   activeTarget = target;
   activeFieldName = fieldName;
@@ -1185,24 +1162,16 @@ function openFullscreenEditorFromPayload(payload) {
   activeFieldScope = fieldScope;
   activeFieldSection = fieldSection;
   activeFieldId = `${pageId}:${fieldScope}:${fieldSection}:${fieldName}`;
+  translationsCache = translationsCacheByFieldId.get(activeFieldId) || null;
+  secondaryLang = "";
 
   const saveCallback = (markdown, resolve, reject) => {
-    let finalMarkdown = markdown;
-    if (
-      activeRawMarkdown &&
-      activeDisplayMarkdown &&
-      activeRawMarkdown !== activeDisplayMarkdown
-    ) {
-      finalMarkdown = activeRawMarkdown.replace(
-        activeDisplayMarkdown,
-        markdown,
-      );
-    }
-    fetchCsrfToken().then((csrf) => {
-      const formData = new FormData();
-      formData.append("markdown", finalMarkdown);
-      formData.append("mdName", fieldName);
-      formData.append("mdScope", fieldScope || "field");
+    const finalMarkdown = markdown;
+      fetchCsrfToken().then((csrf) => {
+        const formData = new FormData();
+        formData.append("markdown", finalMarkdown);
+        formData.append("mdName", fieldName);
+        formData.append("mdScope", fieldScope || "field");
       if (fieldSection) {
         formData.append("mdSection", fieldSection);
       }
@@ -1223,7 +1192,6 @@ function openFullscreenEditorFromPayload(payload) {
           return res.json();
         })
         .then((data) => {
-          console.log("[MFE] Save response received:", data);
           if (data.status) {
             // Priority: use htmlMap if available (full page map)
             const htmlMap =
@@ -1237,21 +1205,10 @@ function openFullscreenEditorFromPayload(payload) {
             const markdowns = data.markdowns || {};
 
             if (data.sectionsIndex) {
-              console.log("[MFE] Hydrating global sectionsIndex from response");
               window.MarkdownFrontEditorConfig =
                 window.MarkdownFrontEditorConfig || {};
               window.MarkdownFrontEditorConfig.sectionsIndex =
                 data.sectionsIndex;
-            }
-
-            if (primaryHtml) {
-              const srcMatch = primaryHtml.match(
-                /<img[^>]+src=["\']([^"\']+)["\']/,
-              );
-              console.log(
-                "[MFE] Received HTML for active field. First img src:",
-                srcMatch ? srcMatch[1] : "not found",
-              );
             }
 
             // 1. Update EVERY .fe-editable element on the page
@@ -1276,9 +1233,6 @@ function openFullscreenEditorFromPayload(payload) {
                     key &&
                     (elId.endsWith(":" + key) || key.endsWith(":" + elId))
                   ) {
-                    console.log(
-                      `[MFE] Fuzzy match found: elId='${elId}' matches mapKey='${key}'`,
-                    );
                     html = value;
                     break;
                   }
@@ -1286,7 +1240,6 @@ function openFullscreenEditorFromPayload(payload) {
               }
 
               if (html) {
-                console.log(`[MFE] Syncing element: ${elId}`);
                 el.innerHTML = html;
                 matchedCount++;
 
@@ -1297,19 +1250,13 @@ function openFullscreenEditorFromPayload(payload) {
             });
 
             // 2. Sync fragments delimited by comment markers (e.g. Subsections)
-            const commentCount = syncComments(htmlMap);
-            console.log(
-              `[MFE] Full-page sync complete. Updated ${matchedCount} elements and ${commentCount} comment blocks.`,
-            );
+            syncComments(htmlMap);
 
             // 3. Extra safety for active editor
             if (activeTarget && primaryHtml) {
               activeTarget.dataset.markdown = finalMarkdown;
 
               if (primaryEditor) {
-                console.log(
-                  "[MFE] Live refreshing active Tiptap editor content",
-                );
                 const selection = primaryEditor.state.selection;
                 primaryEditor.commands.setContent(primaryHtml, false);
                 try {
@@ -1336,15 +1283,20 @@ function openFullscreenEditorFromPayload(payload) {
     const overlay = document.querySelector(".mfe-hover-overlay");
     if (overlay) overlay.style.display = "none";
   }
-  initEditor(activeDisplayMarkdown, saveCallback, fieldType);
+  try {
+    initEditor(activeDisplayMarkdown, saveCallback, fieldType);
+  } catch (err) {
+    console.error("[mfe] initEditor failed", err);
+    return;
+  }
   breadcrumbClickHandler = handleBreadcrumbClick;
 }
 
-export function openFullscreenEditorForElement(target) {
-  if (!target) return;
+function getPayloadFromElement(target) {
+  if (!target) return null;
   const markdownB64 = target.getAttribute("data-markdown-b64");
   const markdownContent = markdownB64 ? decodeMarkdownBase64(markdownB64) : "";
-  const payload = {
+  return {
     element: target,
     markdownContent,
     fieldName: target.getAttribute("data-md-name") || "unknown",
@@ -1353,6 +1305,66 @@ export function openFullscreenEditorForElement(target) {
     fieldSection: target.getAttribute("data-md-section") || "",
     pageId: target.getAttribute("data-page") || "0",
   };
+}
+
+function replaceActiveEditor(payload) {
+  if (!payload || !primaryEditor) return false;
+
+  const {
+    markdownContent,
+    fieldName,
+    fieldType,
+    fieldScope,
+    fieldSection,
+    pageId,
+  } = payload;
+
+  activeEditor = primaryEditor;
+  activeTarget = payload.element;
+  activeFieldName = fieldName;
+  activeFieldType = fieldType;
+  activeFieldScope = fieldScope;
+  activeFieldSection = fieldSection;
+  activeFieldId = `${pageId}:${fieldScope}:${fieldSection}:${fieldName}`;
+  activeRawMarkdown = markdownContent;
+  activeDisplayMarkdown = markdownContent;
+  translationsCache = translationsCacheByFieldId.get(activeFieldId) || null;
+  secondaryLang = "";
+
+  const html = renderMarkdownToHtml(markdownContent || "");
+  primaryEditor.commands.setContent(html, false);
+  if (shouldWarnForExtraContent(fieldType, fieldName)) {
+    stripTrailingEmptyParagraph(primaryEditor);
+  }
+  setOriginalBlockCount(primaryEditor, fieldType, fieldName);
+  highlightExtraContent(primaryEditor);
+  primaryDirty = false;
+
+  if (secondaryEditor && secondaryLang) {
+    setSecondaryLanguage(secondaryLang);
+  }
+
+  setTimeout(() => primaryEditor?.view?.focus(), 0);
+  return true;
+}
+
+export function openFullscreenEditorForElement(target) {
+  const payload = getPayloadFromElement(target);
+  if (!payload) return;
+  const forceNewWindow =
+    payload.fieldScope === "section" || payload.fieldScope === "subsection";
+  if (forceNewWindow) {
+    return openFullscreenEditorFromPayload(payload);
+  }
+  // If an editor is already open, swap content in place instead of opening a new window
+  const hasOpenWindow =
+    document.body.classList.contains("mfe-view-fullscreen") &&
+    overlayEl &&
+    overlayEl.isConnected &&
+    primaryEditor;
+  if (hasOpenWindow && replaceActiveEditor(payload)) {
+    return;
+  }
   return openFullscreenEditorFromPayload(payload);
 }
 
