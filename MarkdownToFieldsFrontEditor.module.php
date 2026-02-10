@@ -342,22 +342,23 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         foreach ($content->sections as $section) {
             if (isset($section->fields) && is_array($section->fields)) {
                 foreach ($section->fields as $fname => $f) {
-                    if (isset($f->html) && $f->html !== '' && isset($fields[$fname])) {
+                    if (isset($f->html) && $f->html !== '') {
                         $safeAttr = htmlspecialchars($fname, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                        $safeType = htmlspecialchars($fields[$fname]['type'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                        $safeMarkdown = htmlspecialchars($fields[$fname]['markdown'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                        $safeMarkdownB64 = htmlspecialchars(base64_encode($fields[$fname]['markdown']), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                        $sectionName = (string)($fields[$fname]['section'] ?? '');
-                        $sectionMarkdown = (string)($fields[$fname]['sectionMarkdown'] ?? '');
+                        $safeType = htmlspecialchars($this->resolveFieldType($f), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                        $fieldMarkdown = (string)($f->markdown ?? '');
+                        $safeMarkdown = htmlspecialchars($fieldMarkdown, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                        $safeMarkdownB64 = htmlspecialchars(base64_encode($fieldMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                        $sectionName = $sectionNameByObject[spl_object_hash($section)] ?? '';
+                        $sectionMarkdown = (string)($section->markdown ?? '');
                         $safeSection = htmlspecialchars($sectionName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                         $safeSectionB64 = htmlspecialchars(base64_encode($sectionMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                         
                         // Check if already wrapped
-                        if (stripos($rebuilt, 'data-md-name="' . $safeAttr . '"') !== false) continue;
+                        if (stripos($rebuilt, 'data-md-name="' . $safeAttr . '" data-md-section="' . $safeSection . '"') !== false) continue;
                         
                         // Find and wrap the field
                         $originalHtml = $f->html;
-                        $displayHtml = $fields[$fname]['html'];
+                        $displayHtml = $f->html;
                         $wrapper = '<div class="fe-editable md-edit" data-md-scope="field" data-md-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-md-section-b64="' . $safeSectionB64 . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
                         
                         // Find original HTML in output and replace with wrapped version
@@ -369,28 +370,29 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 }
             }
             if (isset($section->subsections) && is_array($section->subsections)) {
-                foreach ($section->subsections as $subsection) {
+                foreach ($section->subsections as $subsectionName => $subsection) {
                     if (isset($subsection->fields) && is_array($subsection->fields)) {
                         foreach ($subsection->fields as $fname => $f) {
-                            if (isset($f->html) && $f->html !== '' && isset($fields[$fname])) {
+                            if (isset($f->html) && $f->html !== '') {
                                 $safeAttr = htmlspecialchars($fname, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                                $safeType = htmlspecialchars($fields[$fname]['type'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                                $safeMarkdown = htmlspecialchars($fields[$fname]['markdown'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                                $safeMarkdownB64 = htmlspecialchars(base64_encode($fields[$fname]['markdown']), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                                $sectionName = (string)($fields[$fname]['section'] ?? '');
-                                $sectionMarkdown = (string)($fields[$fname]['sectionMarkdown'] ?? '');
-                                $subsectionName = (string)($fields[$fname]['subsection'] ?? '');
-                                $subsectionMarkdown = (string)($fields[$fname]['subsectionMarkdown'] ?? '');
+                                $safeType = htmlspecialchars($this->resolveFieldType($f), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                                $fieldMarkdown = (string)($f->markdown ?? '');
+                                $safeMarkdown = htmlspecialchars($fieldMarkdown, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                                $safeMarkdownB64 = htmlspecialchars(base64_encode($fieldMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                                $sectionName = $sectionNameByObject[spl_object_hash($section)] ?? '';
+                                $sectionMarkdown = (string)($section->markdown ?? '');
+                                $subsectionName = (string)$subsectionName;
+                                $subsectionMarkdown = (string)($subsection->markdown ?? '');
                                 $safeSection = htmlspecialchars($sectionName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                                 $safeSectionB64 = htmlspecialchars(base64_encode($sectionMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                                 $safeSubsection = htmlspecialchars($subsectionName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                                 $safeSubsectionB64 = htmlspecialchars(base64_encode($subsectionMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                                 
                                 // Check if already wrapped
-                                if (stripos($rebuilt, 'data-md-name="' . $safeAttr . '"') !== false) continue;
+                                if (stripos($rebuilt, 'data-md-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-md-subsection="' . $safeSubsection . '"') !== false) continue;
                                 
                                 $originalHtml = $f->html;
-                                $displayHtml = $fields[$fname]['html'];
+                                $displayHtml = $f->html;
                                 $wrapper = '<div class="fe-editable md-edit" data-md-scope="field" data-md-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-md-section-b64="' . $safeSectionB64 . '" data-md-subsection="' . $safeSubsection . '" data-md-subsection-b64="' . $safeSubsectionB64 . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
                                 
                                 $pos = stripos($rebuilt, $originalHtml);

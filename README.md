@@ -25,7 +25,7 @@ It is NOT a standalone module. It only works **together** with MarkdownToFields.
 
 ## What's New
 
-**0.4.2.beta.3**
+**0.4.2**
 - Marker labels now render with section/sub/field styles and stay non‑editable.
 - Unified markdown → editor rendering for inline/fullscreen (more consistent markers and output).
 - Split view translations are more stable across field/section switches.
