@@ -5,7 +5,7 @@
  * This editor provides WYSIWYG editing while preserving markdown integrity.
  */
 
-import { Editor, Extension } from "@tiptap/core";
+import { Editor, Extension, Mark } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
@@ -146,6 +146,33 @@ function createEditorInstance(element, fieldType, fieldName) {
       ];
     },
   });
+  const Underline = Mark.create({
+    name: "underline",
+    parseHTML() {
+      return [{ tag: "u" }];
+    },
+    renderHTML() {
+      return ["u", 0];
+    },
+  });
+  const Superscript = Mark.create({
+    name: "superscript",
+    parseHTML() {
+      return [{ tag: "sup" }];
+    },
+    renderHTML() {
+      return ["sup", 0];
+    },
+  });
+  const Subscript = Mark.create({
+    name: "subscript",
+    parseHTML() {
+      return [{ tag: "sub" }];
+    },
+    renderHTML() {
+      return ["sub", 0];
+    },
+  });
   const editor = new Editor({
     element,
     extensions: [
@@ -153,6 +180,9 @@ function createEditorInstance(element, fieldType, fieldName) {
         codeBlock: false,
         link: false,
       }),
+      Underline,
+      Superscript,
+      Subscript,
       Marker,
       CodeBlockLowlight.configure({
         lowlight,
@@ -1175,11 +1205,11 @@ function openFullscreenEditorFromPayload(payload) {
 
   const saveCallback = (markdown, resolve, reject) => {
     const finalMarkdown = markdown;
-      fetchCsrfToken().then((csrf) => {
-        const formData = new FormData();
-        formData.append("markdown", finalMarkdown);
-        formData.append("mdName", fieldName);
-        formData.append("mdScope", fieldScope || "field");
+    fetchCsrfToken().then((csrf) => {
+      const formData = new FormData();
+      formData.append("markdown", finalMarkdown);
+      formData.append("mdName", fieldName);
+      formData.append("mdScope", fieldScope || "field");
       if (fieldSection) {
         formData.append("mdSection", fieldSection);
       }
@@ -1248,6 +1278,16 @@ function openFullscreenEditorFromPayload(payload) {
               }
 
               if (html) {
+                if (elName === "title") {
+                  console.log("[mfe] sync:title", {
+                    elId,
+                    elScope,
+                    elSection,
+                    elName,
+                    matchedKey,
+                    preview: html.slice(0, 80),
+                  });
+                }
                 el.innerHTML = html;
                 matchedCount++;
 

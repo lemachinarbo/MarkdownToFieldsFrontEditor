@@ -30,6 +30,7 @@ It is NOT a standalone module. It only works **together** with MarkdownToFields.
 - Unified markdown → editor rendering for inline/fullscreen (more consistent markers and output).
 - Split view translations are more stable across field/section switches.
 - Image picker listing hardened for missing/permissioned folders.
+- Inline HTML is preserved on save: `strong`, `em`, `del`, `u`, `sup`, `sub`, `br` (no `span`).
 
 **0.4.2.beta.2**
 - Image support (images in editor can be updated on double click).

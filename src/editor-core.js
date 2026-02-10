@@ -164,17 +164,45 @@ export const markdownSerializer = new MarkdownSerializer(
       state.atBlockStart = true;
     },
     hardBreak(state) {
-      state.write("\n");
+      state.write("<br>");
     },
     text: defaultMarkdownSerializer.nodes.text,
   },
   {
     ...defaultMarkdownSerializer.marks,
-    bold: defaultMarkdownSerializer.marks.strong,
-    italic: defaultMarkdownSerializer.marks.em,
+    bold: {
+      open: "<strong>",
+      close: "</strong>",
+      mixable: true,
+      expelEnclosingWhitespace: true,
+    },
+    italic: {
+      open: "<em>",
+      close: "</em>",
+      mixable: true,
+      expelEnclosingWhitespace: true,
+    },
     strike: {
-      open: "~~",
-      close: "~~",
+      open: "<del>",
+      close: "</del>",
+      mixable: true,
+      expelEnclosingWhitespace: true,
+    },
+    underline: {
+      open: "<u>",
+      close: "</u>",
+      mixable: true,
+      expelEnclosingWhitespace: true,
+    },
+    superscript: {
+      open: "<sup>",
+      close: "</sup>",
+      mixable: true,
+      expelEnclosingWhitespace: true,
+    },
+    subscript: {
+      open: "<sub>",
+      close: "</sub>",
       mixable: true,
       expelEnclosingWhitespace: true,
     },

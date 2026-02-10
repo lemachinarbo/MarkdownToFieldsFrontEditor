@@ -1,4 +1,4 @@
-import { Editor, Extension } from "@tiptap/core";
+import { Editor, Extension, Mark } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
@@ -145,10 +145,7 @@ function findSectionFromText(text) {
   const needle = (text || "").trim();
   if (!needle) return null;
 
-  const normalize = (value) =>
-    (value || "")
-      .replace(/\s+/g, " ")
-      .trim();
+  const normalize = (value) => (value || "").replace(/\s+/g, " ").trim();
 
   const findTextRect = (snippet) => {
     const search = normalize(snippet);
@@ -200,9 +197,7 @@ function findSectionFromText(text) {
 
   const needleNorm = normalize(needle);
   for (const section of sections) {
-    const subs = Array.isArray(section.subsections)
-      ? section.subsections
-      : [];
+    const subs = Array.isArray(section.subsections) ? section.subsections : [];
     for (const sub of subs) {
       const hay = getSectionText(sub);
       if (hay && hay.includes(needleNorm)) {
@@ -220,19 +215,10 @@ function findSectionFromText(text) {
 }
 
 function normalizeText(value) {
-  return (value || "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
+  return (value || "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-function createVirtualTarget({
-  pageId,
-  scope,
-  name,
-  section = "",
-  markdown,
-}) {
+function createVirtualTarget({ pageId, scope, name, section = "", markdown }) {
   const el = document.createElement("div");
   el.className = "fe-editable md-edit mfe-virtual";
   el.setAttribute("data-page", pageId);
@@ -383,9 +369,7 @@ let beforeUnloadHandler = null;
 
 function confirmDiscardChanges() {
   if (!dirty) return true;
-  return window.confirm(
-    "You have unsaved changes. Discard them and close?",
-  );
+  return window.confirm("You have unsaved changes. Discard them and close?");
 }
 
 const EscapeKeyExtension = Extension.create({
@@ -474,7 +458,8 @@ function createEditorInstance(host, fieldType, fieldName) {
               state.doc.descendants((node, pos, parent) => {
                 if (!node.isText) return;
                 if (parent?.type?.name === "codeBlock") return;
-                if (node.marks?.some((mark) => mark.type.name === "code")) return;
+                if (node.marks?.some((mark) => mark.type.name === "code"))
+                  return;
 
                 inlineHtmlTags.forEach((tag) => {
                   const re = new RegExp(`<\\s*\\/?\\s*${tag}\\b[^>]*>`, "gi");
@@ -498,6 +483,33 @@ function createEditorInstance(host, fieldType, fieldName) {
       ];
     },
   });
+  const Underline = Mark.create({
+    name: "underline",
+    parseHTML() {
+      return [{ tag: "u" }];
+    },
+    renderHTML() {
+      return ["u", 0];
+    },
+  });
+  const Superscript = Mark.create({
+    name: "superscript",
+    parseHTML() {
+      return [{ tag: "sup" }];
+    },
+    renderHTML() {
+      return ["sup", 0];
+    },
+  });
+  const Subscript = Mark.create({
+    name: "subscript",
+    parseHTML() {
+      return [{ tag: "sub" }];
+    },
+    renderHTML() {
+      return ["sub", 0];
+    },
+  });
 
   const editor = new Editor({
     element: host,
@@ -506,6 +518,9 @@ function createEditorInstance(host, fieldType, fieldName) {
         codeBlock: false,
         link: false,
       }),
+      Underline,
+      Superscript,
+      Subscript,
       Marker,
       CodeBlockLowlight.configure({
         lowlight,
@@ -520,24 +535,26 @@ function createEditorInstance(host, fieldType, fieldName) {
             ...this.parent?.(),
             src: {
               default: null,
-              parseHTML: element => element.getAttribute('src'),
-              renderHTML: attributes => {
+              parseHTML: (element) => element.getAttribute("src"),
+              renderHTML: (attributes) => {
                 if (!attributes.src) return {};
-                
+
                 // If it's already an absolute URL or starts with /, use as-is
                 // Supports picker URLs starting with ? or protocol-relative //
                 if (attributes.src.match(/^(https?:|\/|\?|\/\/)/)) {
                   return { src: attributes.src };
                 }
-                
+
                 // For relative URLs, try to resolve to page assets
-                const pageId = document.querySelector('.fe-editable')?.getAttribute('data-page');
+                const pageId = document
+                  .querySelector(".fe-editable")
+                  ?.getAttribute("data-page");
                 if (pageId) {
                   // Use ProcessWire's page assets URL pattern
                   const assetUrl = `/site/assets/files/${pageId}/${attributes.src}`;
                   return { src: assetUrl };
                 }
-                
+
                 // Fallback to original src
                 return { src: attributes.src };
               },
@@ -549,11 +566,11 @@ function createEditorInstance(host, fieldType, fieldName) {
         },
         addNodeView() {
           return ({ node, HTMLAttributes, getPos, editor }) => {
-            const container = document.createElement('span');
-            container.classList.add('mfe-tiptap-image-container');
+            const container = document.createElement("span");
+            container.classList.add("mfe-tiptap-image-container");
 
-            const img = document.createElement('img');
-            
+            const img = document.createElement("img");
+
             // Set attributes. TipTap's HTMLAttributes already contains the resolved src from renderHTML.
             Object.entries(HTMLAttributes).forEach(([key, value]) => {
               if (value !== null && value !== undefined) {
@@ -561,9 +578,9 @@ function createEditorInstance(host, fieldType, fieldName) {
               }
             });
 
-            const label = document.createElement('span');
-            label.classList.add('mfe-tiptap-image-label');
-            label.innerText = 'edit';
+            const label = document.createElement("span");
+            label.classList.add("mfe-tiptap-image-label");
+            label.innerText = "edit";
 
             container.append(img, label);
 
@@ -585,7 +602,14 @@ function createEditorInstance(host, fieldType, fieldName) {
           return [
             new Plugin({
               props: {
-                handleDoubleClickOn: (view, pos, node, nodePos, event, direct) => {
+                handleDoubleClickOn: (
+                  view,
+                  pos,
+                  node,
+                  nodePos,
+                  event,
+                  direct,
+                ) => {
                   if (node.type.name === "image") {
                     if (window.mfeOpenImagePicker) {
                       window.mfeOpenImagePicker(node.attrs);
@@ -630,7 +654,9 @@ function createEditorInstance(host, fieldType, fieldName) {
     if (activeFieldId) {
       markDirty(activeFieldId);
       draftByField.set(activeFieldId, editor.getJSON());
-      const markdown = decodeHtmlEntitiesInFences(getMarkdownFromEditor(editor));
+      const markdown = decodeHtmlEntitiesInFences(
+        getMarkdownFromEditor(editor),
+      );
       draftMarkdownByField.set(activeFieldId, markdown);
     }
   });
@@ -688,14 +714,19 @@ function saveField(fieldId, markdown) {
       if (!data.status) throw new Error(data.message || "Save failed");
 
       if (data.sectionsIndex) {
-        window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
+        window.MarkdownFrontEditorConfig =
+          window.MarkdownFrontEditorConfig || {};
         window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;
       }
 
       if (data.html || data.htmlMap) {
-        const htmlMap = data.htmlMap || (typeof data.html === 'object' ? data.html : {});
-        const primaryHtml = typeof data.html === 'string' ? data.html : (htmlMap[fieldId] || htmlMap[mdName]);
-        
+        const htmlMap =
+          data.htmlMap || (typeof data.html === "object" ? data.html : {});
+        const primaryHtml =
+          typeof data.html === "string"
+            ? data.html
+            : htmlMap[fieldId] || htmlMap[mdName];
+
         // 1. Update ALL .fe-editable elements on the page that match something in the map
         document.querySelectorAll(".fe-editable").forEach((el) => {
           const elName = el.getAttribute("data-md-name");
@@ -703,13 +734,17 @@ function saveField(fieldId, markdown) {
           const elSection = el.getAttribute("data-md-section") || "";
           const elPageId = el.getAttribute("data-page");
           const elId = `${elPageId}:${elScope}:${elSection}:${elName}`;
-          
-          let html = htmlMap[elId] || htmlMap[elName] || htmlMap[`${elScope}:${elName}`] || htmlMap[`${elScope}:${elSection}:${elName}`];
-          
+
+          let html =
+            htmlMap[elId] ||
+            htmlMap[elName] ||
+            htmlMap[`${elScope}:${elName}`] ||
+            htmlMap[`${elScope}:${elSection}:${elName}`];
+
           // Fuzzy match for scoped keys
           if (!html) {
             for (const [key, value] of Object.entries(htmlMap)) {
-              if (elId.endsWith(':' + key)) {
+              if (elId.endsWith(":" + key)) {
                 html = value;
                 break;
               }
@@ -717,13 +752,25 @@ function saveField(fieldId, markdown) {
           }
 
           if (html) {
+            if (elName === "title") {
+              console.log("[mfe] sync:title", {
+                elId,
+                elScope,
+                elSection,
+                elName,
+                matchedKey,
+                preview: html.slice(0, 80),
+              });
+            }
             originalHtml.set(el, html);
-            
+
             // If this is the active editor, update TipTap state
             if (el === activeTarget && activeEditor) {
               const selection = activeEditor.state.selection;
               activeEditor.commands.setContent(html, false);
-              try { activeEditor.commands.setTextSelection(selection); } catch (e) {}
+              try {
+                activeEditor.commands.setTextSelection(selection);
+              } catch (e) {}
             } else {
               el.innerHTML = html;
             }
@@ -745,7 +792,9 @@ function saveField(fieldId, markdown) {
 
 function saveAllDrafts({ showStatus = true } = {}) {
   if (draftMarkdownByField.size === 0 && activeEditor && activeFieldId) {
-    const markdown = decodeHtmlEntitiesInFences(getMarkdownFromEditor(activeEditor));
+    const markdown = decodeHtmlEntitiesInFences(
+      getMarkdownFromEditor(activeEditor),
+    );
     draftMarkdownByField.set(activeFieldId, markdown);
   }
   if (draftMarkdownByField.size === 0) {
@@ -768,8 +817,8 @@ function saveAllDrafts({ showStatus = true } = {}) {
     });
   });
 
-  const batchSaves = Array.from(grouped.entries()).map(
-    ([pageId, fields]) => saveBatch(pageId, fields),
+  const batchSaves = Array.from(grouped.entries()).map(([pageId, fields]) =>
+    saveBatch(pageId, fields),
   );
 
   return batchSaves
@@ -813,38 +862,46 @@ function saveBatch(pageId, fields) {
     })
     .then((data) => {
       if (!data.status) throw new Error(data.message || "Save failed");
-      
+
       if (data.sectionsIndex) {
-        window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
+        window.MarkdownFrontEditorConfig =
+          window.MarkdownFrontEditorConfig || {};
         window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;
       }
 
-      const htmlMap = data.htmlMap || (typeof data.html === 'object' ? data.html : {});
+      const htmlMap =
+        data.htmlMap || (typeof data.html === "object" ? data.html : {});
       Object.entries(htmlMap).forEach(([fieldKey, html]) => {
         // Try to match by fieldId (full) or fieldKey (name)
         let fieldId = fieldKey;
         if (!fieldElements.has(fieldId)) {
           // Fuzzy match: check if any fieldId ends with :fieldKey
           for (const [id, _] of fieldElements) {
-            if (id === fieldKey || id.endsWith(':' + fieldKey) || id.startsWith(fieldKey + ':')) {
+            if (
+              id === fieldKey ||
+              id.endsWith(":" + fieldKey) ||
+              id.startsWith(fieldKey + ":")
+            ) {
               fieldId = id;
               break;
             }
           }
         }
-        
+
         const target = fieldElements.get(fieldId);
         if (!target) return;
-        
+
         // Always update the stored original HTML and dataset
-        if (html && typeof html === 'string') {
+        if (html && typeof html === "string") {
           originalHtml.set(target, html);
-          
+
           // Update TipTap or DOM
           if (target === activeTarget && activeEditor) {
             const selection = activeEditor.state.selection;
             activeEditor.commands.setContent(html, false);
-            try { activeEditor.commands.setTextSelection(selection); } catch (e) {}
+            try {
+              activeEditor.commands.setTextSelection(selection);
+            } catch (e) {}
           } else {
             target.innerHTML = html;
           }
@@ -881,27 +938,38 @@ function openImagePickerInline(initialData = null) {
       if (!activeEditor) return;
 
       const { selection } = activeEditor.state;
-      const isImageSelected = selection.node && selection.node.type.name === 'image';
+      const isImageSelected =
+        selection.node && selection.node.type.name === "image";
 
       if (isImageSelected) {
-        activeEditor.chain().focus().updateAttributes('image', {
-          src: imageData.url,
-          alt: imageData.alt || "",
-          originalFilename: imageData.filename
-        }).run();
+        activeEditor
+          .chain()
+          .focus()
+          .updateAttributes("image", {
+            src: imageData.url,
+            alt: imageData.alt || "",
+            originalFilename: imageData.filename,
+          })
+          .run();
       } else {
-        activeEditor.chain().focus().setImage({ 
-          src: imageData.url, 
-          alt: imageData.alt || "",
-          originalFilename: imageData.filename 
-        }).run();
+        activeEditor
+          .chain()
+          .focus()
+          .setImage({
+            src: imageData.url,
+            alt: imageData.alt || "",
+            originalFilename: imageData.filename,
+          })
+          .run();
       }
-      
+
       // Mark as dirty
       dirty = true;
       if (activeFieldId) {
         markDirty(activeFieldId);
-        const markdown = decodeHtmlEntitiesInFences(getMarkdownFromEditor(activeEditor));
+        const markdown = decodeHtmlEntitiesInFences(
+          getMarkdownFromEditor(activeEditor),
+        );
         draftMarkdownByField.set(activeFieldId, markdown);
       }
     },
@@ -1110,7 +1178,9 @@ function closeInlineEditor({
   }
 
   if (persistDraft && fieldId && editorForDraft) {
-    const markdown = decodeHtmlEntitiesInFences(getMarkdownFromEditor(editorForDraft));
+    const markdown = decodeHtmlEntitiesInFences(
+      getMarkdownFromEditor(editorForDraft),
+    );
     draftMarkdownByField.set(fieldId, markdown);
   }
 
@@ -1247,7 +1317,9 @@ function initInlineEditor() {
         }
 
         const targetEl = e.target;
-        const fallbackSection = findSectionFromText(targetEl?.textContent || "");
+        const fallbackSection = findSectionFromText(
+          targetEl?.textContent || "",
+        );
         if (fallbackSection?.scope === "section" && fallbackSection?.name) {
           const host = targetEl?.closest
             ? targetEl.closest("section") ||
@@ -1259,7 +1331,9 @@ function initInlineEditor() {
           const key = `section:${fallbackSection.name}`;
           if (rect && lastHoverKey !== key) {
             lastHoverKey = key;
-            overlayEngine.setLabel(getEditLabel("section", fallbackSection.name, ""));
+            overlayEngine.setLabel(
+              getEditLabel("section", fallbackSection.name, ""),
+            );
             const inflated = inflateRect(rect, 16);
             overlayEngine.showBox(inflated);
             lastHoverRect = inflated;
@@ -1267,7 +1341,10 @@ function initInlineEditor() {
           return;
         }
 
-        if (lastHoverRect && isPointInRect(e.clientX, e.clientY, lastHoverRect)) {
+        if (
+          lastHoverRect &&
+          isPointInRect(e.clientX, e.clientY, lastHoverRect)
+        ) {
           return;
         }
         overlayEngine.hide();
@@ -1327,7 +1404,6 @@ function initInlineEditor() {
     };
     document.addEventListener("keydown", keydownHandler, true);
   }
-
 }
 
 export { initInlineEditor };
