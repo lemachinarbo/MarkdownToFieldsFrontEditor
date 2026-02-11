@@ -5,8 +5,6 @@ export function createOverlayEngine({ debugLabels = false } = {}) {
   let hoverLabel = null;
   let markerTargets = [];
   let markerTargetsDirty = true;
-  let fieldSubsectionTargets = [];
-  let fieldSubsectionTargetsDirty = true;
   let markerDebugThrottle = null;
 
   function ensureOverlay() {
@@ -36,6 +34,10 @@ export function createOverlayEngine({ debugLabels = false } = {}) {
 
   function showBox(rect) {
     if (!hoverOverlay || !rect) return;
+    if (document.body.classList.contains("mfe-debug-sections")) {
+      hide();
+      return;
+    }
     if (document.body.classList.contains("mfe-view-fullscreen")) {
       hide();
       return;
@@ -58,6 +60,10 @@ export function createOverlayEngine({ debugLabels = false } = {}) {
 
   function showEdge(rect) {
     if (!hoverOverlay || !rect) return;
+    if (document.body.classList.contains("mfe-debug-sections")) {
+      hide();
+      return;
+    }
     if (document.body.classList.contains("mfe-view-fullscreen")) {
       hide();
       return;
@@ -101,54 +107,6 @@ export function createOverlayEngine({ debugLabels = false } = {}) {
     return markerTargets;
   }
 
-  function buildFieldSubsectionTargets() {
-    const fields = Array.from(
-      document.querySelectorAll('.fe-editable[data-md-subsection]'),
-    );
-    const groups = new Map();
-    fields.forEach((el) => {
-      const section = el.getAttribute("data-md-section") || "";
-      const subsection = el.getAttribute("data-md-subsection") || "";
-      if (!subsection) return;
-      const key = `${section}::${subsection}`;
-      if (!groups.has(key)) {
-        groups.set(key, { section, name: subsection, rects: [] });
-      }
-      groups.get(key).rects.push(el.getBoundingClientRect());
-    });
-    const targets = [];
-    groups.forEach((value) => {
-      const rect = value.rects.reduce(
-        (acc, r) => ({
-          left: Math.min(acc.left, r.left),
-          top: Math.min(acc.top, r.top),
-          right: Math.max(acc.right, r.right),
-          bottom: Math.max(acc.bottom, r.bottom),
-        }),
-        { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity },
-      );
-      if (rect && rect.right > rect.left && rect.bottom > rect.top) {
-        const entry = getSubsectionEntry(value.section, value.name);
-        targets.push({
-          scope: "subsection",
-          section: value.section,
-          name: value.name,
-          rect,
-          markdownB64: entry?.markdownB64 || "",
-        });
-      }
-    });
-    fieldSubsectionTargets = targets;
-    fieldSubsectionTargetsDirty = false;
-  }
-
-  function getFieldSubsectionTargets() {
-    if (fieldSubsectionTargetsDirty) {
-      buildFieldSubsectionTargets();
-    }
-    return fieldSubsectionTargets;
-  }
-
   function isPointInRect(x, y, rect) {
     return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
   }
@@ -165,26 +123,52 @@ export function createOverlayEngine({ debugLabels = false } = {}) {
     return hits[0];
   }
 
+  function getMetaAttr(el, name) {
+    if (!el) return "";
+    return (
+      el.getAttribute(`data-mfe-${name}`) ||
+      el.getAttribute(`data-md-${name}`) ||
+      ""
+    );
+  }
+
   function findFieldSubsectionTargetFromPoint(x, y) {
-    const targets = getFieldSubsectionTargets();
-    const hits = targets.filter((t) => isPointInRect(x, y, t.rect));
-    if (!hits.length) return null;
-    hits.sort((a, b) => {
-      const areaA = (a.rect.right - a.rect.left) * (a.rect.bottom - a.rect.top);
-      const areaB = (b.rect.right - b.rect.left) * (b.rect.bottom - b.rect.top);
-      return areaA - areaB;
-    });
-    return hits[0];
+    const stack =
+      typeof document.elementsFromPoint === "function"
+        ? document.elementsFromPoint(x, y)
+        : [];
+    const hitEl = stack.find((el) =>
+      el?.closest?.(
+        '.fe-editable[data-mfe-scope="subsection"], .fe-editable[data-md-scope="subsection"]',
+      ),
+    );
+    const subsectionEl = hitEl?.closest
+      ? hitEl.closest(
+          '.fe-editable[data-mfe-scope="subsection"], .fe-editable[data-md-scope="subsection"]',
+        )
+      : null;
+    if (subsectionEl) {
+      const section = getMetaAttr(subsectionEl, "section") || "";
+      const name = getMetaAttr(subsectionEl, "name") || "";
+      const rect = subsectionEl.getBoundingClientRect();
+      const entry = getSubsectionEntry(section, name);
+      return {
+        scope: "subsection",
+        section,
+        name,
+        rect,
+        markdownB64: entry?.markdownB64 || "",
+      };
+    }
+    return null;
   }
 
   function invalidate(reason) {
     markerTargetsDirty = true;
-    fieldSubsectionTargetsDirty = true;
     if (!markerDebugThrottle) {
       markerDebugThrottle = window.setTimeout(() => {
         markerDebugThrottle = null;
         getMarkerTargets();
-        getFieldSubsectionTargets();
       }, 120);
     }
   }

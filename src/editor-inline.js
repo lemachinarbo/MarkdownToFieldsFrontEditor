@@ -48,6 +48,7 @@ let keydownHandler = null;
 let pointerHandler = null;
 let dblclickHandler = null;
 let hoverHandler = null;
+let clickBlockHandler = null;
 let hoverRaf = null;
 let lastHoverKey = "";
 let lastHoverRect = null;
@@ -66,153 +67,68 @@ const draftMarkdownByField = new Map();
 let suppressUpdates = false;
 const fieldElements = new Map();
 
-function collectSectionTargets() {
-  const fields = Array.from(document.querySelectorAll(".fe-editable"));
-  const sections = new Map();
-  const subsections = new Map();
-
-  fields.forEach((el) => {
-    const sectionName = el.getAttribute("data-md-section") || "";
-    const sectionB64 = el.getAttribute("data-md-section-b64") || "";
-    const subsectionName = el.getAttribute("data-md-subsection") || "";
-    const subsectionB64 = el.getAttribute("data-md-subsection-b64") || "";
-    if (sectionName && sectionB64) {
-      if (!sections.has(sectionName)) {
-        sections.set(sectionName, { b64: sectionB64, rects: [] });
-      }
-      sections.get(sectionName).rects.push(el.getBoundingClientRect());
-    }
-    if (sectionName && subsectionName && subsectionB64) {
-      const key = `${sectionName}::${subsectionName}`;
-      if (!subsections.has(key)) {
-        subsections.set(key, {
-          section: sectionName,
-          name: subsectionName,
-          b64: subsectionB64,
-          rects: [],
-        });
-      }
-      subsections.get(key).rects.push(el.getBoundingClientRect());
-    }
-  });
-
-  const collapseRects = (rects) => {
-    const bounds = rects.reduce(
-      (acc, r) => ({
-        left: Math.min(acc.left, r.left),
-        top: Math.min(acc.top, r.top),
-        right: Math.max(acc.right, r.right),
-        bottom: Math.max(acc.bottom, r.bottom),
-      }),
-      { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity },
-    );
-    return bounds;
-  };
-
-  const sectionTargets = Array.from(sections.entries()).map(([name, data]) => ({
-    scope: "section",
-    name,
-    b64: data.b64,
-    rect: collapseRects(data.rects),
-  }));
-
-  const subsectionTargets = Array.from(subsections.values()).map((data) => ({
-    scope: "subsection",
-    name: data.name,
-    section: data.section,
-    b64: data.b64,
-    rect: collapseRects(data.rects),
-  }));
-
-  return { sectionTargets, subsectionTargets };
-}
-
-function findTargetFromPoint(x, y) {
-  const { sectionTargets, subsectionTargets } = collectSectionTargets();
-  const hit = (rect) =>
-    x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-
-  const sub = subsectionTargets.find((t) => hit(t.rect));
-  if (sub) return sub;
-  const sec = sectionTargets.find((t) => hit(t.rect));
-  if (sec) return sec;
-  return null;
-}
-
-function findSectionFromText(text) {
-  const cfg = window.MarkdownFrontEditorConfig || {};
-  const sections = Array.isArray(cfg.sectionsIndex) ? cfg.sectionsIndex : [];
-  const needle = (text || "").trim();
-  if (!needle) return null;
-
-  const normalize = (value) => (value || "").replace(/\s+/g, " ").trim();
-
-  const findTextRect = (snippet) => {
-    const search = normalize(snippet);
-    if (!search) return null;
-    const walker = document.createTreeWalker(
-      document.body,
-      NodeFilter.SHOW_TEXT,
-      {
-        acceptNode(node) {
-          const parent = node.parentElement;
-          if (!parent) return NodeFilter.FILTER_REJECT;
-          if (parent.closest("script, style, noscript")) {
-            return NodeFilter.FILTER_REJECT;
-          }
-          return NodeFilter.FILTER_ACCEPT;
-        },
-      },
-    );
-    let current = walker.nextNode();
-    while (current) {
-      const value = normalize(current.nodeValue);
-      const index = value.indexOf(search);
-      if (index >= 0) {
-        const range = document.createRange();
-        range.setStart(current, index);
-        range.setEnd(current, index + search.length);
-        const rect = range.getBoundingClientRect();
-        if (rect && rect.width && rect.height) {
-          return rect;
-        }
-      }
-      current = walker.nextNode();
-    }
-    return null;
-  };
-
-  const getSectionText = (section) => {
-    if (section?.text) return normalize(section.text);
-    if (section?.markdownB64) {
-      try {
-        const decoded = decodeMarkdownBase64(section.markdownB64);
-        return normalize(decoded.replace(/[`*_>#\-\[\]!\(\)]/g, " "));
-      } catch (e) {
-        return "";
-      }
-    }
-    return "";
-  };
-
-  const needleNorm = normalize(needle);
-  for (const section of sections) {
-    const subs = Array.isArray(section.subsections) ? section.subsections : [];
-    for (const sub of subs) {
-      const hay = getSectionText(sub);
-      if (hay && hay.includes(needleNorm)) {
-        const rect = findTextRect(needle);
-        return { scope: "subsection", section: section.name, ...sub, rect };
-      }
-    }
-    const sectionText = getSectionText(section);
-    if (sectionText && sectionText.includes(needleNorm)) {
-      const rect = findTextRect(needle);
-      return { scope: "section", ...section, rect };
-    }
+function parseDataMfe(value) {
+  const raw = (value || "").trim();
+  if (!raw) return null;
+  const parts = raw.split(":").map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 1) {
+    return { scope: "section", name: parts[0], section: "" };
+  }
+  if (parts.length >= 2) {
+    return { scope: "subsection", section: parts[0], name: parts[1] };
   }
   return null;
 }
+
+function getSectionEntryByName(name) {
+  const cfg = window.MarkdownFrontEditorConfig || {};
+  const sections = Array.isArray(cfg.sectionsIndex) ? cfg.sectionsIndex : [];
+  return sections.find((s) => s?.name === name) || null;
+}
+
+function getSubsectionEntryByName(sectionName, subName) {
+  const section = getSectionEntryByName(sectionName);
+  const subs = Array.isArray(section?.subsections) ? section.subsections : [];
+  return subs.find((s) => s?.name === subName) || null;
+}
+
+function findDataMfeTargetFromPoint(x, y) {
+  const stack =
+    typeof document.elementsFromPoint === "function"
+      ? document.elementsFromPoint(x, y)
+      : [];
+  const hit = stack.find((el) => el?.closest?.("[data-mfe]"));
+  const host = hit?.closest ? hit.closest("[data-mfe]") : null;
+  if (!host) return null;
+  const parsed = parseDataMfe(host.getAttribute("data-mfe"));
+  if (!parsed) return null;
+  const rect = host.getBoundingClientRect();
+  if (parsed.scope === "section") {
+    const entry = getSectionEntryByName(parsed.name);
+    return {
+      scope: "section",
+      name: parsed.name,
+      section: "",
+      b64: entry?.markdownB64 || "",
+      rect,
+    };
+  }
+  const subEntry = getSubsectionEntryByName(parsed.section, parsed.name);
+  return {
+    scope: "subsection",
+    name: parsed.name,
+    section: parsed.section || "",
+    b64: subEntry?.markdownB64 || "",
+    rect,
+  };
+}
+
+function findTargetFromPoint(x, y) {
+  const dataMfeTarget = findDataMfeTargetFromPoint(x, y);
+  if (dataMfeTarget) return dataMfeTarget;
+  return null;
+}
+
 
 function normalizeText(value) {
   return (value || "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -223,9 +139,12 @@ function createVirtualTarget({ pageId, scope, name, section = "", markdown }) {
   el.className = "fe-editable md-edit mfe-virtual";
   el.setAttribute("data-page", pageId);
   el.setAttribute("data-md-scope", scope);
+  el.setAttribute("data-mfe-scope", scope);
   el.setAttribute("data-md-name", name);
+  el.setAttribute("data-mfe-name", name);
   if (section) {
     el.setAttribute("data-md-section", section);
+    el.setAttribute("data-mfe-section", section);
   }
   if (markdown !== undefined) {
     el.setAttribute(
@@ -238,21 +157,56 @@ function createVirtualTarget({ pageId, scope, name, section = "", markdown }) {
 
 function getEditLabel(scope, name, section) {
   if (!debugLabels) return "Double click to edit";
+  if (scope === "subsection") {
+    return `subsection:${section}:${name}`;
+  }
+  if (scope === "section") {
+    return `section:${name}`;
+  }
   if (section) {
-    return `Double click to edit (${scope}: ${section} → ${name})`;
+    return `${scope}:${section}:${name}`;
   }
   if (name) {
-    return `Double click to edit (${scope}: ${name})`;
+    return `${scope}:${name}`;
   }
-  return `Double click to edit (${scope})`;
+  return `${scope}`;
 }
 
 function applyEditLabelAttributes(el) {
   if (!el) return;
-  const scope = el.getAttribute("data-md-scope") || "field";
-  const name = el.getAttribute("data-md-name") || "";
-  const section = el.getAttribute("data-md-section") || "";
-  el.setAttribute("data-mfe-label", getEditLabel(scope, name, section));
+  const scope = getMetaAttr(el, "scope") || "field";
+  const name = getMetaAttr(el, "name") || "";
+  const section = getMetaAttr(el, "section") || "";
+  const label = getEditLabel(scope, name, section);
+  el.setAttribute("data-mfe-label", label);
+  el.setAttribute("data-mfe-label-debug", debugLabels ? "1" : "0");
+
+  const fieldType = el.getAttribute("data-field-type") || "";
+  const isSectionLike = scope === "section" || scope === "subsection";
+  const host = el.firstElementChild;
+  if (isSectionLike || fieldType === "container") {
+    if (host) {
+      host.classList.add("mfe-label-host");
+      host.setAttribute("data-mfe-label", label);
+    }
+  }
+}
+
+function getMetaAttr(el, name) {
+  if (!el) return "";
+  return (
+    el.getAttribute(`data-mfe-${name}`) ||
+    el.getAttribute(`data-md-${name}`) ||
+    ""
+  );
+}
+
+function applyDataMfeLabelAttributes(el) {
+  if (!el) return;
+  const parsed = parseDataMfe(el.getAttribute("data-mfe"));
+  if (!parsed) return;
+  const label = getEditLabel(parsed.scope, parsed.name, parsed.section || "");
+  el.setAttribute("data-mfe-label", label);
   el.setAttribute("data-mfe-label-debug", debugLabels ? "1" : "0");
 }
 
@@ -729,9 +683,9 @@ function saveField(fieldId, markdown) {
 
         // 1. Update ALL .fe-editable elements on the page that match something in the map
         document.querySelectorAll(".fe-editable").forEach((el) => {
-          const elName = el.getAttribute("data-md-name");
-          const elScope = el.getAttribute("data-md-scope") || "field";
-          const elSection = el.getAttribute("data-md-section") || "";
+          const elName = getMetaAttr(el, "name");
+          const elScope = getMetaAttr(el, "scope") || "field";
+          const elSection = getMetaAttr(el, "section") || "";
           const elPageId = el.getAttribute("data-page");
           const elId = `${elPageId}:${elScope}:${elSection}:${elName}`;
 
@@ -752,16 +706,6 @@ function saveField(fieldId, markdown) {
           }
 
           if (html) {
-            if (elName === "title") {
-              console.log("[mfe] sync:title", {
-                elId,
-                elScope,
-                elSection,
-                elName,
-                matchedKey,
-                preview: html.slice(0, 80),
-              });
-            }
             originalHtml.set(el, html);
 
             // If this is the active editor, update TipTap state
@@ -1119,10 +1063,10 @@ async function openInlineEditor(el) {
   const payload = {
     element: el,
     markdownContent,
-    fieldName: el.getAttribute("data-md-name") || "unknown",
+    fieldName: getMetaAttr(el, "name") || "unknown",
     fieldType: el.getAttribute("data-field-type") || "tag",
-    fieldScope: el.getAttribute("data-md-scope") || "field",
-    fieldSection: el.getAttribute("data-md-section") || "",
+    fieldScope: getMetaAttr(el, "scope") || "field",
+    fieldSection: getMetaAttr(el, "section") || "",
     pageId: el.getAttribute("data-page") || "0",
   };
   return openInlineEditorFromPayload(payload);
@@ -1216,10 +1160,26 @@ function closeInlineEditor({
 
 function initInlineEditor() {
   document.body.classList.add("mfe-view-inline");
+  const cfg = window.MarkdownFrontEditorConfig || {};
+  if (cfg.debugShowSections) {
+    document.body.classList.add("mfe-debug-sections");
+    debugLabels = true;
+    document.body.classList.add("mfe-debug-labels");
+  }
+  if (cfg.debugShowLabels) {
+    document.body.classList.add("mfe-debug-labels");
+    debugLabels = true;
+  }
+  const labelStyle = cfg.labelStyle || "outside";
+  document.body.setAttribute("data-mfe-label-style", labelStyle);
 
   const editables = Array.from(document.querySelectorAll(".fe-editable"));
   editables.forEach((el) => {
     applyEditLabelAttributes(el);
+  });
+  const mfeHosts = Array.from(document.querySelectorAll("[data-mfe]"));
+  mfeHosts.forEach((el) => {
+    applyDataMfeLabelAttributes(el);
   });
 
   overlayEngine.init();
@@ -1241,7 +1201,7 @@ function initInlineEditor() {
         hit,
         overlayEngine,
         findTargetFromPoint,
-        findSectionFromText,
+        findSectionFromText: () => null,
         decodeMarkdownBase64,
         createVirtualTarget,
         pageId:
@@ -1266,25 +1226,30 @@ function initInlineEditor() {
     document.addEventListener("dblclick", dblclickHandler, true);
   }
 
+  if (!clickBlockHandler) {
+    clickBlockHandler = (e) => {
+      const editableHit = e.target?.closest?.(".fe-editable");
+      const linkHit = e.target?.closest?.("a");
+      if (editableHit && linkHit) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    document.addEventListener("click", clickBlockHandler, true);
+  }
+
   if (!hoverHandler) {
     hoverHandler = (e) => {
       if (hoverRaf) return;
       hoverRaf = window.requestAnimationFrame(() => {
         hoverRaf = null;
         const containerHit = e.target?.closest?.(
-          '.fe-editable[data-md-scope="field"][data-field-type="container"]',
+          '.fe-editable[data-md-scope="field"][data-field-type="container"], .fe-editable[data-mfe-scope="field"][data-field-type="container"]',
         );
         if (containerHit) {
-          const rect = getRectFromChildren(containerHit);
-          const name = containerHit.getAttribute("data-md-name") || "";
-          const key = `container:${name}`;
-          if (rect && lastHoverKey !== key) {
-            lastHoverKey = key;
-            overlayEngine.setLabel(getEditLabel("container", name, ""));
-            const inflated = inflateRect(rect, 32);
-            overlayEngine.showBox(inflated);
-            lastHoverRect = inflated;
-          }
+          overlayEngine.hide();
+          lastHoverKey = "";
+          lastHoverRect = null;
           return;
         }
 
@@ -1316,25 +1281,22 @@ function initInlineEditor() {
           return;
         }
 
-        const targetEl = e.target;
-        const fallbackSection = findSectionFromText(
-          targetEl?.textContent || "",
+        const dataMfeTarget = findDataMfeTargetFromPoint(
+          e.clientX,
+          e.clientY,
         );
-        if (fallbackSection?.scope === "section" && fallbackSection?.name) {
-          const host = targetEl?.closest
-            ? targetEl.closest("section") ||
-              targetEl.closest("article") ||
-              targetEl.closest("[data-mfe-section-host]") ||
-              targetEl
-            : null;
-          const rect = host ? host.getBoundingClientRect() : null;
-          const key = `section:${fallbackSection.name}`;
-          if (rect && lastHoverKey !== key) {
+        if (dataMfeTarget?.rect) {
+          const key = `${dataMfeTarget.scope}:${dataMfeTarget.section || ""}:${dataMfeTarget.name}`;
+          if (lastHoverKey !== key) {
             lastHoverKey = key;
             overlayEngine.setLabel(
-              getEditLabel("section", fallbackSection.name, ""),
+              getEditLabel(
+                dataMfeTarget.scope,
+                dataMfeTarget.name,
+                dataMfeTarget.section || "",
+              ),
             );
-            const inflated = inflateRect(rect, 16);
+            const inflated = inflateRect(dataMfeTarget.rect, 16);
             overlayEngine.showBox(inflated);
             lastHoverRect = inflated;
           }

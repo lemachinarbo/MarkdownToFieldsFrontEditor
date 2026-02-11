@@ -10,6 +10,15 @@ export function resolveDblclickAction({
   createVirtualTarget,
   pageId,
 }) {
+  const getMetaAttr = (el, name) => {
+    if (!el) return "";
+    return (
+      el.getAttribute(`data-mfe-${name}`) ||
+      el.getAttribute(`data-md-${name}`) ||
+      ""
+    );
+  };
+
   const findSectionNameForSubsection = (subName) => {
     const sections = window.MarkdownFrontEditorConfig?.sectionsIndex || [];
     for (const section of sections) {
@@ -66,7 +75,7 @@ export function resolveDblclickAction({
   const target = event.shiftKey && parentEditable ? parentEditable : hit;
 
   if (!event.ctrlKey && !event.metaKey) {
-    const targetScope = target.getAttribute("data-md-scope") || "field";
+    const targetScope = getMetaAttr(target, "scope") || "field";
     const targetType = target.getAttribute("data-field-type") || "tag";
 
     let fullscreenTarget = target;
@@ -75,10 +84,10 @@ export function resolveDblclickAction({
     } else {
       fullscreenTarget =
         target.closest(
-          '[data-md-scope="field"][data-field-type="container"]',
+          '[data-mfe-scope="field"][data-field-type="container"], [data-md-scope="field"][data-field-type="container"]',
         ) ||
-        target.closest('[data-md-scope="subsection"]') ||
-        target.closest('[data-md-scope="section"]') ||
+        target.closest('[data-mfe-scope="subsection"], [data-md-scope="subsection"]') ||
+        target.closest('[data-mfe-scope="section"], [data-md-scope="section"]') ||
         target;
     }
 
@@ -89,7 +98,7 @@ export function resolveDblclickAction({
     };
   }
 
-  const scope = target.getAttribute("data-md-scope") || "field";
+  const scope = getMetaAttr(target, "scope") || "field";
   const fieldType = target.getAttribute("data-field-type") || "tag";
   if (scope === "section" || scope === "subsection" || fieldType === "container") {
     return { action: "fullscreen", target, reason: "inline-ignored" };

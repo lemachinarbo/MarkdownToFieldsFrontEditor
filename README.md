@@ -25,6 +25,10 @@ It is NOT a standalone module. It only works **together** with MarkdownToFields.
 
 ## What's New
 
+**0.4.3**
+- New optional `data-mfe` hosts for precise section/subsection rollovers in complex templates.
+
+
 **0.4.2**
 - Marker labels now render with section/sub/field styles and stay non‑editable.
 - Unified markdown → editor rendering for inline/fullscreen (more consistent markers and output).
@@ -59,7 +63,6 @@ It is NOT a standalone module. It only works **together** with MarkdownToFields.
 
 In module settings:
 
-- **Editor View**: `fullscreen` or `inline`.
 - **Toolbar Buttons**: comma list like:
   `bold,italic,strike,paragraph,|,h1,h2,h3,|,ul,ol,blockquote,|,link,unlink,|,code,codeblock,clear,|,split`
 
@@ -78,8 +81,30 @@ If a section only contains subsections, it may not have its own content. In that
 
 - Rendering `->html` preserves the original MarkdownToFields HTML, so the editor can auto‑wrap fields and show **rollover** zones.
 - Rendering `->text` (or otherwise transforming the HTML) breaks that exact match, so **field rollovers won’t appear**.
-  - In this case, the **section** can still be edited via double‑click (fallback using the section index).
-  - Because there is no explicit section wrapper in the DOM, the hover/rollover can appear large or even not visible depending on the layout (for example, full‑width/absolute sections). We’ll improve this later.
+  - In this case, you can still define explicit section/subsection hosts in your template (see below).
+
+### Explicit Section/Subsection Hosts (Recommended for Complex Layouts)
+
+If your templates render fields individually (instead of raw section HTML), add a **lightweight host** to define the rollover bounds:
+
+**Section**
+```html
+<section data-mfe="hero">
+  ...
+</section>
+```
+
+**Subsection**
+```html
+<div data-mfe="hero:chirology">
+  ...
+</div>
+```
+
+Rules:
+- `data-mfe="hero"` → section host
+- `data-mfe="hero:chirology"` → subsection host (section `hero`, subsection `chirology`)
+- The closest `data-mfe` host controls the rollover bounds for that area.
 
 ## Requirements
 

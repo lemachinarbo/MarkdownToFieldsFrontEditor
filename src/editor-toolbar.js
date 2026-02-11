@@ -249,7 +249,6 @@ export function createToolbarButtons({
       `,
       action: () => {
         if (typeof onToggleMarkers === "function") {
-          console.log("[mfe] markers toggle clicked");
           onToggleMarkers();
         }
       },

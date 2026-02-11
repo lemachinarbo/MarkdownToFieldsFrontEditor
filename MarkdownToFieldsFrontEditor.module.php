@@ -26,10 +26,12 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
      */
     public static function getDefaultData() {
         return [
-            'view' => 'fullscreen',
             'toolbarButtons' => 'bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split,markers',
             'editableTargets' => ['tag', 'container', 'section', 'subsection'],
             'allowedImageExtensions' => 'jpg,jpeg,png,gif,webp,svg',
+            'debugShowSections' => false,
+            'debugShowLabels' => false,
+            'labelStyle' => 'outside',
         ];
     }
 
@@ -37,12 +39,12 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
      * Module configuration interface
      */
     public static function getModuleConfigInputfields(array $data) {
-        $inputfields = new \ProcessWire\InputfieldWrapper();
+        $inputfields = new InputfieldWrapper();
         
         $defaults = self::getDefaultData();
         $data = array_merge($defaults, $data);
 
-        $f = \ProcessWire\wire('modules')->get('InputfieldText');
+        $f = wire('modules')->get('InputfieldText');
         $f->name = 'toolbarButtons';
         $f->label = 'Toolbar Buttons';
         $f->description = 'Comma-separated list of toolbar buttons to show. Use "|" as a separator. Available: bold, italic, strike, code, codeblock, paragraph, h1-h6, ul, ol, blockquote, link, unlink, image, clear, split, markers. Save is always shown at the end.';
@@ -51,19 +53,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $f->columnWidth = 100;
         $inputfields->add($f);
 
-        $viewField = \ProcessWire\wire('modules')->get('InputfieldRadios');
-        $viewField->name = 'view';
-        $viewField->label = 'Editor View';
-        $viewField->description = 'Choose the editor view layout.';
-        $viewField->options = [
-            'fullscreen' => 'Fullscreen',
-            'inline' => 'Inline',
-        ];
-        $viewField->value = !empty($data['view']) ? $data['view'] : $defaults['view'];
-        $viewField->columnWidth = 100;
-        $inputfields->add($viewField);
-
-        $targetsField = \ProcessWire\wire('modules')->get('InputfieldCheckboxes');
+        $targetsField = wire('modules')->get('InputfieldCheckboxes');
         $targetsField->name = 'editableTargets';
         $targetsField->label = 'Editable Targets';
         $targetsField->description = 'Choose which content types get auto-wrapped for editing.';
@@ -78,6 +68,36 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $targetsField->notes = 'Defaults: tag, container, section, subsection';
         $targetsField->columnWidth = 100;
         $inputfields->add($targetsField);
+
+        $debugField = wire('modules')->get('InputfieldCheckbox');
+        $debugField->name = 'debugShowSections';
+        $debugField->label = 'Debug: Always Show Section Bounds';
+        $debugField->description = 'When enabled, section/subsection wrappers are outlined with labels in the frontend.';
+        $debugField->value = 1;
+        $debugField->checked = !empty($data['debugShowSections']);
+        $debugField->columnWidth = 100;
+        $inputfields->add($debugField);
+
+        $debugLabelsField = wire('modules')->get('InputfieldCheckbox');
+        $debugLabelsField->name = 'debugShowLabels';
+        $debugLabelsField->label = 'Debug: Show editable areas Labels';
+        $debugLabelsField->description = 'Shows scope labels like "section:hero" in the rollover helper.';
+        $debugLabelsField->value = 1;
+        $debugLabelsField->checked = !empty($data['debugShowLabels']);
+        $debugLabelsField->columnWidth = 100;
+        $inputfields->add($debugLabelsField);
+
+        $labelStyleField = wire('modules')->get('InputfieldRadios');
+        $labelStyleField->name = 'labelStyle';
+        $labelStyleField->label = 'Label Position';
+        $labelStyleField->description = 'Choose whether labels sit outside or inside the region.';
+        $labelStyleField->options = [
+            'outside' => 'Outside (top-right)',
+            'inside' => 'Inside (top-right)',
+        ];
+        $labelStyleField->value = !empty($data['labelStyle']) ? $data['labelStyle'] : $defaults['labelStyle'];
+        $labelStyleField->columnWidth = 100;
+        $inputfields->add($labelStyleField);
 
         return $inputfields;
     }
@@ -101,9 +121,11 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
     public function install() {
         $defaults = self::getDefaultData();
         $this->wire('modules')->saveConfig($this, [
-            'view' => $defaults['view'],
             'toolbarButtons' => $defaults['toolbarButtons'],
             'editableTargets' => $defaults['editableTargets'],
+            'debugShowSections' => $defaults['debugShowSections'],
+            'debugShowLabels' => $defaults['debugShowLabels'],
+            'labelStyle' => $defaults['labelStyle'],
         ]);
     }
 
@@ -172,23 +194,21 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 'isDefault' => true,
             ];
         }
-        $view = isset($this->view) && trim((string)$this->view) !== ''
-            ? (string)$this->view
-            : (string)$defaults['view'];
-
         $modulePath = $config->paths($this->className());
         $jsPath = $modulePath . 'dist/editor.bundle.js';
         $version = is_file($jsPath) ? (string) filemtime($jsPath) : (string) time();
         $sectionsIndex = $this->buildSectionsIndex($page);
 
         $frontConfig = [
-            'view' => $view,
             'toolbarButtons' => $toolbarButtons,
             'editableTargets' => $this->getEditableTargets(),
             'languages' => $langList,
             'currentLanguage' => $currentLangCode,
             'buildStamp' => $version,
             'sectionsIndex' => $sectionsIndex,
+            'debugShowSections' => (bool)($this->debugShowSections ?? false),
+            'debugLabels' => (bool)($this->debugShowLabels ?? false),
+            'labelStyle' => (string)($this->labelStyle ?? $defaults['labelStyle']),
         ];
         $configScript = "<script>window.MarkdownFrontEditorConfig=" . json_encode($frontConfig) . ";document.body.setAttribute('data-mfe-build','{$version}');</script>";
 
@@ -354,12 +374,15 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         $safeSectionB64 = htmlspecialchars(base64_encode($sectionMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                         
                         // Check if already wrapped
-                        if (stripos($rebuilt, 'data-md-name="' . $safeAttr . '" data-md-section="' . $safeSection . '"') !== false) continue;
+                        if (
+                            stripos($rebuilt, 'data-md-name="' . $safeAttr . '" data-md-section="' . $safeSection . '"') !== false ||
+                            stripos($rebuilt, 'data-mfe-name="' . $safeAttr . '" data-mfe-section="' . $safeSection . '"') !== false
+                        ) continue;
                         
                         // Find and wrap the field
                         $originalHtml = $f->html;
                         $displayHtml = $f->html;
-                        $wrapper = '<div class="fe-editable md-edit" data-md-scope="field" data-md-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-md-section-b64="' . $safeSectionB64 . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
+                        $wrapper = '<div class="fe-editable md-edit" data-md-scope="field" data-mfe-scope="field" data-md-name="' . $safeAttr . '" data-mfe-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-mfe-section="' . $safeSection . '" data-md-section-b64="' . $safeSectionB64 . '" data-mfe-section-b64="' . $safeSectionB64 . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
                         
                         // Find original HTML in output and replace with wrapped version
                         $pos = stripos($rebuilt, $originalHtml);
@@ -389,11 +412,14 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                                 $safeSubsectionB64 = htmlspecialchars(base64_encode($subsectionMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                                 
                                 // Check if already wrapped
-                                if (stripos($rebuilt, 'data-md-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-md-subsection="' . $safeSubsection . '"') !== false) continue;
+                                if (
+                                    stripos($rebuilt, 'data-md-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-md-subsection="' . $safeSubsection . '"') !== false ||
+                                    stripos($rebuilt, 'data-mfe-name="' . $safeAttr . '" data-mfe-section="' . $safeSection . '" data-mfe-subsection="' . $safeSubsection . '"') !== false
+                                ) continue;
                                 
                                 $originalHtml = $f->html;
                                 $displayHtml = $f->html;
-                                $wrapper = '<div class="fe-editable md-edit" data-md-scope="field" data-md-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-md-section-b64="' . $safeSectionB64 . '" data-md-subsection="' . $safeSubsection . '" data-md-subsection-b64="' . $safeSubsectionB64 . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
+                                $wrapper = '<div class="fe-editable md-edit" data-md-scope="field" data-mfe-scope="field" data-md-name="' . $safeAttr . '" data-mfe-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-mfe-section="' . $safeSection . '" data-md-section-b64="' . $safeSectionB64 . '" data-mfe-section-b64="' . $safeSectionB64 . '" data-md-subsection="' . $safeSubsection . '" data-mfe-subsection="' . $safeSubsection . '" data-md-subsection-b64="' . $safeSubsectionB64 . '" data-mfe-subsection-b64="' . $safeSubsectionB64 . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
                                 
                                 $pos = stripos($rebuilt, $originalHtml);
                                 if ($pos !== false) {
@@ -424,6 +450,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $sectionStart = '<!--mfe:section:start ' . $safeSection . '-->';
             $sectionEnd = '<!--mfe:section:end ' . $safeSection . '-->';
             $sectionHtmlWithMarkers = $sectionHtml;
+            $sectionMarkdown = (string)($section->markdown ?? '');
+            $safeSectionB64 = htmlspecialchars(base64_encode($sectionMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 
             if ($allowSubsectionMarkers && isset($section->subsections) && is_array($section->subsections)) {
                 foreach ($section->subsections as $subName => $subsection) {
@@ -431,14 +459,26 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                     $subHtml = (string)($subsection->html ?? '');
                     if ($subHtml === '') continue;
                     $safeSub = htmlspecialchars((string)$subName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                    $subMarkdown = (string)($subsection->markdown ?? '');
+                    $safeSubB64 = htmlspecialchars(base64_encode($subMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                     $subStart = '<!--mfe:subsection:start ' . $safeSection . '::' . $safeSub . '-->';
                     $subEnd = '<!--mfe:subsection:end ' . $safeSection . '::' . $safeSub . '-->';
+                    $subWrapped =
+                        '<div class="fe-editable md-edit mfe-subsection-wrap" data-md-scope="subsection" data-mfe-scope="subsection" data-md-name="' . $safeSub . '" data-mfe-name="' . $safeSub . '" data-md-section="' . $safeSection . '" data-mfe-section="' . $safeSection . '" data-md-section-b64="' . $safeSectionB64 . '" data-mfe-section-b64="' . $safeSectionB64 . '" data-field-type="container" data-page="' . $this->wire()->page->id . '" data-markdown-b64="' . $safeSubB64 . '">' .
+                        $subStart . $subHtml . $subEnd .
+                        '</div>';
+                    if (
+                        stripos($sectionHtmlWithMarkers, 'data-md-scope="subsection" data-md-name="' . $safeSub . '" data-md-section="' . $safeSection . '"') !== false ||
+                        stripos($sectionHtmlWithMarkers, 'data-mfe-scope="subsection" data-mfe-name="' . $safeSub . '" data-mfe-section="' . $safeSection . '"') !== false
+                    ) {
+                        continue;
+                    }
                     if (stripos($sectionHtmlWithMarkers, $subStart) === false) {
                         $pos = stripos($sectionHtmlWithMarkers, $subHtml);
                         if ($pos !== false) {
                             $sectionHtmlWithMarkers = substr_replace(
                                 $sectionHtmlWithMarkers,
-                                $subStart . $subHtml . $subEnd,
+                                $subWrapped,
                                 $pos,
                                 strlen($subHtml)
                             );
@@ -450,9 +490,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             if ($allowSectionMarkers && stripos($rebuilt, $sectionStart) === false) {
                 $pos = stripos($rebuilt, $sectionHtml);
                 if ($pos !== false) {
+                    $wrapped =
+                        '<div class="fe-editable md-edit mfe-section-wrap" data-md-scope="section" data-mfe-scope="section" data-md-name="' . $safeSection . '" data-mfe-name="' . $safeSection . '" data-field-type="container" data-page="' . $this->wire()->page->id . '" data-markdown-b64="' . $safeSectionB64 . '">' .
+                        $sectionStart . $sectionHtmlWithMarkers . $sectionEnd .
+                        '</div>';
                     $rebuilt = substr_replace(
                         $rebuilt,
-                        $sectionStart . $sectionHtmlWithMarkers . $sectionEnd,
+                        $wrapped,
                         $pos,
                         strlen($sectionHtml)
                     );
@@ -474,20 +518,34 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             foreach ($content->sectionsByName as $sectionName => $section) {
                 if (!$sectionName || !$section) continue;
                 $safeSection = htmlspecialchars((string)$sectionName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                $sectionMarkdown = (string)($section->markdown ?? '');
+                $safeSectionB64 = htmlspecialchars(base64_encode($sectionMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                 if (!isset($section->subsections) || !is_array($section->subsections)) continue;
                 foreach ($section->subsections as $subName => $subsection) {
                     if (!$subName || !$subsection) continue;
                     $subHtml = (string)($subsection->html ?? '');
                     if ($subHtml === '') continue;
                     $safeSub = htmlspecialchars((string)$subName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                    $subMarkdown = (string)($subsection->markdown ?? '');
+                    $safeSubB64 = htmlspecialchars(base64_encode($subMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                     $subStart = '<!--mfe:subsection:start ' . $safeSection . '::' . $safeSub . '-->';
                     $subEnd = '<!--mfe:subsection:end ' . $safeSection . '::' . $safeSub . '-->';
+                    $subWrapped =
+                        '<div class="fe-editable md-edit mfe-subsection-wrap" data-md-scope="subsection" data-mfe-scope="subsection" data-md-name="' . $safeSub . '" data-mfe-name="' . $safeSub . '" data-md-section="' . $safeSection . '" data-mfe-section="' . $safeSection . '" data-md-section-b64="' . $safeSectionB64 . '" data-mfe-section-b64="' . $safeSectionB64 . '" data-field-type="container" data-page="' . $this->wire()->page->id . '" data-markdown-b64="' . $safeSubB64 . '">' .
+                        $subStart . $subHtml . $subEnd .
+                        '</div>';
+                    if (
+                        stripos($rebuilt, 'data-md-scope="subsection" data-md-name="' . $safeSub . '" data-md-section="' . $safeSection . '"') !== false ||
+                        stripos($rebuilt, 'data-mfe-scope="subsection" data-mfe-name="' . $safeSub . '" data-mfe-section="' . $safeSection . '"') !== false
+                    ) {
+                        continue;
+                    }
                     if (stripos($rebuilt, $subStart) === false) {
                         $pos = stripos($rebuilt, $subHtml);
                         if ($pos !== false) {
                             $rebuilt = substr_replace(
                                 $rebuilt,
-                                $subStart . $subHtml . $subEnd,
+                                $subWrapped,
                                 $pos,
                                 strlen($subHtml)
                             );
@@ -570,7 +628,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         // Wrap in editable container with metadata
         $safeAttr = htmlspecialchars($fieldName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $safeType = htmlspecialchars($fieldType, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $out = "<div class=\"fe-editable md-edit\" data-md-scope=\"field\" data-md-name=\"{$safeAttr}\" data-field-type=\"{$safeType}\" data-page=\"{$page->id}\">";
+        $out = "<div class=\"fe-editable md-edit\" data-md-scope=\"field\" data-mfe-scope=\"field\" data-md-name=\"{$safeAttr}\" data-mfe-name=\"{$safeAttr}\" data-field-type=\"{$safeType}\" data-page=\"{$page->id}\">";
         $out .= $html;
         $out .= "</div>";
         $event->return = $out;

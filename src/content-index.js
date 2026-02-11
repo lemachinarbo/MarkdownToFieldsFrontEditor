@@ -161,9 +161,16 @@ function collectMarkerTargets(root = document.body) {
 function collectFieldTargets(root = document) {
   const fields = Array.from(root.querySelectorAll(".fe-editable"));
   return fields.map((el) => {
-    const scope = el.getAttribute("data-md-scope") || "field";
-    const name = el.getAttribute("data-md-name") || "";
-    const section = el.getAttribute("data-md-section") || "";
+    const scope =
+      el.getAttribute("data-mfe-scope") ||
+      el.getAttribute("data-md-scope") ||
+      "field";
+    const name =
+      el.getAttribute("data-mfe-name") || el.getAttribute("data-md-name") || "";
+    const section =
+      el.getAttribute("data-mfe-section") ||
+      el.getAttribute("data-md-section") ||
+      "";
     const fieldType = el.getAttribute("data-field-type") || "tag";
     return {
       id: `${scope}:${section ? `${section}:` : ""}${name}`,

@@ -62,6 +62,15 @@ let activeFieldSection = "";
 let activeFieldId = null;
 let activeRawMarkdown = null;
 let activeDisplayMarkdown = null;
+
+function getMetaAttr(el, name) {
+  if (!el) return "";
+  return (
+    el.getAttribute(`data-mfe-${name}`) ||
+    el.getAttribute(`data-md-${name}`) ||
+    ""
+  );
+}
 let breadcrumbsEl = null;
 let breadcrumbClickHandler = null;
 const statusManager = createStatusManager();
@@ -408,9 +417,6 @@ function toggleSplit() {
 
 function toggleMarkers() {
   document.body.classList.toggle("mfe-hide-markers");
-  console.log("[mfe] markers toggled", {
-    hidden: document.body.classList.contains("mfe-hide-markers"),
-  });
 }
 
 function openSplit() {
@@ -834,8 +840,7 @@ function clearExtraContentHighlights() {}
 function buildBreadcrumbLabel() {
   const scope = activeFieldScope || "field";
   const name = activeFieldName || "Untitled";
-  const section =
-    activeFieldSection || activeTarget?.getAttribute?.("data-md-section") || "";
+  const section = activeFieldSection || getMetaAttr(activeTarget, "section") || "";
   const type = activeFieldType || "tag";
 
   if (scope === "section") {
@@ -855,10 +860,7 @@ function buildBreadcrumbParts() {
   const sectionFromSubsection =
     scope === "subsection" ? findSectionNameForSubsection(name) : "";
   const section =
-    sectionFromSubsection ||
-    activeFieldSection ||
-    activeTarget?.getAttribute?.("data-md-section") ||
-    "";
+    sectionFromSubsection || activeFieldSection || getMetaAttr(activeTarget, "section") || "";
   const type = activeFieldType || "";
   const isContainer = type === "container";
   const sectionName =
@@ -897,7 +899,7 @@ function buildBreadcrumbItems() {
   const currentTarget = getBreadcrumbsCurrentTarget();
   const sectionName =
     activeFieldSection ||
-    activeTarget?.getAttribute?.("data-md-section") ||
+    getMetaAttr(activeTarget, "section") ||
     (activeFieldScope === "section" ? activeFieldName : "") ||
     (activeFieldScope === "subsection"
       ? findSectionNameForSubsection(activeFieldName)
@@ -940,7 +942,7 @@ function renderBreadcrumbs() {
   const currentTarget = getBreadcrumbsCurrentTarget();
   const sectionName =
     activeFieldSection ||
-    activeTarget?.getAttribute?.("data-md-section") ||
+    getMetaAttr(activeTarget, "section") ||
     (activeFieldScope === "section" ? activeFieldName : "") ||
     (activeFieldScope === "subsection"
       ? findSectionNameForSubsection(activeFieldName)
@@ -1088,7 +1090,7 @@ function handleBreadcrumbClick(e) {
       ? findSectionNameForSubsection(activeFieldName)
       : "") ||
     activeFieldSection ||
-    activeTarget.getAttribute("data-md-section") ||
+    getMetaAttr(activeTarget, "section") ||
     (activeFieldScope === "section" ? activeFieldName : "");
   const fieldName = activeFieldName || "";
   let id = "";
@@ -1122,12 +1124,15 @@ function handleBreadcrumbClick(e) {
       activeTarget.getAttribute("data-page") || "0",
     );
     virtual.setAttribute("data-md-scope", indexed.scope || type);
+    virtual.setAttribute("data-mfe-scope", indexed.scope || type);
     virtual.setAttribute("data-md-name", indexed.name || fieldName);
+    virtual.setAttribute("data-mfe-name", indexed.name || fieldName);
     if (indexed.scope === "section") {
       virtual.setAttribute("data-field-type", "container");
     }
     if (indexed.section) {
       virtual.setAttribute("data-md-section", indexed.section);
+      virtual.setAttribute("data-mfe-section", indexed.section);
     }
     virtual.setAttribute("data-markdown-b64", indexed.markdownB64);
     openFullscreenEditorForElement(virtual);
@@ -1144,7 +1149,9 @@ function handleBreadcrumbClick(e) {
         activeTarget.getAttribute("data-page") || "0",
       );
       virtual.setAttribute("data-md-scope", "section");
+      virtual.setAttribute("data-mfe-scope", "section");
       virtual.setAttribute("data-md-name", sectionName);
+      virtual.setAttribute("data-mfe-name", sectionName);
       virtual.setAttribute("data-field-type", "container");
       virtual.setAttribute("data-markdown-b64", entry.markdownB64 || "");
       openFullscreenEditorForElement(virtual);
@@ -1165,9 +1172,12 @@ function handleBreadcrumbClick(e) {
         activeTarget.getAttribute("data-page") || "0",
       );
       virtual.setAttribute("data-md-scope", "subsection");
+      virtual.setAttribute("data-mfe-scope", "subsection");
       virtual.setAttribute("data-md-name", fieldName);
+      virtual.setAttribute("data-mfe-name", fieldName);
       virtual.setAttribute("data-field-type", "container");
       virtual.setAttribute("data-md-section", sectionName);
+      virtual.setAttribute("data-mfe-section", sectionName);
       virtual.setAttribute("data-markdown-b64", entry.markdownB64 || "");
       openFullscreenEditorForElement(virtual);
       return;
@@ -1253,9 +1263,9 @@ function openFullscreenEditorFromPayload(payload) {
             let matchedCount = 0;
             document.querySelectorAll(".fe-editable").forEach((el) => {
               const elPageId = el.getAttribute("data-page");
-              const elName = el.getAttribute("data-md-name");
-              const elScope = el.getAttribute("data-md-scope") || "field";
-              const elSection = el.getAttribute("data-md-section") || "";
+              const elName = getMetaAttr(el, "name");
+              const elScope = getMetaAttr(el, "scope") || "field";
+              const elSection = getMetaAttr(el, "section") || "";
               const elId = `${elPageId}:${elScope}:${elSection}:${elName}`;
 
               let html =
@@ -1278,16 +1288,6 @@ function openFullscreenEditorFromPayload(payload) {
               }
 
               if (html) {
-                if (elName === "title") {
-                  console.log("[mfe] sync:title", {
-                    elId,
-                    elScope,
-                    elSection,
-                    elName,
-                    matchedKey,
-                    preview: html.slice(0, 80),
-                  });
-                }
                 el.innerHTML = html;
                 matchedCount++;
 
@@ -1347,10 +1347,10 @@ function getPayloadFromElement(target) {
   return {
     element: target,
     markdownContent,
-    fieldName: target.getAttribute("data-md-name") || "unknown",
+    fieldName: getMetaAttr(target, "name") || "unknown",
     fieldType: target.getAttribute("data-field-type") || "tag",
-    fieldScope: target.getAttribute("data-md-scope") || "field",
-    fieldSection: target.getAttribute("data-md-section") || "",
+    fieldScope: getMetaAttr(target, "scope") || "field",
+    fieldSection: getMetaAttr(target, "section") || "",
     pageId: target.getAttribute("data-page") || "0",
   };
 }
