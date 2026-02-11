@@ -52,6 +52,7 @@ let clickBlockHandler = null;
 let hoverRaf = null;
 let lastHoverKey = "";
 let lastHoverRect = null;
+let pendingLinkNavigation = null;
 let debugLabels =
   window.MarkdownFrontEditorConfig?.debugLabels ||
   window.localStorage?.getItem("mfeDebugLabels") === "1";
@@ -439,6 +440,32 @@ function inflateRect(rect, padding = 48) {
 
 function isPointInRect(x, y, rect) {
   return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+function isInEditableZone(node) {
+  if (!node?.closest) return false;
+  return Boolean(node.closest(".fe-editable") || node.closest("[data-mfe]"));
+}
+
+function clearPendingLinkNavigation() {
+  if (!pendingLinkNavigation) return;
+  window.clearTimeout(pendingLinkNavigation.timer);
+  pendingLinkNavigation = null;
+}
+
+function navigateFromLink(link, clickEvent) {
+  const href = link.getAttribute("href");
+  if (!href || href === "#") return;
+  const target = (link.getAttribute("target") || "").toLowerCase();
+  if (target === "_blank") {
+    window.open(href, "_blank", "noopener");
+    return;
+  }
+  if (clickEvent?.metaKey || clickEvent?.ctrlKey) {
+    window.open(href, "_blank");
+    return;
+  }
+  window.location.assign(href);
 }
 
 function buildFieldId({ pageId, scope, section, name }) {
@@ -1403,6 +1430,7 @@ function initInlineEditor() {
       if (document.body.classList.contains("mfe-view-fullscreen")) {
         return;
       }
+      clearPendingLinkNavigation();
       const hit = e.target?.closest?.(".fe-editable");
       if (!hit) {
         // no hit
@@ -1442,12 +1470,33 @@ function initInlineEditor() {
 
   if (!clickBlockHandler) {
     clickBlockHandler = (e) => {
-      const editableHit = e.target?.closest?.(".fe-editable");
       const linkHit = e.target?.closest?.("a");
-      if (editableHit && linkHit) {
+      if (!linkHit) return;
+      if (!isInEditableZone(e.target)) return;
+      if (e.button !== 0) return;
+      if (e.altKey || e.shiftKey) return;
+      if (linkHit.hasAttribute("download")) return;
+
+      // First click: delay navigation briefly so a second click can become dblclick edit.
+      if (e.detail === 1) {
+        clearPendingLinkNavigation();
         e.preventDefault();
-        e.stopPropagation();
+        pendingLinkNavigation = {
+          link: linkHit,
+          timer: window.setTimeout(() => {
+            const nav = pendingLinkNavigation;
+            pendingLinkNavigation = null;
+            if (!nav) return;
+            navigateFromLink(nav.link, e);
+          }, 260),
+        };
+        return;
       }
+
+      // Subsequent click in a dblclick sequence: always cancel link navigation.
+      clearPendingLinkNavigation();
+      e.preventDefault();
+      e.stopPropagation();
     };
     document.addEventListener("click", clickBlockHandler, true);
   }
