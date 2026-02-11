@@ -471,6 +471,7 @@ function createEditorInstance(host, fieldType, fieldName) {
       StarterKit.configure({
         codeBlock: false,
         link: false,
+        underline: false,
       }),
       Underline,
       Superscript,

@@ -14,7 +14,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
             'summary' => 'Frontend editor for MarkdownToFields.',
-            'version' =>  '0.4.2',
+            'version' =>  '0.4.3',
             'autoload' => true,
             'singular' => true,
             'requires' => ['MarkdownToFields'],
