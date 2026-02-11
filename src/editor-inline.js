@@ -70,12 +70,80 @@ const fieldElements = new Map();
 function parseDataMfe(value) {
   const raw = (value || "").trim();
   if (!raw) return null;
-  const parts = raw.split(":").map((p) => p.trim()).filter(Boolean);
-  if (parts.length === 1) {
+  const lower = raw.toLowerCase();
+
+  const splitPath = (path) =>
+    (path || "")
+      .split("/")
+      .map((p) => p.trim())
+      .filter(Boolean);
+
+  if (lower.startsWith("field:")) {
+    const parts = splitPath(raw.slice(6));
+    if (parts.length === 1) {
+      return { scope: "field", name: parts[0], section: "", subsection: "" };
+    }
+    if (parts.length === 2) {
+      return {
+        scope: "field",
+        section: parts[0],
+        name: parts[1],
+        subsection: "",
+      };
+    }
+    if (parts.length >= 3) {
+      return {
+        scope: "field",
+        section: parts[0],
+        subsection: parts[1],
+        name: parts[2],
+      };
+    }
+    return null;
+  }
+
+  if (lower.startsWith("section:")) {
+    const parts = splitPath(raw.slice(8));
+    if (!parts.length) return null;
     return { scope: "section", name: parts[0], section: "" };
   }
-  if (parts.length >= 2) {
+
+  if (lower.startsWith("sub:") || lower.startsWith("subsection:")) {
+    const path = lower.startsWith("sub:") ? raw.slice(4) : raw.slice(11);
+    const parts = splitPath(path.replace(/:/g, "/"));
+    if (parts.length < 2) return null;
     return { scope: "subsection", section: parts[0], name: parts[1] };
+  }
+
+  // New shorthand for field-within-section
+  // "topics" => auto resolve (field first, then section)
+  // "foo/topics" => auto resolve (field in section first, then subsection)
+  const pathParts = splitPath(raw);
+  if (pathParts.length === 2) {
+    return {
+      scope: "auto",
+      section: pathParts[0],
+      name: pathParts[1],
+      subsection: "",
+    };
+  }
+  if (pathParts.length >= 3) {
+    return {
+      scope: "field",
+      section: pathParts[0],
+      subsection: pathParts[1],
+      name: pathParts[2],
+    };
+  }
+
+  // Backward compatibility with previous syntax:
+  // "hero" => section, "hero:chirology" => subsection
+  const legacy = raw.split(":").map((p) => p.trim()).filter(Boolean);
+  if (legacy.length === 1) {
+    return { scope: "auto", name: legacy[0], section: "", subsection: "" };
+  }
+  if (legacy.length >= 2) {
+    return { scope: "subsection", section: legacy[0], name: legacy[1] };
   }
   return null;
 }
@@ -92,6 +160,124 @@ function getSubsectionEntryByName(sectionName, subName) {
   return subs.find((s) => s?.name === subName) || null;
 }
 
+function getFieldsIndex() {
+  const cfg = window.MarkdownFrontEditorConfig || {};
+  return Array.isArray(cfg.fieldsIndex) ? cfg.fieldsIndex : [];
+}
+
+function findFieldEntry({ name, section = "", subsection = "" }) {
+  const fields = getFieldsIndex().filter((f) => (f?.name || "") === (name || ""));
+  if (!fields.length) return null;
+
+  let matches = fields;
+  if (section) {
+    matches = matches.filter((f) => (f?.section || "") === section);
+  }
+  if (subsection) {
+    matches = matches.filter((f) => (f?.subsection || "") === subsection);
+  }
+  if (matches.length) return matches[0];
+
+  if (!section && !subsection) {
+    const topLevel = fields.find((f) => !(f?.section || ""));
+    if (topLevel) return topLevel;
+  }
+  return fields[0];
+}
+
+function resolveDataMfe(parsed) {
+  if (!parsed) return null;
+
+  if (parsed.scope === "section") {
+    const entry = getSectionEntryByName(parsed.name);
+    return {
+      scope: "section",
+      name: parsed.name,
+      section: "",
+      subsection: "",
+      b64: entry?.markdownB64 || "",
+    };
+  }
+
+  if (parsed.scope === "subsection") {
+    const subEntry = getSubsectionEntryByName(parsed.section, parsed.name);
+    return {
+      scope: "subsection",
+      name: parsed.name,
+      section: parsed.section || "",
+      subsection: "",
+      b64: subEntry?.markdownB64 || "",
+    };
+  }
+
+  if (parsed.scope === "field") {
+    const fieldEntry = findFieldEntry({
+      name: parsed.name,
+      section: parsed.section || "",
+      subsection: parsed.subsection || "",
+    });
+    if (!fieldEntry) return null;
+    return {
+      scope: "field",
+      name: fieldEntry.name || "",
+      section: fieldEntry.section || "",
+      subsection: fieldEntry.subsection || "",
+      b64: fieldEntry.markdownB64 || "",
+      fieldType:
+        fieldEntry.kind === "container" || fieldEntry.type === "container"
+          ? "container"
+          : "tag",
+    };
+  }
+
+  if (parsed.scope === "auto") {
+    const fieldEntry = findFieldEntry({
+      name: parsed.name,
+      section: parsed.section || "",
+      subsection: parsed.subsection || "",
+    });
+    if (fieldEntry) {
+      return {
+        scope: "field",
+        name: fieldEntry.name || "",
+        section: fieldEntry.section || "",
+        subsection: fieldEntry.subsection || "",
+        b64: fieldEntry.markdownB64 || "",
+        fieldType:
+          fieldEntry.kind === "container" || fieldEntry.type === "container"
+            ? "container"
+            : "tag",
+      };
+    }
+
+    if (parsed.section) {
+      const subEntry = getSubsectionEntryByName(parsed.section, parsed.name);
+      if (subEntry) {
+        return {
+          scope: "subsection",
+          name: parsed.name,
+          section: parsed.section || "",
+          subsection: "",
+          b64: subEntry.markdownB64 || "",
+        };
+      }
+    }
+
+    const secEntry = getSectionEntryByName(parsed.name);
+    if (secEntry) {
+      return {
+        scope: "section",
+        name: parsed.name,
+        section: "",
+        subsection: "",
+        b64: secEntry.markdownB64 || "",
+      };
+    }
+  }
+
+  return null;
+}
+
 function findDataMfeTargetFromPoint(x, y) {
   const stack =
     typeof document.elementsFromPoint === "function"
@@ -101,24 +287,16 @@ function findDataMfeTargetFromPoint(x, y) {
   const host = hit?.closest ? hit.closest("[data-mfe]") : null;
   if (!host) return null;
   const parsed = parseDataMfe(host.getAttribute("data-mfe"));
-  if (!parsed) return null;
+  const resolved = resolveDataMfe(parsed);
+  if (!resolved) return null;
   const rect = host.getBoundingClientRect();
-  if (parsed.scope === "section") {
-    const entry = getSectionEntryByName(parsed.name);
-    return {
-      scope: "section",
-      name: parsed.name,
-      section: "",
-      b64: entry?.markdownB64 || "",
-      rect,
-    };
-  }
-  const subEntry = getSubsectionEntryByName(parsed.section, parsed.name);
   return {
-    scope: "subsection",
-    name: parsed.name,
-    section: parsed.section || "",
-    b64: subEntry?.markdownB64 || "",
+    scope: resolved.scope,
+    name: resolved.name,
+    section: resolved.section || "",
+    subsection: resolved.subsection || "",
+    b64: resolved.b64 || "",
+    fieldType: resolved.fieldType || "",
     rect,
   };
 }
@@ -134,7 +312,15 @@ function normalizeText(value) {
   return (value || "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-function createVirtualTarget({ pageId, scope, name, section = "", markdown }) {
+function createVirtualTarget({
+  pageId,
+  scope,
+  name,
+  section = "",
+  subsection = "",
+  fieldType = "",
+  markdown,
+}) {
   const el = document.createElement("div");
   el.className = "fe-editable md-edit mfe-virtual";
   el.setAttribute("data-page", pageId);
@@ -142,9 +328,16 @@ function createVirtualTarget({ pageId, scope, name, section = "", markdown }) {
   el.setAttribute("data-mfe-scope", scope);
   el.setAttribute("data-md-name", name);
   el.setAttribute("data-mfe-name", name);
+  if (fieldType) {
+    el.setAttribute("data-field-type", fieldType);
+  }
   if (section) {
     el.setAttribute("data-md-section", section);
     el.setAttribute("data-mfe-section", section);
+  }
+  if (subsection) {
+    el.setAttribute("data-md-subsection", subsection);
+    el.setAttribute("data-mfe-subsection", subsection);
   }
   if (markdown !== undefined) {
     el.setAttribute(
@@ -155,13 +348,16 @@ function createVirtualTarget({ pageId, scope, name, section = "", markdown }) {
   return el;
 }
 
-function getEditLabel(scope, name, section) {
+function getEditLabel(scope, name, section, subsection = "") {
   if (!debugLabels) return "Double click to edit";
   if (scope === "subsection") {
     return `subsection:${section}:${name}`;
   }
   if (scope === "section") {
     return `section:${name}`;
+  }
+  if (scope === "field" && section && subsection) {
+    return `field:${section}:${subsection}:${name}`;
   }
   if (section) {
     return `${scope}:${section}:${name}`;
@@ -177,7 +373,8 @@ function applyEditLabelAttributes(el) {
   const scope = getMetaAttr(el, "scope") || "field";
   const name = getMetaAttr(el, "name") || "";
   const section = getMetaAttr(el, "section") || "";
-  const label = getEditLabel(scope, name, section);
+  const subsection = getMetaAttr(el, "subsection") || "";
+  const label = getEditLabel(scope, name, section, subsection);
   el.setAttribute("data-mfe-label", label);
   el.setAttribute("data-mfe-label-debug", debugLabels ? "1" : "0");
 
@@ -204,8 +401,14 @@ function getMetaAttr(el, name) {
 function applyDataMfeLabelAttributes(el) {
   if (!el) return;
   const parsed = parseDataMfe(el.getAttribute("data-mfe"));
-  if (!parsed) return;
-  const label = getEditLabel(parsed.scope, parsed.name, parsed.section || "");
+  const resolved = resolveDataMfe(parsed);
+  if (!resolved) return;
+  const label = getEditLabel(
+    resolved.scope,
+    resolved.name,
+    resolved.section || "",
+    resolved.subsection || "",
+  );
   el.setAttribute("data-mfe-label", label);
   el.setAttribute("data-mfe-label-debug", debugLabels ? "1" : "0");
 }
@@ -673,6 +876,11 @@ function saveField(fieldId, markdown) {
           window.MarkdownFrontEditorConfig || {};
         window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;
       }
+      if (data.fieldsIndex) {
+        window.MarkdownFrontEditorConfig =
+          window.MarkdownFrontEditorConfig || {};
+        window.MarkdownFrontEditorConfig.fieldsIndex = data.fieldsIndex;
+      }
 
       if (data.html || data.htmlMap) {
         const htmlMap =
@@ -812,6 +1020,11 @@ function saveBatch(pageId, fields) {
         window.MarkdownFrontEditorConfig =
           window.MarkdownFrontEditorConfig || {};
         window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;
+      }
+      if (data.fieldsIndex) {
+        window.MarkdownFrontEditorConfig =
+          window.MarkdownFrontEditorConfig || {};
+        window.MarkdownFrontEditorConfig.fieldsIndex = data.fieldsIndex;
       }
 
       const htmlMap =
@@ -1265,7 +1478,7 @@ function initInlineEditor() {
             e.clientY,
           );
         if (fallbackSub?.rect) {
-          const key = `${fallbackSub.scope}:${fallbackSub.section || ""}:${fallbackSub.name}`;
+          const key = `${fallbackSub.scope}:${fallbackSub.section || ""}:${fallbackSub.subsection || ""}:${fallbackSub.name}`;
           if (lastHoverKey !== key) {
             lastHoverKey = key;
             overlayEngine.setLabel(
@@ -1273,6 +1486,7 @@ function initInlineEditor() {
                 fallbackSub.scope,
                 fallbackSub.name,
                 fallbackSub.section || "",
+                fallbackSub.subsection || "",
               ),
             );
             const inflated = inflateRect(fallbackSub.rect, 16);
@@ -1287,7 +1501,7 @@ function initInlineEditor() {
           e.clientY,
         );
         if (dataMfeTarget?.rect) {
-          const key = `${dataMfeTarget.scope}:${dataMfeTarget.section || ""}:${dataMfeTarget.name}`;
+          const key = `${dataMfeTarget.scope}:${dataMfeTarget.section || ""}:${dataMfeTarget.subsection || ""}:${dataMfeTarget.name}`;
           if (lastHoverKey !== key) {
             lastHoverKey = key;
             overlayEngine.setLabel(
@@ -1295,6 +1509,7 @@ function initInlineEditor() {
                 dataMfeTarget.scope,
                 dataMfeTarget.name,
                 dataMfeTarget.section || "",
+                dataMfeTarget.subsection || "",
               ),
             );
             const inflated = inflateRect(dataMfeTarget.rect, 16);

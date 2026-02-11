@@ -65,6 +65,8 @@ export function resolveDblclickAction({
       scope: fallback.scope,
       name: fallback.name,
       section: fallbackSection || "",
+      subsection: fallback?.subsection || "",
+      fieldType: fallback?.fieldType || "",
       markdown: decodeMarkdownBase64(fallbackB64),
     });
 

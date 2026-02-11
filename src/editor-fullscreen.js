@@ -1322,6 +1322,11 @@ function openFullscreenEditorFromPayload(payload) {
               window.MarkdownFrontEditorConfig.sectionsIndex =
                 data.sectionsIndex;
             }
+            if (data.fieldsIndex) {
+              window.MarkdownFrontEditorConfig =
+                window.MarkdownFrontEditorConfig || {};
+              window.MarkdownFrontEditorConfig.fieldsIndex = data.fieldsIndex;
+            }
 
             // 1. Update EVERY .fe-editable element on the page
             let matchedCount = 0;

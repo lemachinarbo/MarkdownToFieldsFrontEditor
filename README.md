@@ -83,9 +83,9 @@ If a section only contains subsections, it may not have its own content. In that
 - Rendering `->text` (or otherwise transforming the HTML) breaks that exact match, so **field rollovers won’t appear**.
   - In this case, you can still define explicit section/subsection hosts in your template (see below).
 
-### Explicit Section/Subsection Hosts (Recommended for Complex Layouts)
+### Custom editable zones
 
-If your templates render fields individually (instead of raw section HTML), add a **lightweight host** to define the rollover bounds:
+If your templates render fields individually (instead of raw section HTML), add a **lightweight host** to define a editable zone (aka the zone that appears when you rollover):
 
 **Section**
 ```html
@@ -96,15 +96,29 @@ If your templates render fields individually (instead of raw section HTML), add 
 
 **Subsection**
 ```html
-<div data-mfe="hero:chirology">
+<div data-mfe="hero:left">
   ...
 </div>
 ```
 
+**Field (top-level or sectioned)**
+```html
+<div data-mfe="title">...</div>
+<div data-mfe="hero/title">...</div>
+```
+
 Rules:
 - `data-mfe="hero"` → section host
-- `data-mfe="hero:chirology"` → subsection host (section `hero`, subsection `chirology`)
+- `data-mfe="hero:left"` → subsection host (section `hero`, subsection `left`)
+- `data-mfe="title"` → field host (auto-resolves field first, then section fallback)
+- `data-mfe="hero/title"` → field host inside section `hero`
+- Explicit forms are also supported: `field:title`, `field:hero/title`, `section:hero`, `sub:hero/left`
 - The closest `data-mfe` host controls the rollover bounds for that area.
+
+
+#### Clicking the zones
+
+Depending on your layout, when double clicking a clickable zone you can click a real link therefore you will be redirected to anopther page. In those cases use ctrl + click.
 
 ## Requirements
 

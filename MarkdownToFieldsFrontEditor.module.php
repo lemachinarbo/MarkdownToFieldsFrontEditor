@@ -198,6 +198,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $jsPath = $modulePath . 'dist/editor.bundle.js';
         $version = is_file($jsPath) ? (string) filemtime($jsPath) : (string) time();
         $sectionsIndex = $this->buildSectionsIndex($page);
+        $fieldsIndex = $this->buildFieldsIndex($page);
 
         $frontConfig = [
             'toolbarButtons' => $toolbarButtons,
@@ -206,6 +207,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'currentLanguage' => $currentLangCode,
             'buildStamp' => $version,
             'sectionsIndex' => $sectionsIndex,
+            'fieldsIndex' => $fieldsIndex,
             'debugShowSections' => (bool)($this->debugShowSections ?? false),
             'debugLabels' => (bool)($this->debugShowLabels ?? false),
             'labelStyle' => (string)($this->labelStyle ?? $defaults['labelStyle']),
@@ -995,6 +997,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 'html' => $finalHtmlMap, 
                 'htmlMap' => $finalHtmlMap,
                 'sectionsIndex' => $this->buildSectionsIndex($page),
+                'fieldsIndex' => $this->buildFieldsIndex($page),
                 'skipped' => $skipped ?? []
             ]);
             exit;
@@ -1138,6 +1141,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'html' => $canonicalHtml, // For fallback
             'htmlMap' => $allHtml,    // Primary source for syncing
             'sectionsIndex' => $this->buildSectionsIndex($page),
+            'fieldsIndex' => $this->buildFieldsIndex($page),
             'fieldId' => $requestedFieldId
         ]);
         exit;
@@ -1253,6 +1257,82 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
 
         return $sections;
+    }
+
+    protected function buildFieldsIndex(?\ProcessWire\Page $page): array {
+        if (!$page || !$page->id || !method_exists($page, 'content')) return [];
+        try {
+            $content = $page->content();
+        } catch (\Throwable $e) {
+            return [];
+        }
+
+        $fields = [];
+        $pushField = function (string $name, string $section, string $subsection, $field) use (&$fields) {
+            if ($name === '' || !$field) return;
+            $markdown = (string)($field->markdown ?? '');
+            $fields[] = [
+                'name' => $name,
+                'section' => $section,
+                'subsection' => $subsection,
+                'type' => $this->resolveFieldType($field),
+                'kind' => $this->resolveFieldKind($field),
+                'markdownB64' => base64_encode($markdown),
+            ];
+        };
+
+        if (isset($content->sectionsByName) && is_array($content->sectionsByName)) {
+            foreach ($content->sectionsByName as $sectionName => $section) {
+                if (!$section) continue;
+                $sectionName = (string)$sectionName;
+                if (isset($section->fields) && is_array($section->fields)) {
+                    foreach ($section->fields as $fieldName => $field) {
+                        $pushField((string)$fieldName, $sectionName, '', $field);
+                    }
+                }
+                if (isset($section->subsections) && is_array($section->subsections)) {
+                    foreach ($section->subsections as $subName => $subsection) {
+                        if (!$subsection) continue;
+                        $subName = (string)$subName;
+                        if (isset($subsection->fields) && is_array($subsection->fields)) {
+                            foreach ($subsection->fields as $fieldName => $field) {
+                                $pushField((string)$fieldName, $sectionName, $subName, $field);
+                            }
+                        }
+                    }
+                }
+            }
+            return $fields;
+        }
+
+        if (isset($content->sections) && is_array($content->sections)) {
+            foreach ($content->sections as $section) {
+                if (!$section) continue;
+                $sectionName = (string)($section->name ?? '');
+                if ($sectionName === '') continue;
+                if (isset($section->fields) && is_array($section->fields)) {
+                    foreach ($section->fields as $fieldName => $field) {
+                        $pushField((string)$fieldName, $sectionName, '', $field);
+                    }
+                }
+                if (isset($section->subsections) && is_array($section->subsections)) {
+                    foreach ($section->subsections as $subName => $subsection) {
+                        if (!$subsection) continue;
+                        $subName = is_string($subName)
+                            ? (string)$subName
+                            : (string)($subsection->name ?? '');
+                        if ($subName === '') continue;
+                        if (isset($subsection->fields) && is_array($subsection->fields)) {
+                            foreach ($subsection->fields as $fieldName => $field) {
+                                $pushField((string)$fieldName, $sectionName, $subName, $field);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return $fields;
     }
 
     protected function findScopedMarkdown($content, string $scope, string $name, string $sectionName = ''): ?string {
