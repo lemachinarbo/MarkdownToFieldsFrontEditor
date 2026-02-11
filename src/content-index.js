@@ -171,12 +171,20 @@ function collectFieldTargets(root = document) {
       el.getAttribute("data-mfe-section") ||
       el.getAttribute("data-md-section") ||
       "";
+    const subsection =
+      el.getAttribute("data-mfe-subsection") ||
+      el.getAttribute("data-md-subsection") ||
+      "";
     const fieldType = el.getAttribute("data-field-type") || "tag";
+    const primaryId = subsection
+      ? `subsection:${section}:${subsection}:${name}`
+      : `${scope}:${section ? `${section}:` : ""}${name}`;
     return {
-      id: `${scope}:${section ? `${section}:` : ""}${name}`,
+      id: primaryId,
       scope,
       name,
       section,
+      subsection,
       fieldType,
       element: el,
       markdownB64: el.getAttribute("data-markdown-b64") || "",
@@ -192,6 +200,20 @@ export function buildContentIndex({ root = document } = {}) {
   targets.forEach((target) => {
     if (target?.id) {
       byId.set(target.id, target);
+      if (target.scope === "field" && target.section && target.name) {
+        byId.set(`field:${target.section}:${target.name}`, target);
+      }
+      if (
+        target.scope === "field" &&
+        target.section &&
+        target.subsection &&
+        target.name
+      ) {
+        byId.set(
+          `subsection:${target.section}:${target.subsection}:${target.name}`,
+          target,
+        );
+      }
     }
   });
   return { targets, byId };

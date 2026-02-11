@@ -97,6 +97,18 @@ function updateBreadcrumbs() {
 
       if ((isLink || isBaseCurrentButNotLast) && baseClickHandler) {
         crumb.setAttribute("data-breadcrumb-target", item.target || "");
+        if (item.contentId) {
+          crumb.setAttribute("data-breadcrumb-id", item.contentId);
+        }
+        if (item.section) {
+          crumb.setAttribute("data-breadcrumb-section", item.section);
+        }
+        if (item.subsection) {
+          crumb.setAttribute("data-breadcrumb-subsection", item.subsection);
+        }
+        if (item.name) {
+          crumb.setAttribute("data-breadcrumb-name", item.name);
+        }
         crumb.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -256,6 +268,14 @@ export function closeWindow(winOrId) {
   } else {
     updateBreadcrumbs();
   }
+}
+
+export function updateWindowById(id, updates = {}) {
+  if (!id) return;
+  const index = windowStack.findIndex((w) => w.id === id);
+  if (index === -1) return;
+  Object.assign(windowStack[index], updates);
+  updateBreadcrumbs();
 }
 
 /**

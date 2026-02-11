@@ -38,7 +38,12 @@ import {
   getSubsectionEntry,
 } from "./content-index.js";
 import { createImagePicker } from "./image-picker.js";
-import { openWindow, closeTopWindow, closeWindow } from "./window-manager.js";
+import {
+  openWindow,
+  closeTopWindow,
+  closeWindow,
+  updateWindowById,
+} from "./window-manager.js";
 
 let activeEditor = null;
 let primaryEditor = null;
@@ -59,6 +64,7 @@ let activeFieldName = null;
 let activeFieldType = null; // "tag" or "container"
 let activeFieldScope = "field";
 let activeFieldSection = "";
+let activeFieldSubsection = "";
 let activeFieldId = null;
 let activeRawMarkdown = null;
 let activeDisplayMarkdown = null;
@@ -70,6 +76,14 @@ function getMetaAttr(el, name) {
     el.getAttribute(`data-md-${name}`) ||
     ""
   );
+}
+
+function buildFieldId(pageId, scope, section, subsection, name) {
+  const sub = subsection || "";
+  if (sub) {
+    return `${pageId}:${scope}:${section}:${sub}:${name}`;
+  }
+  return `${pageId}:${scope}:${section}:${name}`;
 }
 let breadcrumbsEl = null;
 let breadcrumbClickHandler = null;
@@ -642,6 +656,7 @@ function cleanupEditorOnly() {
   activeFieldType = null;
   activeFieldScope = "field";
   activeFieldSection = "";
+  activeFieldSubsection = "";
   activeFieldId = null;
   activeRawMarkdown = null;
   activeDisplayMarkdown = null;
@@ -838,47 +853,92 @@ function clearExtraContentHighlights() {}
 /**
  * Build a breadcrumb label for the window hierarchy
  */
-function buildBreadcrumbLabel() {
+function getActiveHierarchy() {
   const scope = activeFieldScope || "field";
-  const name = activeFieldName || "Untitled";
-  const section = activeFieldSection || getMetaAttr(activeTarget, "section") || "";
-  const type = activeFieldType || "tag";
-
-  if (scope === "section") {
-    return `Section: ${name}`;
-  } else if (scope === "subsection") {
-    return `Sub: ${name}`;
-  } else if (type === "container") {
-    return `Container: ${name}`;
-  } else {
-    return `Field: ${name}`;
+  const name = activeFieldName || "";
+  const type = activeFieldType || "";
+  const isContainer = type === "container";
+  const explicitSection = activeFieldSection || getMetaAttr(activeTarget, "section") || "";
+  const explicitSubsection =
+    activeFieldSubsection || getMetaAttr(activeTarget, "subsection") || "";
+  const inferredSectionFromSub =
+    scope === "subsection" ? findSectionNameForSubsection(name) : "";
+  let subsection = explicitSubsection || (scope === "subsection" ? name : "");
+  if (!subsection && scope === "field" && activeTarget?.closest) {
+    const subWrap = activeTarget.closest(
+      '[data-mfe-scope="subsection"], [data-md-scope="subsection"]',
+    );
+    subsection = getMetaAttr(subWrap, "name") || "";
   }
+  const section =
+    explicitSection ||
+    inferredSectionFromSub ||
+    (scope === "section" ? name : "") ||
+    (subsection ? findSectionNameForSubsection(subsection) : "");
+
+  return { scope, name, section, subsection, type, isContainer };
+}
+
+function getBreadcrumbContentId(target, section, subsection, name) {
+  if (target === "section") {
+    return section ? `section:${section}` : "";
+  }
+  if (target === "subsection") {
+    return section && subsection ? `subsection:${section}:${subsection}` : "";
+  }
+  if (target === "container" || target === "field") {
+    if (section && subsection && name) {
+      return `subsection:${section}:${subsection}:${name}`;
+    }
+    return name ? `field:${section ? `${section}:` : ""}${name}` : "";
+  }
+  return "";
 }
 
 function buildBreadcrumbParts() {
-  const scope = activeFieldScope || "field";
-  const name = activeFieldName || "";
-  const sectionFromSubsection =
-    scope === "subsection" ? findSectionNameForSubsection(name) : "";
-  const section =
-    sectionFromSubsection || activeFieldSection || getMetaAttr(activeTarget, "section") || "";
-  const type = activeFieldType || "";
-  const isContainer = type === "container";
-  const sectionName =
-    section || sectionFromSubsection || (scope === "section" ? name : "");
+  const { scope, name, section, subsection, type, isContainer } =
+    getActiveHierarchy();
 
   const parts = [];
-  if (sectionName) {
-    parts.push({ label: `Section: ${sectionName}`, target: "section" });
+  if (section) {
+    parts.push({
+      label: `Section: ${section}`,
+      target: "section",
+      section,
+      subsection,
+      name,
+      contentId: getBreadcrumbContentId("section", section, subsection, name),
+    });
   }
-  if (scope === "subsection" && name) {
-    parts.push({ label: `Sub: ${name}`, target: "subsection" });
+  if (subsection) {
+    parts.push({
+      label: `Sub: ${subsection}`,
+      target: "subsection",
+      section,
+      subsection,
+      name,
+      contentId: getBreadcrumbContentId("subsection", section, subsection, name),
+    });
   }
-  if (isContainer && name) {
-    parts.push({ label: `Container: ${name}`, target: "container" });
+  if (scope === "field" && isContainer && name) {
+    parts.push({
+      label: `Container: ${name}`,
+      target: "container",
+      section,
+      subsection,
+      name,
+      contentId: getBreadcrumbContentId("container", section, subsection, name),
+    });
   }
   if (!isContainer && scope === "field" && name) {
-    parts.push({ label: `Field: ${name}`, target: "field" });
+    parts.push({
+      label: `Field: ${name}`,
+      target: "field",
+      section,
+      subsection,
+      name,
+      contentId: getBreadcrumbContentId("field", section, subsection, name),
+    });
   }
 
   if (!parts.length) {
@@ -898,13 +958,7 @@ function buildBreadcrumbParts() {
 function buildBreadcrumbItems() {
   const parts = buildBreadcrumbParts();
   const currentTarget = getBreadcrumbsCurrentTarget();
-  const sectionName =
-    activeFieldSection ||
-    getMetaAttr(activeTarget, "section") ||
-    (activeFieldScope === "section" ? activeFieldName : "") ||
-    (activeFieldScope === "subsection"
-      ? findSectionNameForSubsection(activeFieldName)
-      : "");
+  const { section: sectionName } = getActiveHierarchy();
   const sectionEntry = sectionName ? getSectionEntry(sectionName) : null;
   const sectionHasContent =
     Boolean(sectionEntry?.markdownB64) &&
@@ -916,6 +970,10 @@ function buildBreadcrumbItems() {
       return {
         label: part.label,
         target: part.target,
+        contentId: part.contentId || "",
+        section: part.section || "",
+        subsection: part.subsection || "",
+        name: part.name || "",
         state: sectionDisabled ? "disabled" : "current",
       };
     }
@@ -923,6 +981,10 @@ function buildBreadcrumbItems() {
     return {
       label: part.label,
       target: part.target,
+      contentId: part.contentId || "",
+      section: part.section || "",
+      subsection: part.subsection || "",
+      name: part.name || "",
       state: "link",
     };
   });
@@ -941,13 +1003,7 @@ function renderBreadcrumbs() {
 
   const parts = buildBreadcrumbParts();
   const currentTarget = getBreadcrumbsCurrentTarget();
-  const sectionName =
-    activeFieldSection ||
-    getMetaAttr(activeTarget, "section") ||
-    (activeFieldScope === "section" ? activeFieldName : "") ||
-    (activeFieldScope === "subsection"
-      ? findSectionNameForSubsection(activeFieldName)
-      : "");
+  const { section: sectionName } = getActiveHierarchy();
   const sectionEntry = sectionName ? getSectionEntry(sectionName) : null;
   const sectionHasContent =
     Boolean(sectionEntry?.markdownB64) &&
@@ -1086,29 +1142,18 @@ function handleBreadcrumbClick(e) {
   }
 
   const index = buildContentIndex();
+  const hierarchy = getActiveHierarchy();
   const sectionName =
-    (activeFieldScope === "subsection"
-      ? findSectionNameForSubsection(activeFieldName)
-      : "") ||
-    activeFieldSection ||
-    getMetaAttr(activeTarget, "section") ||
-    (activeFieldScope === "section" ? activeFieldName : "");
-  const fieldName = activeFieldName || "";
-  let id = "";
-
-  if (type === "section") {
-    id = sectionName ? `section:${sectionName}` : "";
-  } else if (type === "subsection") {
-    id =
-      sectionName && fieldName ? `subsection:${sectionName}:${fieldName}` : "";
-  } else if (type === "container") {
-    id = fieldName
-      ? `field:${sectionName ? `${sectionName}:` : ""}${fieldName}`
-      : "";
-  } else if (type === "field") {
-    id = fieldName
-      ? `field:${sectionName ? `${sectionName}:` : ""}${fieldName}`
-      : "";
+    target.getAttribute("data-breadcrumb-section") || hierarchy.section || "";
+  const subsectionName =
+    target.getAttribute("data-breadcrumb-subsection") ||
+    hierarchy.subsection ||
+    "";
+  const fieldName =
+    target.getAttribute("data-breadcrumb-name") || hierarchy.name || "";
+  let id = target.getAttribute("data-breadcrumb-id") || "";
+  if (!id) {
+    id = getBreadcrumbContentId(type, sectionName, subsectionName, fieldName);
   }
 
   const indexed = id ? index.byId.get(id) : null;
@@ -1134,6 +1179,10 @@ function handleBreadcrumbClick(e) {
     if (indexed.section) {
       virtual.setAttribute("data-md-section", indexed.section);
       virtual.setAttribute("data-mfe-section", indexed.section);
+    }
+    if (indexed.subsection) {
+      virtual.setAttribute("data-md-subsection", indexed.subsection);
+      virtual.setAttribute("data-mfe-subsection", indexed.subsection);
     }
     virtual.setAttribute("data-markdown-b64", indexed.markdownB64);
     openFullscreenEditorForElement(virtual);
@@ -1162,8 +1211,8 @@ function handleBreadcrumbClick(e) {
 
   if (type === "subsection") {
     const entry =
-      sectionName && fieldName
-        ? getSubsectionEntry(sectionName, fieldName)
+      sectionName && subsectionName
+        ? getSubsectionEntry(sectionName, subsectionName)
         : null;
     if (entry) {
       const virtual = document.createElement("div");
@@ -1174,8 +1223,8 @@ function handleBreadcrumbClick(e) {
       );
       virtual.setAttribute("data-md-scope", "subsection");
       virtual.setAttribute("data-mfe-scope", "subsection");
-      virtual.setAttribute("data-md-name", fieldName);
-      virtual.setAttribute("data-mfe-name", fieldName);
+      virtual.setAttribute("data-md-name", subsectionName);
+      virtual.setAttribute("data-mfe-name", subsectionName);
       virtual.setAttribute("data-field-type", "container");
       virtual.setAttribute("data-md-section", sectionName);
       virtual.setAttribute("data-mfe-section", sectionName);
@@ -1199,6 +1248,7 @@ function openFullscreenEditorFromPayload(payload) {
     fieldType,
     fieldScope,
     fieldSection,
+    fieldSubsection,
     pageId,
   } = payload;
 
@@ -1210,7 +1260,14 @@ function openFullscreenEditorFromPayload(payload) {
   activeFieldType = fieldType;
   activeFieldScope = fieldScope;
   activeFieldSection = fieldSection;
-  activeFieldId = `${pageId}:${fieldScope}:${fieldSection}:${fieldName}`;
+  activeFieldSubsection = fieldSubsection;
+  activeFieldId = buildFieldId(
+    pageId,
+    fieldScope,
+    fieldSection,
+    fieldSubsection,
+    fieldName,
+  );
   translationsCache = translationsCacheByFieldId.get(activeFieldId) || null;
   secondaryLang = "";
 
@@ -1249,7 +1306,13 @@ function openFullscreenEditorFromPayload(payload) {
             const primaryHtml =
               typeof data.html === "string"
                 ? data.html
-                : htmlMap[activeFieldId] || htmlMap[fieldName];
+                : htmlMap[activeFieldId] ||
+                  (fieldSection && fieldSubsection
+                    ? htmlMap[
+                        `subsection:${fieldSection}:${fieldSubsection}:${fieldName}`
+                      ]
+                    : null) ||
+                  htmlMap[fieldName];
 
             const markdowns = data.markdowns || {};
 
@@ -1267,10 +1330,22 @@ function openFullscreenEditorFromPayload(payload) {
               const elName = getMetaAttr(el, "name");
               const elScope = getMetaAttr(el, "scope") || "field";
               const elSection = getMetaAttr(el, "section") || "";
-              const elId = `${elPageId}:${elScope}:${elSection}:${elName}`;
+              const elSubsection = getMetaAttr(el, "subsection") || "";
+              const elId = buildFieldId(
+                elPageId,
+                elScope,
+                elSection,
+                elSubsection,
+                elName,
+              );
+              const elSubId =
+                elSection && elSubsection && elName
+                  ? `subsection:${elSection}:${elSubsection}:${elName}`
+                  : "";
 
               let html =
                 htmlMap[elId] ||
+                (elSubId ? htmlMap[elSubId] : null) ||
                 htmlMap[elName] ||
                 htmlMap[`${elScope}:${elName}`] ||
                 htmlMap[`${elScope}:${elSection}:${elName}`];
@@ -1292,8 +1367,11 @@ function openFullscreenEditorFromPayload(payload) {
                 el.innerHTML = html;
                 matchedCount++;
 
-                if (markdowns[elId] || markdowns[elName]) {
-                  el.dataset.markdown = markdowns[elId] || markdowns[elName];
+                if (markdowns[elId] || (elSubId && markdowns[elSubId]) || markdowns[elName]) {
+                  el.dataset.markdown =
+                    markdowns[elId] ||
+                    (elSubId ? markdowns[elSubId] : null) ||
+                    markdowns[elName];
                 }
               }
             });
@@ -1352,6 +1430,7 @@ function getPayloadFromElement(target) {
     fieldType: target.getAttribute("data-field-type") || "tag",
     fieldScope: getMetaAttr(target, "scope") || "field",
     fieldSection: getMetaAttr(target, "section") || "",
+    fieldSubsection: getMetaAttr(target, "subsection") || "",
     pageId: target.getAttribute("data-page") || "0",
   };
 }
@@ -1365,6 +1444,7 @@ function replaceActiveEditor(payload) {
     fieldType,
     fieldScope,
     fieldSection,
+    fieldSubsection,
     pageId,
   } = payload;
 
@@ -1374,7 +1454,14 @@ function replaceActiveEditor(payload) {
   activeFieldType = fieldType;
   activeFieldScope = fieldScope;
   activeFieldSection = fieldSection;
-  activeFieldId = `${pageId}:${fieldScope}:${fieldSection}:${fieldName}`;
+  activeFieldSubsection = fieldSubsection;
+  activeFieldId = buildFieldId(
+    pageId,
+    fieldScope,
+    fieldSection,
+    fieldSubsection,
+    fieldName,
+  );
   activeRawMarkdown = markdownContent;
   activeDisplayMarkdown = markdownContent;
   translationsCache = translationsCacheByFieldId.get(activeFieldId) || null;
@@ -1392,6 +1479,11 @@ function replaceActiveEditor(payload) {
   if (secondaryEditor && secondaryLang) {
     setSecondaryLanguage(secondaryLang);
   }
+
+  updateWindowById("mfe-editor", {
+    breadcrumbItems: buildBreadcrumbItems(),
+    breadcrumbClickHandler: handleBreadcrumbClick,
+  });
 
   setTimeout(() => primaryEditor?.view?.focus(), 0);
   return true;
