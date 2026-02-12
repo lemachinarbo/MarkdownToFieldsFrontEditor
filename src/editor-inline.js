@@ -17,7 +17,6 @@ import {
   getLanguagesConfig,
   getSaveUrl,
   fetchCsrfToken,
-  syncComments,
 } from "./editor-core.js";
 import { Marker } from "./marker-extension.js";
 import { createToolbarButtons } from "./editor-toolbar.js";
@@ -962,8 +961,6 @@ function saveField(fieldId, markdown) {
           }
         });
 
-        // 2. Sync fragments delimited by comment markers (e.g. Subsections)
-        syncComments(htmlMap);
       }
       target.dataset.markdown = finalMarkdown;
       target.dataset.markdownB64 = btoa(
@@ -1114,8 +1111,6 @@ function saveBatch(pageId, fields) {
         draftMarkdownByField.delete(fieldId);
       });
 
-      // Sync fragments delimited by comment markers (e.g. Subsections)
-      syncComments(htmlMap);
     });
 }
 
@@ -1529,11 +1524,7 @@ function initInlineEditor() {
           e.clientX,
           e.clientY,
         );
-        const markerHit = overlayEngine.findMarkerTargetFromPoint(
-          e.clientX,
-          e.clientY,
-        );
-        const fallbackSub = fieldSubHit || markerHit;
+        const fallbackSub = fieldSubHit;
         if (fallbackSub?.rect) {
           const key = `${fallbackSub.scope}:${fallbackSub.section || ""}:${fallbackSub.subsection || ""}:${fallbackSub.name}`;
           if (lastHoverKey !== key) {
@@ -1588,28 +1579,6 @@ function initInlineEditor() {
     };
     document.addEventListener("mousemove", hoverHandler, true);
     window.addEventListener("scroll", overlayEngine.hide, true);
-    window.addEventListener(
-      "scroll",
-      () => {
-        overlayEngine.invalidate("scroll");
-      },
-      true,
-    );
-    window.addEventListener("resize", () => {
-      overlayEngine.invalidate("resize");
-    });
-    window.addEventListener("load", () => {
-      overlayEngine.invalidate("load");
-    });
-    document.addEventListener(
-      "load",
-      (e) => {
-        if (e.target && e.target.tagName === "IMG") {
-          overlayEngine.invalidate("img-load");
-        }
-      },
-      true,
-    );
   }
 
   if (!pointerHandler) {

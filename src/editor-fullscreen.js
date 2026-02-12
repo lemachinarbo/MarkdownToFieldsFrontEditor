@@ -29,7 +29,6 @@ import {
   saveTranslation,
   getSaveUrl,
   fetchCsrfToken,
-  syncComments,
 } from "./editor-core.js";
 import { Marker } from "./marker-extension.js";
 import {
@@ -1385,10 +1384,7 @@ function openFullscreenEditorFromPayload(payload) {
               }
             });
 
-            // 2. Sync fragments delimited by comment markers (e.g. Subsections)
-            syncComments(htmlMap);
-
-            // 3. Extra safety for active editor
+            // 2. Extra safety for active editor
             if (activeTarget && primaryHtml) {
               activeTarget.dataset.markdown = finalMarkdown;
 

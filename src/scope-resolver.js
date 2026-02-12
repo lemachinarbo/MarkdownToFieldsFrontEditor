@@ -36,7 +36,6 @@ export function resolveDblclickAction({
         event.clientX,
         event.clientY,
       ) ||
-      overlayEngine.findMarkerTargetFromPoint(event.clientX, event.clientY) ||
       findTargetFromPoint(event.clientX, event.clientY) ||
       findSectionFromText(event.target?.textContent || "");
 

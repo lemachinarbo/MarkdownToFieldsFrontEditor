@@ -27,7 +27,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
     public static function getDefaultData() {
         return [
             'toolbarButtons' => 'bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split,markers',
-            'editableTargets' => ['tag', 'container', 'section', 'subsection'],
+            'editableTargets' => ['tag', 'container'],
             'allowedImageExtensions' => 'jpg,jpeg,png,gif,webp,svg',
             'debugShowSections' => false,
             'debugShowLabels' => false,
@@ -56,16 +56,14 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $targetsField = wire('modules')->get('InputfieldCheckboxes');
         $targetsField->name = 'editableTargets';
         $targetsField->label = 'Editable Targets';
-        $targetsField->description = 'Choose which content types get auto-wrapped for editing.';
+        $targetsField->description = 'Choose which field types get auto-wrapped for editing.';
         $targetsField->options = [
             'tag' => 'Tag fields (<!-- name -->)',
             'container' => 'Container fields (<!-- name... -->)',
             'bind' => 'Bind fields (<!-- field:name -->)',
-            'section' => 'Sections (<!-- section:name -->)',
-            'subsection' => 'Subsections (<!-- sub:name -->)',
         ];
         $targetsField->value = !empty($data['editableTargets']) ? $data['editableTargets'] : $defaults['editableTargets'];
-        $targetsField->notes = 'Defaults: tag, container, section, subsection';
+        $targetsField->notes = 'Defaults: tag, container';
         $targetsField->columnWidth = 100;
         $inputfields->add($targetsField);
 
@@ -349,14 +347,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         // then wrap based on those markers
         $rebuilt = $out;
 
-        // NOTE: We avoid DOM wrappers for sections/subsections to preserve layout.
-        // Instead we inject invisible comment markers for stable overlay detection.
-        $editableTargets = $this->getEditableTargets();
-        $allowSectionMarkers = in_array('section', $editableTargets, true);
-        $allowSubsectionMarkers = in_array('subsection', $editableTargets, true);
-        $rebuilt = $this->injectSectionMarkers($rebuilt, $content, $allowSectionMarkers, $allowSubsectionMarkers);
-
-        // We also attach section metadata to field wrappers to preserve layout.
+        // Keep rendered DOM unchanged: no automatic section/subsection wrapper injection.
+        // Section/subsection editing is opt-in via explicit [data-mfe] hosts.
+        // Field wrappers still carry section/subsection metadata for save routing.
         
         foreach ($content->sections as $section) {
             if (isset($section->fields) && is_array($section->fields)) {
@@ -434,127 +427,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $out = $rebuilt;
 
         $event->return = $out;
-    }
-
-    private function injectSectionMarkers($rebuilt, $content, $allowSectionMarkers, $allowSubsectionMarkers) {
-        if (!$rebuilt || !is_string($rebuilt)) return $rebuilt;
-        if (!($allowSectionMarkers || $allowSubsectionMarkers)) return $rebuilt;
-        if (!isset($content->sectionsByName) || !is_array($content->sectionsByName)) return $rebuilt;
-
-        foreach ($content->sectionsByName as $sectionName => $section) {
-            if (!$sectionName || !$section) continue;
-            $sectionHtml = (string)($section->html ?? '');
-            if ($sectionHtml === '') continue;
-            $safeSection = htmlspecialchars((string)$sectionName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-            $sectionStart = '<!--mfe:section:start ' . $safeSection . '-->';
-            $sectionEnd = '<!--mfe:section:end ' . $safeSection . '-->';
-            $sectionHtmlWithMarkers = $sectionHtml;
-            $sectionMarkdown = (string)($section->markdown ?? '');
-            $safeSectionB64 = htmlspecialchars(base64_encode($sectionMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-
-            if ($allowSubsectionMarkers && isset($section->subsections) && is_array($section->subsections)) {
-                foreach ($section->subsections as $subName => $subsection) {
-                    if (!$subName || !$subsection) continue;
-                    $subHtml = (string)($subsection->html ?? '');
-                    if ($subHtml === '') continue;
-                    $safeSub = htmlspecialchars((string)$subName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                    $subMarkdown = (string)($subsection->markdown ?? '');
-                    $safeSubB64 = htmlspecialchars(base64_encode($subMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                    $subStart = '<!--mfe:subsection:start ' . $safeSection . '::' . $safeSub . '-->';
-                    $subEnd = '<!--mfe:subsection:end ' . $safeSection . '::' . $safeSub . '-->';
-                    $subWrapped =
-                        '<div class="fe-editable md-edit mfe-subsection-wrap" data-md-scope="subsection" data-mfe-scope="subsection" data-md-name="' . $safeSub . '" data-mfe-name="' . $safeSub . '" data-md-section="' . $safeSection . '" data-mfe-section="' . $safeSection . '" data-md-section-b64="' . $safeSectionB64 . '" data-mfe-section-b64="' . $safeSectionB64 . '" data-field-type="container" data-page="' . $this->wire()->page->id . '" data-markdown-b64="' . $safeSubB64 . '">' .
-                        $subStart . $subHtml . $subEnd .
-                        '</div>';
-                    if (
-                        stripos($sectionHtmlWithMarkers, 'data-md-scope="subsection" data-md-name="' . $safeSub . '" data-md-section="' . $safeSection . '"') !== false ||
-                        stripos($sectionHtmlWithMarkers, 'data-mfe-scope="subsection" data-mfe-name="' . $safeSub . '" data-mfe-section="' . $safeSection . '"') !== false
-                    ) {
-                        continue;
-                    }
-                    if (stripos($sectionHtmlWithMarkers, $subStart) === false) {
-                        $pos = stripos($sectionHtmlWithMarkers, $subHtml);
-                        if ($pos !== false) {
-                            $sectionHtmlWithMarkers = substr_replace(
-                                $sectionHtmlWithMarkers,
-                                $subWrapped,
-                                $pos,
-                                strlen($subHtml)
-                            );
-                        }
-                    }
-                }
-            }
-
-            if ($allowSectionMarkers && stripos($rebuilt, $sectionStart) === false) {
-                $pos = stripos($rebuilt, $sectionHtml);
-                if ($pos !== false) {
-                    $wrapped =
-                        '<div class="fe-editable md-edit mfe-section-wrap" data-md-scope="section" data-mfe-scope="section" data-md-name="' . $safeSection . '" data-mfe-name="' . $safeSection . '" data-field-type="container" data-page="' . $this->wire()->page->id . '" data-markdown-b64="' . $safeSectionB64 . '">' .
-                        $sectionStart . $sectionHtmlWithMarkers . $sectionEnd .
-                        '</div>';
-                    $rebuilt = substr_replace(
-                        $rebuilt,
-                        $wrapped,
-                        $pos,
-                        strlen($sectionHtml)
-                    );
-                }
-            } elseif ($allowSubsectionMarkers && stripos($rebuilt, $sectionHtmlWithMarkers) === false) {
-                $pos = stripos($rebuilt, $sectionHtml);
-                if ($pos !== false) {
-                    $rebuilt = substr_replace(
-                        $rebuilt,
-                        $sectionHtmlWithMarkers,
-                        $pos,
-                        strlen($sectionHtml)
-                    );
-                }
-            }
-        }
-
-        if ($allowSubsectionMarkers) {
-            foreach ($content->sectionsByName as $sectionName => $section) {
-                if (!$sectionName || !$section) continue;
-                $safeSection = htmlspecialchars((string)$sectionName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                $sectionMarkdown = (string)($section->markdown ?? '');
-                $safeSectionB64 = htmlspecialchars(base64_encode($sectionMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                if (!isset($section->subsections) || !is_array($section->subsections)) continue;
-                foreach ($section->subsections as $subName => $subsection) {
-                    if (!$subName || !$subsection) continue;
-                    $subHtml = (string)($subsection->html ?? '');
-                    if ($subHtml === '') continue;
-                    $safeSub = htmlspecialchars((string)$subName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                    $subMarkdown = (string)($subsection->markdown ?? '');
-                    $safeSubB64 = htmlspecialchars(base64_encode($subMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-                    $subStart = '<!--mfe:subsection:start ' . $safeSection . '::' . $safeSub . '-->';
-                    $subEnd = '<!--mfe:subsection:end ' . $safeSection . '::' . $safeSub . '-->';
-                    $subWrapped =
-                        '<div class="fe-editable md-edit mfe-subsection-wrap" data-md-scope="subsection" data-mfe-scope="subsection" data-md-name="' . $safeSub . '" data-mfe-name="' . $safeSub . '" data-md-section="' . $safeSection . '" data-mfe-section="' . $safeSection . '" data-md-section-b64="' . $safeSectionB64 . '" data-mfe-section-b64="' . $safeSectionB64 . '" data-field-type="container" data-page="' . $this->wire()->page->id . '" data-markdown-b64="' . $safeSubB64 . '">' .
-                        $subStart . $subHtml . $subEnd .
-                        '</div>';
-                    if (
-                        stripos($rebuilt, 'data-md-scope="subsection" data-md-name="' . $safeSub . '" data-md-section="' . $safeSection . '"') !== false ||
-                        stripos($rebuilt, 'data-mfe-scope="subsection" data-mfe-name="' . $safeSub . '" data-mfe-section="' . $safeSection . '"') !== false
-                    ) {
-                        continue;
-                    }
-                    if (stripos($rebuilt, $subStart) === false) {
-                        $pos = stripos($rebuilt, $subHtml);
-                        if ($pos !== false) {
-                            $rebuilt = substr_replace(
-                                $rebuilt,
-                                $subWrapped,
-                                $pos,
-                                strlen($subHtml)
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        return $rebuilt;
     }
 
     /**

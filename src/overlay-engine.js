@@ -1,11 +1,8 @@
-import { buildContentIndex, getSubsectionEntry } from "./content-index.js";
+import { getSubsectionEntry } from "./content-index.js";
 
 export function createOverlayEngine({ debugLabels = false } = {}) {
   let hoverOverlay = null;
   let hoverLabel = null;
-  let markerTargets = [];
-  let markerTargetsDirty = true;
-  let markerDebugThrottle = null;
 
   function ensureOverlay() {
     if (hoverOverlay) return hoverOverlay;
@@ -83,44 +80,8 @@ export function createOverlayEngine({ debugLabels = false } = {}) {
     hoverOverlay.style.height = "2px";
   }
 
-  function buildMarkerTargets() {
-    const index = buildContentIndex();
-    const targets = index.targets.filter(
-      (target) =>
-        (target.scope === "section" || target.scope === "subsection") &&
-        target.rect,
-    );
-    markerTargets = targets.map((target) => ({
-      scope: target.scope,
-      name: target.name,
-      section: target.section,
-      rect: target.rect,
-      markdownB64: target.markdownB64 || "",
-    }));
-    markerTargetsDirty = false;
-  }
-
-  function getMarkerTargets() {
-    if (markerTargetsDirty) {
-      buildMarkerTargets();
-    }
-    return markerTargets;
-  }
-
   function isPointInRect(x, y, rect) {
     return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-  }
-
-  function findMarkerTargetFromPoint(x, y) {
-    const targets = getMarkerTargets();
-    const hits = targets.filter((t) => isPointInRect(x, y, t.rect));
-    if (!hits.length) return null;
-    hits.sort((a, b) => {
-      const areaA = (a.rect.right - a.rect.left) * (a.rect.bottom - a.rect.top);
-      const areaB = (b.rect.right - b.rect.left) * (b.rect.bottom - b.rect.top);
-      return areaA - areaB;
-    });
-    return hits[0];
   }
 
   function getMetaAttr(el, name) {
@@ -163,24 +124,12 @@ export function createOverlayEngine({ debugLabels = false } = {}) {
     return null;
   }
 
-  function invalidate(reason) {
-    markerTargetsDirty = true;
-    if (!markerDebugThrottle) {
-      markerDebugThrottle = window.setTimeout(() => {
-        markerDebugThrottle = null;
-        getMarkerTargets();
-      }, 120);
-    }
-  }
-
   return {
     init: ensureOverlay,
     hide,
     setLabel,
     showBox,
     showEdge,
-    findMarkerTargetFromPoint,
     findFieldSubsectionTargetFromPoint,
-    invalidate,
   };
 }
