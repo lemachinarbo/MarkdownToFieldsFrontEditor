@@ -1525,16 +1525,15 @@ function initInlineEditor() {
           return;
         }
 
+        const fieldSubHit = overlayEngine.findFieldSubsectionTargetFromPoint(
+          e.clientX,
+          e.clientY,
+        );
         const markerHit = overlayEngine.findMarkerTargetFromPoint(
           e.clientX,
           e.clientY,
         );
-        const fallbackSub =
-          markerHit ||
-          overlayEngine.findFieldSubsectionTargetFromPoint(
-            e.clientX,
-            e.clientY,
-          );
+        const fallbackSub = fieldSubHit || markerHit;
         if (fallbackSub?.rect) {
           const key = `${fallbackSub.scope}:${fallbackSub.section || ""}:${fallbackSub.subsection || ""}:${fallbackSub.name}`;
           if (lastHoverKey !== key) {

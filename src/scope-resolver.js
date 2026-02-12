@@ -32,11 +32,11 @@ export function resolveDblclickAction({
 
   if (!hit) {
     const fallback =
-      overlayEngine.findMarkerTargetFromPoint(event.clientX, event.clientY) ||
       overlayEngine.findFieldSubsectionTargetFromPoint(
         event.clientX,
         event.clientY,
       ) ||
+      overlayEngine.findMarkerTargetFromPoint(event.clientX, event.clientY) ||
       findTargetFromPoint(event.clientX, event.clientY) ||
       findSectionFromText(event.target?.textContent || "");
 
