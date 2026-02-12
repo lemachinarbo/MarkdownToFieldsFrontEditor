@@ -14,6 +14,7 @@ import {
   markdownSerializer,
   decodeMarkdownBase64,
   decodeHtmlEntitiesInFences,
+  getLanguagesConfig,
   getSaveUrl,
   fetchCsrfToken,
   syncComments,
@@ -871,6 +872,7 @@ function saveField(fieldId, markdown) {
 
   return fetchCsrfToken()
     .then((csrf) => {
+      const { current } = getLanguagesConfig();
       const formData = new FormData();
       formData.append("markdown", finalMarkdown);
       formData.append("mdName", fieldName);
@@ -880,6 +882,9 @@ function saveField(fieldId, markdown) {
       }
       formData.append("pageId", pageId);
       formData.append("fieldId", fieldId);
+      if (current) {
+        formData.append("lang", current);
+      }
 
       if (csrf) {
         formData.append(csrf.name, csrf.value);
@@ -1021,10 +1026,14 @@ function saveBatch(pageId, fields) {
   });
   return fetchCsrfToken()
     .then((csrf) => {
+      const { current } = getLanguagesConfig();
       const formData = new FormData();
       formData.append("batch", "1");
       formData.append("pageId", pageId);
       formData.append("fields", JSON.stringify(fields));
+      if (current) {
+        formData.append("lang", current);
+      }
 
       if (csrf) {
         formData.append(csrf.name, csrf.value);

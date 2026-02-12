@@ -1274,6 +1274,7 @@ function openFullscreenEditorFromPayload(payload) {
   const saveCallback = (markdown, resolve, reject) => {
     const finalMarkdown = markdown;
     fetchCsrfToken().then((csrf) => {
+      const { current } = getLanguagesConfig();
       const formData = new FormData();
       formData.append("markdown", finalMarkdown);
       formData.append("mdName", fieldName);
@@ -1283,6 +1284,9 @@ function openFullscreenEditorFromPayload(payload) {
       }
       formData.append("pageId", pageId);
       formData.append("fieldId", activeFieldId);
+      if (current) {
+        formData.append("lang", current);
+      }
 
       if (csrf) {
         formData.append(csrf.name, csrf.value);

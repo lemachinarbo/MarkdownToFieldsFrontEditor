@@ -174,9 +174,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             ? (string)$this->toolbarButtons
             : (string)$defaults['toolbarButtons'];
         $currentLangCode = \ProcessWire\MarkdownLanguageResolver::getLanguageCode($this->wire()->page);
-        if ($this->wire()->languages && $this->wire()->user && $this->wire()->user->language) {
-            $currentLangCode = $this->wire()->user->language->name;
-        }
         $langList = [];
         $languages = $this->wire()->languages;
         if ($languages) {
@@ -863,13 +860,14 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         if(!\ProcessWire\MarkdownConfig::supportsPage($page)) {
             $this->sendJsonError('MarkdownToFields not configured for this page', 400);
         }
+        $languageCode = $this->resolveRequestLanguageCode($page, $langCode);
 
         $mdScope = $input->post->text('mdScope') ?: 'field';
         $mdSection = $input->post->text('mdSection');
         $fieldId = $input->post->text('fieldId');
         $postKeys = implode(',', array_keys($_POST ?? []));
         $this->wire->log->save('markdown-front-edit',
-            "SAVE_REQUEST pageId={$pageId} mdScope='{$mdScope}' mdSection='{$mdSection}' fieldId='{$fieldId}' lang='{$langCode}' batch=" . ($isBatch ? '1' : '0') . " postKeys='{$postKeys}'"
+            "SAVE_REQUEST pageId={$pageId} mdScope='{$mdScope}' mdSection='{$mdSection}' fieldId='{$fieldId}' lang='{$langCode}' resolvedLang='{$languageCode}' batch=" . ($isBatch ? '1' : '0') . " postKeys='{$postKeys}'"
         );
 
         if ($isBatch) {
@@ -924,7 +922,10 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             }
 
             try {
-                $content = \ProcessWire\MarkdownFileIO::loadMarkdown($page);
+                $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
+                if (!$content) {
+                    throw new \ProcessWire\WireException("Failed to load markdown content for language '{$languageCode}'.");
+                }
                 $fullMarkdown = $content->getRawDocument();
                 $updatedMarkdown = $fullMarkdown;
                 $skipped = [];
@@ -949,26 +950,25 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         continue;
                     }
 
-                    $updatedMarkdown = str_replace($oldFieldMarkdown, $blockMarkdown, $updatedMarkdown, $count);
-                    if ($count === 0) {
+                    $replaceResult = $this->replaceUniqueMarkdownBlock($updatedMarkdown, $oldFieldMarkdown, $blockMarkdown);
+                    if ($replaceResult['status'] === 'missing') {
                         $skipped[] = $key;
                         continue;
                     }
-                    $replaced += $count;
+                    if ($replaceResult['status'] === 'ambiguous') {
+                        throw new \ProcessWire\WireException("Ambiguous markdown block for field '{$mdName}' in scope '{$scope}'.");
+                    }
+                    $updatedMarkdown = $replaceResult['document'];
+                    $replaced += 1;
                 }
 
                 if ($replaced > 0) {
-                    $languageCode = $langCode !== '' ? $langCode : \ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
                     \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $updatedMarkdown, $languageCode);
-                    
-                    // Trigger sync to process images and update field values
-                    \ProcessWire\MarkdownToFields::sync($page);
                 }
             } catch (\Throwable $e) {
                 $this->sendJsonError('Failed to update markdown: ' . $e->getMessage(), 500);
             }
 
-            $languageCode = $langCode !== '' ? $langCode : \ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
             $content = $page->loadContent(null, $languageCode);
             $htmlMap = [];
             foreach ($fieldEntries as $entry) {
@@ -1042,15 +1042,15 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         // TRUST THE FRAMEWORK: Use MarkdownToFields' native mechanisms
         try {
             // Load the current markdown document using MarkdownFileIO
-            $content = \ProcessWire\MarkdownFileIO::loadMarkdown($page);
+            $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
+            if (!$content) {
+                throw new \ProcessWire\WireException("Failed to load markdown content for language '{$languageCode}'.");
+            }
             
             // Get original field markdown from MarkdownToFields
             // MarkdownToFields handles all field boundary extraction
             $fullMarkdown = $content->getRawDocument();
             $oldFieldMarkdown = $this->findScopedMarkdown($content, $mdScope, $mdName, $mdSection ?? '');
-            
-            // Get HTML for unchanged check
-            $oldFieldHtml = $this->findScopedHtml($content, $mdScope, $mdName, $mdSection ?? '');
             
             if ($oldFieldMarkdown === null) {
                 $this->sendJsonError('Field not found in content: ' . $mdName, 400);
@@ -1059,35 +1059,23 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $this->wire->log->save('markdown-front-edit', "REQUEST: Beginning save process for '{$mdName}'");
             
             // Simple string replacement - preserves all markdown formatting
-            $updatedMarkdown = str_replace($oldFieldMarkdown, $blockMarkdown, $fullMarkdown, $count);
-            
-            if ($count === 0) {
+            $replaceResult = $this->replaceUniqueMarkdownBlock($fullMarkdown, $oldFieldMarkdown, $blockMarkdown);
+            if ($replaceResult['status'] === 'missing') {
                 $this->sendJsonError('Failed to find field content for replacement', 400);
             }
+            if ($replaceResult['status'] === 'ambiguous') {
+                $this->sendJsonError('Ambiguous field content: duplicate markdown block found. Save aborted to avoid cross-field mutation.', 409);
+            }
+            $updatedMarkdown = $replaceResult['document'];
             
             $this->wire->log->save('markdown-front-edit',
                 "SAVE: Before saving - oldField='" . substr($oldFieldMarkdown, 0, 50) . "' blockMarkdown='" . substr($blockMarkdown, 0, 50) . "'"
             );
             
             // Use MarkdownFileIO's native save mechanism (respect current language or override)
-            $languageCode = $langCode !== '' ? $langCode : \ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
             \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $updatedMarkdown, $languageCode);
-            
-            $frontRaw = $content->getFrontmatterRaw();
             $this->wire->log->save('markdown-front-edit', "SUCCESS: Markdown file updated");
-            
-            // Trigger sync to process images and update field values
-            \ProcessWire\MarkdownToFields::sync($page);
-            
-            // CLEAR CACHE AND RE-FETCH FRESH DATA (Bypass trait cache)
-            $this->wire->pages->uncache($page);
-            $page = $this->wire->pages->get($pageId);
-            
-            // Use MarkdownFileIO directly to ensure we get fresh disk content
-            $ioClass = '\\ProcessWire\\MarkdownFileIO';
-            $languageResolver = '\\ProcessWire\\MarkdownLanguageResolver';
-            $languageCode = $langCode !== '' ? $langCode : $languageResolver::getLanguageCode($page);
-            $content = $ioClass::loadLanguageMarkdown($page, $languageCode);
+            $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
             
             if (!$content) {
                 throw new \ProcessWire\WireException("Failed to reload fresh content after save.");
@@ -1445,6 +1433,32 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             }
         }
         return null;
+    }
+
+    protected function resolveRequestLanguageCode(\ProcessWire\Page $page, string $langCode): string {
+        if ($langCode !== '') {
+            return $langCode;
+        }
+        return (string)\ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
+    }
+
+    protected function replaceUniqueMarkdownBlock(string $document, string $search, string $replacement): array {
+        if ($search === '') {
+            return ['status' => 'missing', 'document' => $document];
+        }
+
+        $firstPos = strpos($document, $search);
+        if ($firstPos === false) {
+            return ['status' => 'missing', 'document' => $document];
+        }
+
+        $secondPos = strpos($document, $search, $firstPos + strlen($search));
+        if ($secondPos !== false) {
+            return ['status' => 'ambiguous', 'document' => $document];
+        }
+
+        $updated = substr($document, 0, $firstPos) . $replacement . substr($document, $firstPos + strlen($search));
+        return ['status' => 'replaced', 'document' => $updated];
     }
 
     protected function sendJsonError($msg, $code = 400) {
