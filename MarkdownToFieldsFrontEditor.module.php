@@ -14,7 +14,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
             'summary' => 'Frontend editor for MarkdownToFields.',
-            'version' =>  '0.4.3',
+            'version' =>  '0.4.4',
             'autoload' => true,
             'singular' => true,
             'requires' => ['MarkdownToFields'],
@@ -29,6 +29,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'toolbarButtons' => 'bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split,markers',
             'editableTargets' => ['tag', 'container'],
             'allowedImageExtensions' => 'jpg,jpeg,png,gif,webp,svg',
+            'debug' => false,
             'debugShowSections' => false,
             'debugShowLabels' => false,
             'labelStyle' => 'outside',
@@ -66,6 +67,15 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $targetsField->notes = 'Defaults: tag, container';
         $targetsField->columnWidth = 100;
         $inputfields->add($targetsField);
+
+        $debugLoggingField = wire('modules')->get('InputfieldCheckbox');
+        $debugLoggingField->name = 'debug';
+        $debugLoggingField->label = 'Enable Debug Logging';
+        $debugLoggingField->description = 'When enabled, verbose diagnostic logs are written to markdown-front-edit.txt';
+        $debugLoggingField->value = 1;
+        $debugLoggingField->checked = !empty($data['debug']);
+        $debugLoggingField->columnWidth = 100;
+        $inputfields->add($debugLoggingField);
 
         $debugField = wire('modules')->get('InputfieldCheckbox');
         $debugField->name = 'debugShowSections';
@@ -121,10 +131,29 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $this->wire('modules')->saveConfig($this, [
             'toolbarButtons' => $defaults['toolbarButtons'],
             'editableTargets' => $defaults['editableTargets'],
+            'debug' => $defaults['debug'],
             'debugShowSections' => $defaults['debugShowSections'],
             'debugShowLabels' => $defaults['debugShowLabels'],
             'labelStyle' => $defaults['labelStyle'],
         ]);
+    }
+
+    /**
+     * Log debug messages (only when debug mode is enabled)
+     */
+    private function logDebug(string $message): void {
+        $enabled = (bool)($this->debug ?? false);
+        if (!$enabled) {
+            return;
+        }
+        $this->wire->log->save('markdown-front-edit', $message);
+    }
+
+    /**
+     * Log production events (always logged)
+     */
+    private function logInfo(string $message): void {
+        $this->wire->log->save('markdown-front-edit', $message);
     }
 
     /**
@@ -309,7 +338,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                             'section' => $sectionName,
                             'sectionMarkdown' => (string)($section->markdown ?? ''),
                         ];
-                        $this->wire->log->save('markdown-front-edit', "COLLECT field='{$fname}' type='{$fieldType}' markdownLen=" . strlen($markdown));
+                        $this->logDebug("COLLECT field='{$fname}' type='{$fieldType}' markdownLen=" . strlen($markdown));
                     }
                 }
             }
@@ -334,7 +363,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                                     'subsection' => (string)$subsectionName,
                                     'subsectionMarkdown' => (string)($subsection->markdown ?? ''),
                                 ];
-                                $this->wire->log->save('markdown-front-edit', "COLLECT field='{$fname}' type='{$fieldType}' markdownLen=" . strlen($markdown));
+                                $this->logDebug("COLLECT field='{$fname}' type='{$fieldType}' markdownLen=" . strlen($markdown));
                             }
                         }
                     }
@@ -663,7 +692,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         $url = $siteUrl . rtrim($relativePath, '/') . '/' . $filename;
                     } else {
                         if (!$warnedOutsideRoot && $rootPath && !str_starts_with($fullPathNorm, $rootPath)) {
-                            $this->wire()->log->save('markdown-front-edit', sprintf(
+                            $this->logInfo(sprintf(
                                 "LIST_IMAGES warning: path outside root/site: %s",
                                 $fullPathNorm
                             ));
@@ -681,7 +710,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 }
             }
 
-            $this->wire()->log->save('markdown-front-edit', sprintf(
+            $this->logDebug(sprintf(
                 "LIST_IMAGES pageId=%d paths=%s missing=%s count=%d",
                 $pageId,
                 json_encode(array_values($imageSourcePaths)),
@@ -738,7 +767,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $mdSection = $input->post->text('mdSection');
         $fieldId = $input->post->text('fieldId');
         $postKeys = implode(',', array_keys($_POST ?? []));
-        $this->wire->log->save('markdown-front-edit',
+        $this->logInfo(
             "SAVE_REQUEST pageId={$pageId} mdScope='{$mdScope}' mdSection='{$mdSection}' fieldId='{$fieldId}' lang='{$langCode}' resolvedLang='{$languageCode}' batch=" . ($isBatch ? '1' : '0') . " postKeys='{$postKeys}'"
         );
 
@@ -760,7 +789,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                     } elseif (preg_match('/!\\[[^\\]]*\\]\\(([^)]+)\\)/', $md, $m)) {
                         $img = $m[1];
                     }
-                    $this->wire->log->save('markdown-front-edit',
+                    $this->logDebug(
                         "BATCH_FIELD key='" . (string)($entry['key'] ?? '') . "' name='" . (string)($entry['name'] ?? '') . "' scope='" . (string)($entry['scope'] ?? '') . "' section='" . (string)($entry['section'] ?? '') . "' mdLen=" . strlen($md) . " image='{$img}'"
                     );
                     $fieldEntries[] = [
@@ -780,7 +809,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                     } elseif (preg_match('/!\\[[^\\]]*\\]\\(([^)]+)\\)/', $md, $m)) {
                         $img = $m[1];
                     }
-                    $this->wire->log->save('markdown-front-edit',
+                    $this->logDebug(
                         "BATCH_FIELD key='{$mdName}' name='{$mdName}' scope='field' section='' mdLen=" . strlen($md) . " image='{$img}'"
                     );
                     $fieldEntries[] = [
@@ -893,7 +922,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         } elseif (preg_match('/!\\[[^\\]]*\\]\\(([^)]+)\\)/', $markdown, $m)) {
             $imgPreview = $m[1];
         }
-        $this->wire->log->save('markdown-front-edit',
+        $this->logDebug(
             "PAYLOAD mdName='{$mdName}' pageId={$pageId} markdownLen={$markdownLen} markdownLines={$markdownLines} markdownPreview='{$markdownPreview}' image='{$imgPreview}'"
         );
 
@@ -903,7 +932,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $blockLen = strlen((string)$blockMarkdown);
         $blockLines = $blockLen ? (substr_count((string)$blockMarkdown, "\n") + 1) : 0;
         $blockPreview = $blockLen ? substr(str_replace(["\r", "\n"], ["\\r", "\\n"], (string)$blockMarkdown), 0, 120) : '';
-        $this->wire->log->save('markdown-front-edit',
+        $this->logDebug(
             "RESULT mdName='{$mdName}' blockLen={$blockLen} blockLines={$blockLines} blockPreview='{$blockPreview}'"
         );
 
@@ -928,7 +957,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 $this->sendJsonError('Field not found in content: ' . $mdName, 400);
             }
             // Proceed with save even if unchanged to ensure fresh sync and HTML generation
-            $this->wire->log->save('markdown-front-edit', "REQUEST: Beginning save process for '{$mdName}'");
+            $this->logInfo("REQUEST: Beginning save process for '{$mdName}'");
             
             // Simple string replacement - preserves all markdown formatting
             $replaceResult = $this->replaceUniqueMarkdownBlock($fullMarkdown, $oldFieldMarkdown, $blockMarkdown);
@@ -940,20 +969,20 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             }
             $updatedMarkdown = $replaceResult['document'];
             
-            $this->wire->log->save('markdown-front-edit',
+            $this->logDebug(
                 "SAVE: Before saving - oldField='" . substr($oldFieldMarkdown, 0, 50) . "' blockMarkdown='" . substr($blockMarkdown, 0, 50) . "'"
             );
             
             // Use MarkdownFileIO's native save mechanism (respect current language or override)
             \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $updatedMarkdown, $languageCode);
-            $this->wire->log->save('markdown-front-edit', "SUCCESS: Markdown file updated");
+            $this->logInfo("SUCCESS: Markdown file updated");
             $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
             
             if (!$content) {
                 throw new \ProcessWire\WireException("Failed to reload fresh content after save.");
             }
 
-            $this->wire->log->save('markdown-front-edit', "RESPONSE: loadContent completed via direct IO");
+            $this->logDebug("RESPONSE: loadContent completed via direct IO");
 
         } catch (\Throwable $e) {
             $this->sendJsonError('Failed to update markdown: ' . $e->getMessage(), 500);
@@ -966,7 +995,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $canonicalHtml = $this->findScopedHtml($content, $mdScope, $mdName, $mdSection ?? '');
         $canonicalMd = $this->findScopedMarkdown($content, $mdScope, $mdName, $mdSection ?? '');
         if ($canonicalMd === null) {
-            $this->wire->log->save('markdown-front-edit',
+            $this->logDebug(
                 "RESPONSE: Field not found after save mdName='{$mdName}' scope='{$mdScope}' section='{$mdSection}'"
             );
         }
@@ -975,7 +1004,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         preg_match('/<img[^>]+src=["\']([^"\']+)["\']/', $canonicalHtml ?: '', $matches);
         $srcInfo = $matches ? "Primary Src: " . $matches[1] : "No image found in HTML";
         
-        $this->wire->log->save('markdown-front-edit',
+        $this->logDebug(
             "RESPONSE: Final HTML. Field: {$mdName}. " . $srcInfo
         );
         
@@ -984,7 +1013,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $parsedown = new \Parsedown();
             $parsedown->setSafeMode(false);
             $canonicalHtml = $parsedown->text($blockMarkdown);
-            $this->wire->log->save('markdown-front-edit', "RESPONSE: Markdown contains HTML tags, regenerated with Parsedown");
+            $this->logDebug("RESPONSE: Markdown contains HTML tags, regenerated with Parsedown");
         }
         
         $requestedFieldId = $this->wire->input->post->fieldId;
