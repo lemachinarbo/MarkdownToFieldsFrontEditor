@@ -12,24 +12,25 @@ import { openWindow, closeTopWindow } from "./window-manager.js";
 export function createImagePicker({ onSelect, onClose, initialData = null }) {
   let selectedImage = initialData
     ? {
+        path: initialData.originalFilename || initialData.path || "",
         filename: initialData.originalFilename || initialData.filename || "",
         url: initialData.src || initialData.url || "",
       }
     : null;
 
+  function getImageBaseUrl() {
+    const fromConfig = window.MarkdownFrontEditorConfig?.imageBaseUrl;
+    const base = typeof fromConfig === "string" && fromConfig.trim() !== ""
+      ? fromConfig
+      : "/site/images/";
+    return base.endsWith("/") ? base : `${base}/`;
+  }
+
   // Internal helper to resolve local filenames to ProcessWire asset paths
   function resolveImageUrl(url) {
     if (!url) return "";
     if (url.match(/^(https?:|\/)/)) return url;
-
-    // For relative URLs (filenames), try to resolve to page assets
-    const pageId = document
-      .querySelector(".fe-editable")
-      ?.getAttribute("data-page");
-    if (pageId) {
-      return `/site/assets/files/${pageId}/${url}`;
-    }
-    return url;
+    return `${getImageBaseUrl()}${url.replace(/^\/+/, "")}`;
   }
 
   const isRemote = selectedImage?.url.startsWith("http");
@@ -149,7 +150,7 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
     const altInput = sidebar.querySelector("#mfe-picker-alt-input");
     if (selectedImage && onSelect) {
       onSelect({
-        filename: selectedImage.filename,
+        filename: selectedImage.path || selectedImage.filename,
         url: selectedImage.url,
         alt: altInput.value,
       });
@@ -201,7 +202,11 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
     images.forEach((image) => {
       const item = document.createElement("div");
       item.className = "mfe-gallery-item";
-      if (selectedImage && selectedImage.filename === image.filename) {
+      if (
+        selectedImage &&
+        (selectedImage.path === image.path ||
+          selectedImage.filename === image.filename)
+      ) {
         item.classList.add("is-selected");
       }
 
@@ -213,7 +218,11 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
       item.appendChild(img);
 
       item.addEventListener("click", () => {
-        selectedImage = { filename: image.filename, url: image.url };
+        selectedImage = {
+          filename: image.filename,
+          path: image.path || image.filename,
+          url: image.url,
+        };
 
         gallerySection
           .querySelectorAll(".mfe-gallery-item")
@@ -221,7 +230,7 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
         item.classList.add("is-selected");
 
         updatePreview(image.url);
-        filenameLabel.textContent = `image: ${image.filename}`;
+        filenameLabel.textContent = `image: ${image.path || image.filename}`;
         remoteInput.value = ""; // Clear remote input on gallery selection
         addBtn.disabled = false;
       });

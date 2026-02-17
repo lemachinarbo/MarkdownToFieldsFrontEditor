@@ -147,7 +147,7 @@ export const markdownSerializer = new MarkdownSerializer(
     listItem: defaultMarkdownSerializer.nodes.list_item,
     paragraph: defaultMarkdownSerializer.nodes.paragraph,
     image(state, node) {
-      const src = node.attrs.src || node.attrs.originalFilename;
+      const src = node.attrs.originalFilename || node.attrs.src || "";
       state.write(
         "![" +
           state.esc(node.attrs.alt || "") +

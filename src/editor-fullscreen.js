@@ -11,7 +11,7 @@ import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { common, createLowlight } from "lowlight";
-import { Plugin } from "prosemirror-state";
+import { Plugin, NodeSelection } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import { createToolbarButtons } from "./editor-toolbar.js";
 import { renderToolbarButtons } from "./editor-toolbar-renderer.js";
@@ -75,6 +75,110 @@ function getMetaAttr(el, name) {
     el.getAttribute(`data-md-${name}`) ||
     ""
   );
+}
+
+function getImageBaseUrl() {
+  const fromConfig = window.MarkdownFrontEditorConfig?.imageBaseUrl;
+  const base =
+    typeof fromConfig === "string" && fromConfig.trim() !== ""
+      ? fromConfig
+      : "/site/images/";
+  return base.endsWith("/") ? base : `${base}/`;
+}
+
+function parseDataMfeValue(value) {
+  const raw = (value || "").trim();
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  const splitPath = (path) =>
+    (path || "")
+      .split("/")
+      .map((p) => p.trim())
+      .filter(Boolean);
+
+  if (lower.startsWith("section:")) {
+    const parts = splitPath(raw.slice(8));
+    if (!parts.length) return null;
+    return { scope: "section", section: "", subsection: "", name: parts[0] };
+  }
+  if (lower.startsWith("sub:") || lower.startsWith("subsection:")) {
+    const path = lower.startsWith("sub:") ? raw.slice(4) : raw.slice(11);
+    const parts = splitPath(path.replace(/:/g, "/"));
+    if (parts.length < 2) return null;
+    return { scope: "subsection", section: parts[0], subsection: "", name: parts[1] };
+  }
+  if (lower.startsWith("field:")) {
+    const parts = splitPath(raw.slice(6));
+    if (parts.length === 1) {
+      return { scope: "field", section: "", subsection: "", name: parts[0] };
+    }
+    if (parts.length === 2) {
+      return { scope: "field", section: parts[0], subsection: "", name: parts[1] };
+    }
+    return {
+      scope: "field",
+      section: parts[0] || "",
+      subsection: parts[1] || "",
+      name: parts[2] || "",
+    };
+  }
+
+  const parts = splitPath(raw);
+  if (parts.length === 1) {
+    return { scope: "auto", section: "", subsection: "", name: parts[0] };
+  }
+  if (parts.length === 2) {
+    return { scope: "auto", section: parts[0], subsection: "", name: parts[1] };
+  }
+  return {
+    scope: "field",
+    section: parts[0] || "",
+    subsection: parts[1] || "",
+    name: parts[2] || "",
+  };
+}
+
+function dataMfeMatchesActive(rawValue, scope, section, subsection, name) {
+  const parsed = parseDataMfeValue(rawValue);
+  if (!parsed) return false;
+
+  if (scope === "subsection") {
+    if (
+      parsed.scope === "subsection" &&
+      (parsed.section || "") === (section || "") &&
+      (parsed.name || "") === (name || "")
+    ) {
+      return true;
+    }
+    if (
+      parsed.scope === "auto" &&
+      (parsed.section || "") === (section || "") &&
+      (parsed.name || "") === (name || "")
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  if (scope === "section") {
+    return (
+      (parsed.scope === "section" && (parsed.name || "") === (name || "")) ||
+      (parsed.scope === "auto" &&
+        !parsed.section &&
+        (parsed.name || "") === (name || ""))
+    );
+  }
+
+  if (scope === "field") {
+    if (parsed.scope !== "field") return false;
+    return (
+      (parsed.section || "") === (section || "") &&
+      (parsed.subsection || "") === (subsection || "") &&
+      (parsed.name || "") === (name || "")
+    );
+  }
+
+  return false;
 }
 
 function buildFieldId(pageId, scope, section, subsection, name) {
@@ -230,18 +334,8 @@ function createEditorInstance(element, fieldType, fieldName) {
                   return { src: attributes.src };
                 }
 
-                // For relative URLs, try to resolve to page assets
-                const pageId = document
-                  .querySelector(".fe-editable")
-                  ?.getAttribute("data-page");
-                if (pageId) {
-                  // Use ProcessWire's page assets URL pattern
-                  const assetUrl = `/site/assets/files/${pageId}/${attributes.src}`;
-                  return { src: assetUrl };
-                }
-
-                // Fallback to original src
-                return { src: attributes.src };
+                const resolvedSrc = `${getImageBaseUrl()}${attributes.src.replace(/^\/+/, "")}`;
+                return { src: resolvedSrc };
               },
             },
             originalFilename: {
@@ -251,6 +345,12 @@ function createEditorInstance(element, fieldType, fieldName) {
         },
         addNodeView() {
           return ({ node, HTMLAttributes, getPos, editor }) => {
+            const resolveImageSrc = (src) => {
+              if (!src) return "";
+              if (src.match(/^(https?:|\/|\?|\/\/)/)) return src;
+              return `${getImageBaseUrl()}${src.replace(/^\/+/, "")}`;
+            };
+
             const container = document.createElement("span");
             container.classList.add("mfe-tiptap-image-container");
 
@@ -274,12 +374,29 @@ function createEditorInstance(element, fieldType, fieldName) {
               e.preventDefault();
               e.stopPropagation();
               if (window.mfeOpenImagePicker) {
-                window.mfeOpenImagePicker(node.attrs);
+                const imagePos = typeof getPos === "function" ? getPos() : null;
+                window.mfeOpenImagePicker(node.attrs, imagePos);
               }
             };
 
             return {
               dom: container,
+              update: (updatedNode) => {
+                if (updatedNode.type.name !== "image") return false;
+                const src = resolveImageSrc(updatedNode.attrs.src);
+                if (src) {
+                  img.setAttribute("src", src);
+                } else {
+                  img.removeAttribute("src");
+                }
+                img.setAttribute("alt", updatedNode.attrs.alt || "");
+                if (updatedNode.attrs.title) {
+                  img.setAttribute("title", updatedNode.attrs.title);
+                } else {
+                  img.removeAttribute("title");
+                }
+                return true;
+              },
             };
           };
         },
@@ -297,7 +414,7 @@ function createEditorInstance(element, fieldType, fieldName) {
                 ) => {
                   if (node.type.name === "image") {
                     if (window.mfeOpenImagePicker) {
-                      window.mfeOpenImagePicker(node.attrs);
+                      window.mfeOpenImagePicker(node.attrs, nodePos);
                     }
                     return true;
                   }
@@ -671,7 +788,7 @@ function cleanupEditorOnly() {
 /**
  * Open image picker and insert selected image
  */
-function openImagePicker(initialData = null) {
+function openImagePicker(initialData = null, imagePos = null) {
   const editor = activeEditor || primaryEditor;
   if (!editor) return;
 
@@ -682,11 +799,24 @@ function openImagePicker(initialData = null) {
       const editor = activeEditor || primaryEditor;
       if (!editor) return;
 
-      const { selection } = editor.state;
-      const isImageSelected =
-        selection.node && selection.node.type.name === "image";
+      let shouldReplaceSelectedImage = false;
+      if (typeof imagePos === "number") {
+        const imageNode = editor.state.doc.nodeAt(imagePos);
+        if (imageNode && imageNode.type.name === "image") {
+          const tr = editor.state.tr.setSelection(
+            NodeSelection.create(editor.state.doc, imagePos),
+          );
+          editor.view.dispatch(tr);
+          shouldReplaceSelectedImage = true;
+        }
+      }
+      if (!shouldReplaceSelectedImage) {
+        const { selection } = editor.state;
+        shouldReplaceSelectedImage =
+          selection.node && selection.node.type.name === "image";
+      }
 
-      if (isImageSelected) {
+      if (shouldReplaceSelectedImage) {
         editor
           .chain()
           .focus()
@@ -1332,7 +1462,7 @@ function openFullscreenEditorFromPayload(payload) {
             }
 
             // 1. Update EVERY .fe-editable element on the page
-            let matchedCount = 0;
+            let activeTargetMatched = false;
             document.querySelectorAll(".fe-editable").forEach((el) => {
               const elPageId = el.getAttribute("data-page");
               const elName = getMetaAttr(el, "name");
@@ -1373,7 +1503,9 @@ function openFullscreenEditorFromPayload(payload) {
 
               if (html) {
                 el.innerHTML = html;
-                matchedCount++;
+                if (el === activeTarget) {
+                  activeTargetMatched = true;
+                }
 
                 if (markdowns[elId] || (elSubId && markdowns[elSubId]) || markdowns[elName]) {
                   el.dataset.markdown =
@@ -1383,10 +1515,28 @@ function openFullscreenEditorFromPayload(payload) {
                 }
               }
             });
-
             // 2. Extra safety for active editor
             if (activeTarget && primaryHtml) {
               activeTarget.dataset.markdown = finalMarkdown;
+              if (!activeTargetMatched) {
+                activeTarget.innerHTML = primaryHtml;
+              }
+              if (!activeTarget?.isConnected) {
+                document.querySelectorAll("[data-mfe]").forEach((host) => {
+                  const value = host.getAttribute("data-mfe") || "";
+                  if (
+                    dataMfeMatchesActive(
+                      value,
+                      activeFieldScope,
+                      activeFieldSection,
+                      activeFieldSubsection,
+                      activeFieldName,
+                    )
+                  ) {
+                    host.innerHTML = primaryHtml;
+                  }
+                });
+              }
 
               if (primaryEditor) {
                 const selection = primaryEditor.state.selection;

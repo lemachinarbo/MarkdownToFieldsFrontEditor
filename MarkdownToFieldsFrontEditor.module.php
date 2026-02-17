@@ -14,7 +14,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
             'summary' => 'Frontend editor for MarkdownToFields.',
-            'version' =>  '0.4.4',
+            'version' =>  '0.4.5',
             'autoload' => true,
             'singular' => true,
             'requires' => ['MarkdownToFields'],
@@ -229,6 +229,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'editableTargets' => $this->getEditableTargets(),
             'languages' => $langList,
             'currentLanguage' => $currentLangCode,
+            'imageBaseUrl' => rtrim((string)$this->wire()->config->urls->site, '/') . '/images/',
             'buildStamp' => $version,
             'sectionsIndex' => $sectionsIndex,
             'fieldsIndex' => $fieldsIndex,
@@ -670,26 +671,35 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                     continue;
                 }
 
+                $fullPathNorm = rtrim($fullPath, '/') . '/';
+
                 try {
-                    $files = new \DirectoryIterator($fullPath);
+                    $files = new \RecursiveIteratorIterator(
+                        new \RecursiveDirectoryIterator(
+                            $fullPathNorm,
+                            \FilesystemIterator::SKIP_DOTS
+                        )
+                    );
                 } catch (\Throwable $e) {
                     $missingDirs[] = $fullPath;
                     continue;
                 }
                 foreach ($files as $file) {
-                    if ($file->isDot() || $file->isDir()) continue;
+                    if (!$file->isFile()) continue;
                     
                     $ext = strtolower($file->getExtension());
                     if (!in_array($ext, $allowedExtensions, true)) continue;
 
                     $filename = $file->getFilename();
-                    $fullPathNorm = rtrim($fullPath, '/') . '/';
+                    $fullFilename = str_replace('\\', '/', $file->getPathname());
+                    $relativeSourcePath = ltrim(substr($fullFilename, strlen($fullPathNorm)), '/');
+                    $relativeSourcePath = str_replace('\\', '/', $relativeSourcePath);
 
                     if ($fullPathNorm === $siteImagesNorm || ($projectSiteImagesNorm && $fullPathNorm === $projectSiteImagesNorm)) {
-                        $url = $siteUrl . 'images/' . $filename;
+                        $url = $siteUrl . 'images/' . $relativeSourcePath;
                     } elseif ($sitePath && str_starts_with($fullPathNorm, $sitePath)) {
                         $relativePath = ltrim(substr($fullPathNorm, strlen($sitePath)), '/');
-                        $url = $siteUrl . rtrim($relativePath, '/') . '/' . $filename;
+                        $url = $siteUrl . rtrim($relativePath, '/') . '/' . $relativeSourcePath;
                     } else {
                         if (!$warnedOutsideRoot && $rootPath && !str_starts_with($fullPathNorm, $rootPath)) {
                             $this->logInfo(sprintf(
@@ -699,11 +709,12 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                             $warnedOutsideRoot = true;
                         }
                         $relativePath = $rootPath ? str_replace($rootPath, '/', $fullPathNorm) : $fullPathNorm;
-                        $url = rtrim($relativePath, '/') . '/' . $filename;
+                        $url = rtrim($relativePath, '/') . '/' . $relativeSourcePath;
                     }
 
                     $images[] = [
                         'filename' => $filename,
+                        'path' => $relativeSourcePath,
                         'url' => $url,
                         'size' => $file->getSize(),
                     ];

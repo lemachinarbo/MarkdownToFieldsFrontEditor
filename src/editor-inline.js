@@ -4,7 +4,7 @@ import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { common, createLowlight } from "lowlight";
-import { Plugin } from "prosemirror-state";
+import { Plugin, NodeSelection } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import {
   inlineHtmlTags,
@@ -399,6 +399,15 @@ function getMetaAttr(el, name) {
   );
 }
 
+function getImageBaseUrl() {
+  const fromConfig = window.MarkdownFrontEditorConfig?.imageBaseUrl;
+  const base =
+    typeof fromConfig === "string" && fromConfig.trim() !== ""
+      ? fromConfig
+      : "/site/images/";
+  return base.endsWith("/") ? base : `${base}/`;
+}
+
 function applyDataMfeLabelAttributes(el) {
   if (!el) return;
   const parsed = parseDataMfe(el.getAttribute("data-mfe"));
@@ -730,18 +739,8 @@ function createEditorInstance(host, fieldType, fieldName) {
                   return { src: attributes.src };
                 }
 
-                // For relative URLs, try to resolve to page assets
-                const pageId = document
-                  .querySelector(".fe-editable")
-                  ?.getAttribute("data-page");
-                if (pageId) {
-                  // Use ProcessWire's page assets URL pattern
-                  const assetUrl = `/site/assets/files/${pageId}/${attributes.src}`;
-                  return { src: assetUrl };
-                }
-
-                // Fallback to original src
-                return { src: attributes.src };
+                const resolvedSrc = `${getImageBaseUrl()}${attributes.src.replace(/^\/+/, "")}`;
+                return { src: resolvedSrc };
               },
             },
             originalFilename: {
@@ -751,6 +750,12 @@ function createEditorInstance(host, fieldType, fieldName) {
         },
         addNodeView() {
           return ({ node, HTMLAttributes, getPos, editor }) => {
+            const resolveImageSrc = (src) => {
+              if (!src) return "";
+              if (src.match(/^(https?:|\/|\?|\/\/)/)) return src;
+              return `${getImageBaseUrl()}${src.replace(/^\/+/, "")}`;
+            };
+
             const container = document.createElement("span");
             container.classList.add("mfe-tiptap-image-container");
 
@@ -774,12 +779,29 @@ function createEditorInstance(host, fieldType, fieldName) {
               e.preventDefault();
               e.stopPropagation();
               if (window.mfeOpenImagePicker) {
-                window.mfeOpenImagePicker(node.attrs);
+                const imagePos = typeof getPos === "function" ? getPos() : null;
+                window.mfeOpenImagePicker(node.attrs, imagePos);
               }
             };
 
             return {
               dom: container,
+              update: (updatedNode) => {
+                if (updatedNode.type.name !== "image") return false;
+                const src = resolveImageSrc(updatedNode.attrs.src);
+                if (src) {
+                  img.setAttribute("src", src);
+                } else {
+                  img.removeAttribute("src");
+                }
+                img.setAttribute("alt", updatedNode.attrs.alt || "");
+                if (updatedNode.attrs.title) {
+                  img.setAttribute("title", updatedNode.attrs.title);
+                } else {
+                  img.removeAttribute("title");
+                }
+                return true;
+              },
             };
           };
         },
@@ -797,7 +819,7 @@ function createEditorInstance(host, fieldType, fieldName) {
                 ) => {
                   if (node.type.name === "image") {
                     if (window.mfeOpenImagePicker) {
-                      window.mfeOpenImagePicker(node.attrs);
+                      window.mfeOpenImagePicker(node.attrs, nodePos);
                     }
                     return true;
                   }
@@ -922,6 +944,7 @@ function saveField(fieldId, markdown) {
             : htmlMap[fieldId] || htmlMap[mdName];
 
         // 1. Update ALL .fe-editable elements on the page that match something in the map
+        let activeTargetMatched = false;
         document.querySelectorAll(".fe-editable").forEach((el) => {
           const elName = getMetaAttr(el, "name");
           const elScope = getMetaAttr(el, "scope") || "field";
@@ -947,6 +970,7 @@ function saveField(fieldId, markdown) {
 
           if (html) {
             originalHtml.set(el, html);
+            if (el === activeTarget) activeTargetMatched = true;
 
             // If this is the active editor, update TipTap state
             if (el === activeTarget && activeEditor) {
@@ -960,6 +984,18 @@ function saveField(fieldId, markdown) {
             }
           }
         });
+        if (!activeTargetMatched && target && primaryHtml) {
+          originalHtml.set(target, primaryHtml);
+          if (activeEditor && target === activeTarget) {
+            const selection = activeEditor.state.selection;
+            activeEditor.commands.setContent(primaryHtml, false);
+            try {
+              activeEditor.commands.setTextSelection(selection);
+            } catch (e) {}
+          } else {
+            target.innerHTML = primaryHtml;
+          }
+        }
 
       }
       target.dataset.markdown = finalMarkdown;
@@ -1117,7 +1153,7 @@ function saveBatch(pageId, fields) {
 /**
  * Open image picker and insert selected image
  */
-function openImagePickerInline(initialData = null) {
+function openImagePickerInline(initialData = null, imagePos = null) {
   if (!activeEditor) return;
 
   createImagePicker({
@@ -1126,11 +1162,24 @@ function openImagePickerInline(initialData = null) {
       // imageData is { filename, url, alt }
       if (!activeEditor) return;
 
-      const { selection } = activeEditor.state;
-      const isImageSelected =
-        selection.node && selection.node.type.name === "image";
+      let shouldReplaceSelectedImage = false;
+      if (typeof imagePos === "number") {
+        const imageNode = activeEditor.state.doc.nodeAt(imagePos);
+        if (imageNode && imageNode.type.name === "image") {
+          const tr = activeEditor.state.tr.setSelection(
+            NodeSelection.create(activeEditor.state.doc, imagePos),
+          );
+          activeEditor.view.dispatch(tr);
+          shouldReplaceSelectedImage = true;
+        }
+      }
+      if (!shouldReplaceSelectedImage) {
+        const { selection } = activeEditor.state;
+        shouldReplaceSelectedImage =
+          selection.node && selection.node.type.name === "image";
+      }
 
-      if (isImageSelected) {
+      if (shouldReplaceSelectedImage) {
         activeEditor
           .chain()
           .focus()
@@ -1172,9 +1221,9 @@ function openImagePickerInline(initialData = null) {
 // Override global check to ensure picker uses our inline context when active
 if (window.mfeOpenImagePicker) {
   const originalOpen = window.mfeOpenImagePicker;
-  window.mfeOpenImagePicker = (data) => {
-    if (activeEditor) return openImagePickerInline(data);
-    return originalOpen(data);
+  window.mfeOpenImagePicker = (data, imagePos = null) => {
+    if (activeEditor) return openImagePickerInline(data, imagePos);
+    return originalOpen(data, imagePos);
   };
 } else {
   window.mfeOpenImagePicker = openImagePickerInline;
