@@ -404,7 +404,7 @@ function getImageBaseUrl() {
   const base =
     typeof fromConfig === "string" && fromConfig.trim() !== ""
       ? fromConfig
-      : "/site/images/";
+      : "/";
   return base.endsWith("/") ? base : `${base}/`;
 }
 

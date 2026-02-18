@@ -14,7 +14,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
             'summary' => 'Frontend editor for MarkdownToFields.',
-            'version' =>  '0.4.6.1',
+            'version' =>  '0.4.6.2',
             'autoload' => true,
             'singular' => true,
             'requires' => ['MarkdownToFields'],
@@ -656,7 +656,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $cfg = $this->wire()->config;
             $sitePath = rtrim((string)($cfg->paths->site ?? ''), '/') . '/';
             $siteImages = $sitePath . 'images/';
-            $siteUrl = rtrim((string)($cfg->urls->site ?? '/site/'), '/') . '/';
+            $siteUrl = rtrim((string)($cfg->urls->site ?? '/'), '/') . '/';
             $projectRoot = rtrim((string)($cfg->paths->projectRoot ?? ''), '/') . '/';
             $projectSiteImages = $projectRoot !== '/' ? $projectRoot . 'src/site/images/' : '';
             $rootPath = rtrim((string)($cfg->paths->root ?? ''), '/') . '/';

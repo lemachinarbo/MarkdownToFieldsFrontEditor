@@ -23,33 +23,6 @@ It is NOT a standalone module. It only works **together** with MarkdownToFields.
 
 <img src="docs/fullscreen.png" width="700">
 
-## What's New
-
-**0.4.3**
-- New optional `data-mfe` hosts for precise section/subsection rollovers in complex templates.
-
-
-**0.4.2**
-- Marker labels now render with section/sub/field styles and stay non‑editable.
-- Unified markdown → editor rendering for inline/fullscreen (more consistent markers and output).
-- Split view translations are more stable across field/section switches.
-- Image picker listing hardened for missing/permissioned folders.
-- Inline HTML is preserved on save: `strong`, `em`, `del`, `u`, `sup`, `sub`, `br` (no `span`).
-
-**0.4.2.beta.2**
-- Image support (images in editor can be updated on double click).
-
-**0.4.1**
-- Breadcrumbs in fullscreen allow you to edit ancestors (section > subsection > container > field).
-- Section breadcrumb is disabled when the section has no direct content.
-  
-**0.4**
-- Adds sections/subsections support.
-- New hybrid system: inline editing + fullscreen editing.
-
-**0.3**
-- Official launch of the front-end editor tested in one machine, one installation, one browser.
-
 
 ## Install
 

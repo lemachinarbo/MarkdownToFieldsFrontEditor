@@ -22,7 +22,7 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
     const fromConfig = window.MarkdownFrontEditorConfig?.imageBaseUrl;
     const base = typeof fromConfig === "string" && fromConfig.trim() !== ""
       ? fromConfig
-      : "/site/images/";
+      : "/";
     return base.endsWith("/") ? base : `${base}/`;
   }
 

@@ -82,7 +82,7 @@ function getImageBaseUrl() {
   const base =
     typeof fromConfig === "string" && fromConfig.trim() !== ""
       ? fromConfig
-      : "/site/images/";
+      : "/";
   return base.endsWith("/") ? base : `${base}/`;
 }
 
@@ -1953,9 +1953,13 @@ function resolveHostImageSrc(host, src) {
 
   const firstHostImage = host.querySelector("img");
   const currentSrc = firstHostImage?.getAttribute("src") || "";
-  const currentAssetMatch = currentSrc.match(/^(.*\/site\/assets\/files\/\d+\/)[^/?#]+/i);
-  if (currentAssetMatch?.[1]) {
-    return `${currentAssetMatch[1]}${cleanName}`;
+  const currentPath = currentSrc.split("?")[0].split("#")[0];
+  const slashIndex = currentPath.lastIndexOf("/");
+  if (slashIndex > -1) {
+    const currentDir = currentPath.slice(0, slashIndex + 1);
+    if (currentDir) {
+      return `${currentDir}${cleanName}`;
+    }
   }
 
   const filesBaseFromConfig = window.MarkdownFrontEditorConfig?.pageFilesBaseUrl;
@@ -1970,7 +1974,7 @@ function resolveHostImageSrc(host, src) {
   const fromConfig = window.MarkdownFrontEditorConfig?.imageBaseUrl;
   const base = typeof fromConfig === "string" && fromConfig.trim() !== ""
     ? fromConfig
-    : "/site/images/";
+    : "/";
   const normalizedBase = base.endsWith("/") ? base : `${base}/`;
   return `${normalizedBase}${value.replace(/^\/+/, "")}`;
 }
