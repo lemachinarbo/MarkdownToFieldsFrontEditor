@@ -1,5 +1,10 @@
 
 # Todo
+- Image picker:
+  - How it sort the images?
+  - It loads them full resolution? we need a prebatch thumb.
+  - Add a search bar to find images by name.
+  - Add sorter (date, name, size, folder is a sort option)
 - container fields labels do not appear in the editor
 - Implement a Notion-like editor.
 - Add an edit all document option
