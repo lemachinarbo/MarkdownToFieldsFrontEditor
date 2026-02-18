@@ -127,6 +127,7 @@ body.mfe-no-scroll {
   padding: 0;
   margin: 0;
   font: inherit;
+  font-weight: 400;
   cursor: pointer;
   text-decoration: none;
   color: #0f172a;

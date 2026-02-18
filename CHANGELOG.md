@@ -4,6 +4,9 @@
 - Removed hardcoded frontend path assumptions (`/site/images`, `/site/assets/files`); image URL resolution is now ProcessWire-config-first (`pageFilesBaseUrl`, `imageBaseUrl`) with generic fallbacks.
 - Fixed subsection/section image live-refresh matching for `data-mfe` hosts in disconnected-target saves.
 - Empty section/subsection/container zones can now be opened from rollover/double-click even when their markdown is currently empty.
+- Switched live preview sync to strict changed-key mounts (section/subsection/field) to avoid broad/fuzzy DOM replacement side effects.
+- Added cross-scope draft carry while navigating breadcrumbs; pending drafts can now be saved even when current scope has no direct markdown.
+- Breadcrumb trail now stays anchored to the original opened path during breadcrumb navigation, so context is preserved while moving up/down scopes.
 
 ## V0.4.6.1
 

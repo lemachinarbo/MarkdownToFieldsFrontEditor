@@ -33,6 +33,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'debugShowSections' => false,
             'debugShowLabels' => false,
             'labelStyle' => 'outside',
+            'confirmOnUnsavedClose' => true,
         ];
     }
 
@@ -107,6 +108,17 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $labelStyleField->columnWidth = 100;
         $inputfields->add($labelStyleField);
 
+        $confirmUnsavedField = wire('modules')->get('InputfieldCheckbox');
+        $confirmUnsavedField->name = 'confirmOnUnsavedClose';
+        $confirmUnsavedField->label = 'Prompt Before Closing Unsaved Editor';
+        $confirmUnsavedField->description = 'When enabled, closing the fullscreen editor (Escape/close button) asks confirmation if there are unsaved changes.';
+        $confirmUnsavedField->value = 1;
+        $confirmUnsavedField->checked = array_key_exists('confirmOnUnsavedClose', $data)
+            ? !empty($data['confirmOnUnsavedClose'])
+            : !empty($defaults['confirmOnUnsavedClose']);
+        $confirmUnsavedField->columnWidth = 100;
+        $inputfields->add($confirmUnsavedField);
+
         return $inputfields;
     }
 
@@ -135,6 +147,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'debugShowSections' => $defaults['debugShowSections'],
             'debugShowLabels' => $defaults['debugShowLabels'],
             'labelStyle' => $defaults['labelStyle'],
+            'confirmOnUnsavedClose' => $defaults['confirmOnUnsavedClose'],
         ]);
     }
 
@@ -237,6 +250,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'debugShowSections' => (bool)($this->debugShowSections ?? false),
             'debugLabels' => (bool)($this->debugShowLabels ?? false),
             'labelStyle' => (string)($this->labelStyle ?? $defaults['labelStyle']),
+            'confirmOnUnsavedClose' => (bool)($this->confirmOnUnsavedClose ?? $defaults['confirmOnUnsavedClose']),
         ];
         $configScript = "<script>window.MarkdownFrontEditorConfig=" . json_encode($frontConfig) . ";document.body.setAttribute('data-mfe-build','{$version}');</script>";
 
@@ -840,6 +854,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 $updatedMarkdown = $fullMarkdown;
                 $skipped = [];
                 $replaced = 0;
+                $changedKeys = [];
 
                 foreach ($fieldEntries as $entry) {
                     $key = $entry['key'];
@@ -882,6 +897,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                     }
                     $updatedMarkdown = $replaceResult['document'];
                     $replaced += 1;
+                    $changedKeys[] = $this->scopedHtmlKey($scope, $mdName, $sectionName);
                 }
 
                 if ($replaced > 0) {
@@ -912,12 +928,17 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
             $allHtml = $this->getAllFieldsHtml($content);
             $finalHtmlMap = array_merge($allHtml, $htmlMap);
+            $expandedChanged = $this->expandChangedHtmlKeys(
+                array_values(array_unique($changedKeys ?? [])),
+                $finalHtmlMap
+            );
 
             header('Content-Type: application/json');
             echo json_encode([
                 'status' => 1, 
                 'html' => $finalHtmlMap, 
                 'htmlMap' => $finalHtmlMap,
+                'changed' => $expandedChanged,
                 'sectionsIndex' => $this->buildSectionsIndex($page),
                 'fieldsIndex' => $this->buildFieldsIndex($page),
                 'skipped' => $skipped ?? []
@@ -967,6 +988,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $rawContent = $this->parseRawMarkdownDocument($fullMarkdown);
             $oldFieldMarkdown = $this->findScopedMarkdown($rawContent, $mdScope, $mdName, $mdSection ?? '');
             $handledByEmptyScopeInsert = false;
+            $changedKeys = [];
 
             if (($mdScope === 'section' || $mdScope === 'subsection') && trim($blockMarkdown) !== '') {
                 if ($oldFieldMarkdown === null || trim((string)$oldFieldMarkdown) === '') {
@@ -981,6 +1003,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         if ($insertedMarkdown !== $fullMarkdown) {
                             \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $insertedMarkdown, $languageCode);
                             $this->logInfo("INSERT_EMPTY_SCOPE: mdName='{$mdName}' scope='{$mdScope}' section='{$mdSection}'");
+                            $changedKeys[] = $this->scopedHtmlKey($mdScope, $mdName, (string)($mdSection ?? ''));
                         }
                         $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
                         if (!$content) {
@@ -1030,6 +1053,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 // Use MarkdownFileIO's native save mechanism (respect current language or override)
                 \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $updatedMarkdown, $languageCode);
                 $this->logInfo("SUCCESS: Markdown file updated");
+                $changedKeys[] = $this->scopedHtmlKey($mdScope, $mdName, (string)($mdSection ?? ''));
                 $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
                 
                 if (!$content) {
@@ -1080,11 +1104,17 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $allHtml[$mdName] = $canonicalHtml;
         }
 
+        $expandedChanged = $this->expandChangedHtmlKeys(
+            array_values(array_unique($changedKeys ?? [])),
+            $allHtml
+        );
+
         header('Content-Type: application/json');
         echo json_encode([
             'status' => 1, 
             'html' => $canonicalHtml, // For fallback
             'htmlMap' => $allHtml,    // Primary source for syncing
+            'changed' => $expandedChanged,
             'sectionsIndex' => $this->buildSectionsIndex($page),
             'fieldsIndex' => $this->buildFieldsIndex($page),
             'fieldId' => $requestedFieldId
@@ -1669,6 +1699,69 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             }
         }
         return $htmlMap;
+    }
+
+    protected function scopedHtmlKey(string $scope, string $name, string $sectionName = ''): string {
+        if ($scope === 'section') {
+            return "section:{$name}";
+        }
+        if ($scope === 'subsection') {
+            return "subsection:{$sectionName}:{$name}";
+        }
+        if ($scope === 'field') {
+            if ($sectionName !== '') {
+                return "field:{$sectionName}:{$name}";
+            }
+            return "field:{$name}";
+        }
+        if ($scope === 'block') {
+            if ($sectionName !== '') {
+                return "block:{$sectionName}:{$name}";
+            }
+            return "block:{$name}";
+        }
+        return "{$scope}:{$name}";
+    }
+
+    protected function expandChangedHtmlKeys(array $changedKeys, array $htmlMap): array {
+        $out = [];
+        foreach ($changedKeys as $key) {
+            $keyStr = (string)$key;
+            if ($keyStr === '') continue;
+            $out[$keyStr] = true;
+
+            if (str_starts_with($keyStr, 'section:')) {
+                $parts = explode(':', $keyStr, 2);
+                $section = $parts[1] ?? '';
+                if ($section !== '') {
+                    foreach ($htmlMap as $mapKey => $_html) {
+                        $mk = (string)$mapKey;
+                        if (str_starts_with($mk, "field:{$section}:") || str_starts_with($mk, "subsection:{$section}:")) {
+                            $out[$mk] = true;
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if (str_starts_with($keyStr, 'subsection:')) {
+                $parts = explode(':', $keyStr);
+                if (count($parts) >= 3) {
+                    $section = $parts[1] ?? '';
+                    $sub = $parts[2] ?? '';
+                    if ($section !== '' && $sub !== '') {
+                        $prefix = "subsection:{$section}:{$sub}:";
+                        foreach ($htmlMap as $mapKey => $_html) {
+                            $mk = (string)$mapKey;
+                            if (str_starts_with($mk, $prefix)) {
+                                $out[$mk] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return array_keys($out);
     }
 
 }

@@ -139,6 +139,7 @@ export function openWindow({
   id = "",
   content,
   onClose,
+  onBeforeClose,
   onMount,
   showMenuBar = true,
   menuBarDisabled = false,
@@ -205,6 +206,7 @@ export function openWindow({
     id,
     dom: overlay,
     onClose,
+    onBeforeClose,
     breadcrumbLabel,
     breadcrumbItems,
     breadcrumbClickHandler,
@@ -224,6 +226,11 @@ export function openWindow({
  */
 export function closeTopWindow() {
   if (windowStack.length === 0) return;
+
+  const top = windowStack[windowStack.length - 1];
+  if (top?.onBeforeClose && top.onBeforeClose() === false) {
+    return;
+  }
 
   const win = windowStack.pop();
 
@@ -256,6 +263,11 @@ export function closeWindow(winOrId) {
       : windowStack.indexOf(winOrId);
 
   if (index === -1) return;
+
+  const candidate = windowStack[index];
+  if (candidate?.onBeforeClose && candidate.onBeforeClose() === false) {
+    return;
+  }
 
   const [win] = windowStack.splice(index, 1);
   if (win.dom && win.dom.parentNode) {
