@@ -860,9 +860,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         continue;
                     }
 
+                    $blockMarkdown = $this->preserveMarkdownFormattingFromOriginal($oldFieldMarkdown, $blockMarkdown);
                     $mergedImageOnly = $this->mergeImageSrcOnlyChange($oldFieldMarkdown, $blockMarkdown);
                     if ($mergedImageOnly !== null) {
                         $blockMarkdown = $mergedImageOnly;
+                        $this->logDebug(
+                            "IMAGE_ONLY_MERGE batch key='{$key}' scope='{$scope}' section='{$sectionName}'"
+                        );
                     }
                     if ($oldFieldMarkdown === $blockMarkdown) {
                         continue;
@@ -962,48 +966,78 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $fullMarkdown = $this->loadRawMarkdownDocument($page, $languageCode);
             $rawContent = $this->parseRawMarkdownDocument($fullMarkdown);
             $oldFieldMarkdown = $this->findScopedMarkdown($rawContent, $mdScope, $mdName, $mdSection ?? '');
-            
-            if ($oldFieldMarkdown === null) {
-                $this->sendJsonError('Field not found in content: ' . $mdName, 400);
-            }
-            $mergedImageOnly = $this->mergeImageSrcOnlyChange($oldFieldMarkdown, $blockMarkdown);
-            if ($mergedImageOnly !== null) {
-                $blockMarkdown = $mergedImageOnly;
-            }
-            if ($oldFieldMarkdown === $blockMarkdown) {
-                $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
-                if (!$content) {
-                    throw new \ProcessWire\WireException("Failed to load markdown content for language '{$languageCode}'.");
+            $handledByEmptyScopeInsert = false;
+
+            if (($mdScope === 'section' || $mdScope === 'subsection') && trim($blockMarkdown) !== '') {
+                if ($oldFieldMarkdown === null || trim((string)$oldFieldMarkdown) === '') {
+                    $insertedMarkdown = $this->insertIntoEmptyScopedMarkdownBlock(
+                        $fullMarkdown,
+                        $mdScope,
+                        $mdName,
+                        (string)($mdSection ?? ''),
+                        $blockMarkdown
+                    );
+                    if ($insertedMarkdown !== null) {
+                        if ($insertedMarkdown !== $fullMarkdown) {
+                            \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $insertedMarkdown, $languageCode);
+                            $this->logInfo("INSERT_EMPTY_SCOPE: mdName='{$mdName}' scope='{$mdScope}' section='{$mdSection}'");
+                        }
+                        $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
+                        if (!$content) {
+                            throw new \ProcessWire\WireException("Failed to reload fresh content after empty-scope insert.");
+                        }
+                        $handledByEmptyScopeInsert = true;
+                    }
                 }
-                $this->logInfo("NOOP: unchanged markdown for '{$mdName}'");
-            } else {
-            // Proceed with save even if unchanged to ensure fresh sync and HTML generation
-            $this->logInfo("REQUEST: Beginning save process for '{$mdName}'");
-            
-            // Simple string replacement - preserves all markdown formatting
-            $replaceResult = $this->replaceUniqueMarkdownBlock($fullMarkdown, $oldFieldMarkdown, $blockMarkdown);
-            if ($replaceResult['status'] === 'missing') {
-                $this->sendJsonError('Failed to find field content for replacement', 400);
-            }
-            if ($replaceResult['status'] === 'ambiguous') {
-                $this->sendJsonError('Ambiguous field content: duplicate markdown block found. Save aborted to avoid cross-field mutation.', 409);
-            }
-            $updatedMarkdown = $replaceResult['document'];
-            
-            $this->logDebug(
-                "SAVE: Before saving - oldField='" . substr($oldFieldMarkdown, 0, 50) . "' blockMarkdown='" . substr($blockMarkdown, 0, 50) . "'"
-            );
-            
-            // Use MarkdownFileIO's native save mechanism (respect current language or override)
-            \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $updatedMarkdown, $languageCode);
-            $this->logInfo("SUCCESS: Markdown file updated");
-            $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
-            
-            if (!$content) {
-                throw new \ProcessWire\WireException("Failed to reload fresh content after save.");
             }
 
-            $this->logDebug("RESPONSE: loadContent completed via direct IO");
+            if (!$handledByEmptyScopeInsert) {
+                if ($oldFieldMarkdown === null) {
+                    $this->sendJsonError('Field not found in content: ' . $mdName, 400);
+                }
+                $blockMarkdown = $this->preserveMarkdownFormattingFromOriginal($oldFieldMarkdown, $blockMarkdown);
+                $mergedImageOnly = $this->mergeImageSrcOnlyChange($oldFieldMarkdown, $blockMarkdown);
+                if ($mergedImageOnly !== null) {
+                    $blockMarkdown = $mergedImageOnly;
+                    $this->logDebug(
+                        "IMAGE_ONLY_MERGE single mdName='{$mdName}' scope='{$mdScope}' section='{$mdSection}'"
+                    );
+                }
+                if ($oldFieldMarkdown === $blockMarkdown) {
+                    $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
+                    if (!$content) {
+                        throw new \ProcessWire\WireException("Failed to load markdown content for language '{$languageCode}'.");
+                    }
+                    $this->logInfo("NOOP: unchanged markdown for '{$mdName}'");
+                } else {
+                // Proceed with save even if unchanged to ensure fresh sync and HTML generation
+                $this->logInfo("REQUEST: Beginning save process for '{$mdName}'");
+                
+                // Simple string replacement - preserves all markdown formatting
+                $replaceResult = $this->replaceUniqueMarkdownBlock($fullMarkdown, $oldFieldMarkdown, $blockMarkdown);
+                if ($replaceResult['status'] === 'missing') {
+                    $this->sendJsonError('Failed to find field content for replacement', 400);
+                }
+                if ($replaceResult['status'] === 'ambiguous') {
+                    $this->sendJsonError('Ambiguous field content: duplicate markdown block found. Save aborted to avoid cross-field mutation.', 409);
+                }
+                $updatedMarkdown = $replaceResult['document'];
+                
+                $this->logDebug(
+                    "SAVE: Before saving - oldField='" . substr($oldFieldMarkdown, 0, 50) . "' blockMarkdown='" . substr($blockMarkdown, 0, 50) . "'"
+                );
+                
+                // Use MarkdownFileIO's native save mechanism (respect current language or override)
+                \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $updatedMarkdown, $languageCode);
+                $this->logInfo("SUCCESS: Markdown file updated");
+                $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
+                
+                if (!$content) {
+                    throw new \ProcessWire\WireException("Failed to reload fresh content after save.");
+                }
+
+                $this->logDebug("RESPONSE: loadContent completed via direct IO");
+                }
             }
 
         } catch (\Throwable $e) {
@@ -1398,6 +1432,89 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return ['status' => 'replaced', 'document' => $updated];
     }
 
+    protected function insertIntoEmptyScopedMarkdownBlock(
+        string $document,
+        string $scope,
+        string $name,
+        string $sectionName,
+        string $blockMarkdown
+    ): ?string {
+        $content = trim($blockMarkdown);
+        if ($content === '') {
+            return null;
+        }
+
+        if ($scope === 'section') {
+            $sectionPattern = '/^[ \t]*<!--\s*section:' . preg_quote($name, '/') . '\s*-->[ \t]*\R?/mi';
+            if (!preg_match($sectionPattern, $document, $m, PREG_OFFSET_CAPTURE)) {
+                return null;
+            }
+            $sectionPos = (int)$m[0][1];
+            $sectionLen = strlen((string)$m[0][0]);
+            $start = $sectionPos + $sectionLen;
+
+            $nextSectionPos = null;
+            if (preg_match('/^[ \t]*<!--\s*section:[^>]*-->/mi', $document, $nextSection, PREG_OFFSET_CAPTURE, $start)) {
+                $nextSectionPos = (int)$nextSection[0][1];
+            }
+            $nextSubPos = null;
+            if (preg_match('/^[ \t]*<!--\s*sub:[^>]*-->/mi', $document, $nextSub, PREG_OFFSET_CAPTURE, $start)) {
+                $nextSubPos = (int)$nextSub[0][1];
+            }
+
+            $end = strlen($document);
+            if ($nextSectionPos !== null) $end = min($end, $nextSectionPos);
+            if ($nextSubPos !== null) $end = min($end, $nextSubPos);
+
+            $existing = substr($document, $start, max(0, $end - $start));
+            if (trim((string)$existing) !== '') {
+                return null;
+            }
+
+            $insertion = "\n" . $content . "\n\n";
+            return substr($document, 0, $start) . $insertion . substr($document, $start);
+        }
+
+        if ($scope === 'subsection') {
+            if ($sectionName === '') return null;
+            $sectionPattern = '/^[ \t]*<!--\s*section:' . preg_quote($sectionName, '/') . '\s*-->[ \t]*\R?/mi';
+            if (!preg_match($sectionPattern, $document, $sectionMatch, PREG_OFFSET_CAPTURE)) {
+                return null;
+            }
+            $sectionStart = (int)$sectionMatch[0][1] + strlen((string)$sectionMatch[0][0]);
+            $sectionEnd = strlen($document);
+            if (preg_match('/^[ \t]*<!--\s*section:[^>]*-->/mi', $document, $nextSection, PREG_OFFSET_CAPTURE, $sectionStart)) {
+                $sectionEnd = (int)$nextSection[0][1];
+            }
+
+            $subPattern = '/^[ \t]*<!--\s*sub:' . preg_quote($name, '/') . '\s*-->[ \t]*\R?/mi';
+            if (!preg_match($subPattern, $document, $subMatch, PREG_OFFSET_CAPTURE, $sectionStart)) {
+                return null;
+            }
+            $subMarkerPos = (int)$subMatch[0][1];
+            if ($subMarkerPos >= $sectionEnd) return null;
+            $subStart = $subMarkerPos + strlen((string)$subMatch[0][0]);
+
+            $subEnd = $sectionEnd;
+            if (preg_match('/^[ \t]*<!--\s*sub:[^>]*-->/mi', $document, $nextSub, PREG_OFFSET_CAPTURE, $subStart)) {
+                $nextSubPos = (int)$nextSub[0][1];
+                if ($nextSubPos < $sectionEnd) {
+                    $subEnd = $nextSubPos;
+                }
+            }
+
+            $existing = substr($document, $subStart, max(0, $subEnd - $subStart));
+            if (trim((string)$existing) !== '') {
+                return null;
+            }
+
+            $insertion = "\n" . $content . "\n\n";
+            return substr($document, 0, $subStart) . $insertion . substr($document, $subStart);
+        }
+
+        return null;
+    }
+
     protected function mergeImageSrcOnlyChange(string $oldMarkdown, string $newMarkdown): ?string {
         $pattern = '/!\\[([^\\]]*)\\]\\(([^)\\s]+)(\\s+"[^"]*")?\\)/';
 
@@ -1430,7 +1547,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         if (count($oldMatches) !== count($newMatches)) {
             return null;
         }
-        if ($oldNormalized !== $newNormalized) {
+        $oldComparable = $this->normalizeMarkdownForImageOnlyComparison($oldNormalized);
+        $newComparable = $this->normalizeMarkdownForImageOnlyComparison($newNormalized);
+        if ($oldComparable !== $newComparable) {
             return null;
         }
 
@@ -1446,6 +1565,41 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         );
 
         return is_string($merged) ? $merged : null;
+    }
+
+    protected function normalizeMarkdownForImageOnlyComparison(string $markdown): string {
+        $normalized = str_replace(["\r\n", "\r"], "\n", $markdown);
+        // Normalize unordered list marker style so serializer differences don't force rewrites.
+        $normalized = preg_replace('/^([ \t]{0,3})[*+-](\s+)/m', '$1-$2', $normalized);
+        return is_string($normalized) ? $normalized : $markdown;
+    }
+
+    protected function preserveMarkdownFormattingFromOriginal(string $oldMarkdown, string $newMarkdown): string {
+        $oldNl = $this->detectMarkdownLineEnding($oldMarkdown);
+        $oldLines = explode("\n", str_replace(["\r\n", "\r"], "\n", $oldMarkdown));
+        $newLines = explode("\n", str_replace(["\r\n", "\r"], "\n", $newMarkdown));
+
+        $count = min(count($oldLines), count($newLines));
+        for ($i = 0; $i < $count; $i++) {
+            if (
+                preg_match('/^([ \t]{0,3})([*+-])(\s+)(.*)$/', $oldLines[$i], $oldMatch) &&
+                preg_match('/^([ \t]{0,3})([*+-])(\s+)(.*)$/', $newLines[$i], $newMatch)
+            ) {
+                $newLines[$i] = $oldMatch[1] . $oldMatch[2] . $oldMatch[3] . $newMatch[4];
+            }
+        }
+
+        $joined = implode("\n", $newLines);
+        if ($oldNl !== "\n") {
+            $joined = str_replace("\n", $oldNl, $joined);
+        }
+        return $joined;
+    }
+
+    protected function detectMarkdownLineEnding(string $markdown): string {
+        if (strpos($markdown, "\r\n") !== false) return "\r\n";
+        if (strpos($markdown, "\r") !== false) return "\r";
+        return "\n";
     }
 
     protected function sendJsonError($msg, $code = 400) {

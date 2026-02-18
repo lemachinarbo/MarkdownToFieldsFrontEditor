@@ -2,6 +2,8 @@
 
 ## V0.4.6.2
 - Removed hardcoded frontend path assumptions (`/site/images`, `/site/assets/files`); image URL resolution is now ProcessWire-config-first (`pageFilesBaseUrl`, `imageBaseUrl`) with generic fallbacks.
+- Fixed subsection/section image live-refresh matching for `data-mfe` hosts in disconnected-target saves.
+- Empty section/subsection/container zones can now be opened from rollover/double-click even when their markdown is currently empty.
 
 ## V0.4.6.1
 

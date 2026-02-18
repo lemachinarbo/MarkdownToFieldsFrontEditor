@@ -55,7 +55,11 @@ export function resolveDblclickAction({
         "";
     }
 
-    if (!fallbackB64) {
+    const allowEmptyVirtual =
+      fallback?.scope === "section" ||
+      fallback?.scope === "subsection" ||
+      fallback?.fieldType === "container";
+    if (!fallbackB64 && !allowEmptyVirtual) {
       return { action: "none", reason: "no-hit-no-fallback" };
     }
 
@@ -66,7 +70,7 @@ export function resolveDblclickAction({
       section: fallbackSection || "",
       subsection: fallback?.subsection || "",
       fieldType: fallback?.fieldType || "",
-      markdown: decodeMarkdownBase64(fallbackB64),
+      markdown: fallbackB64 ? decodeMarkdownBase64(fallbackB64) : "",
     });
 
     return { action: "fullscreen", target: virtual, reason: "fallback" };
