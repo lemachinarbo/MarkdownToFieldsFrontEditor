@@ -153,6 +153,14 @@ function getSerializableImageSource(node) {
   return fromSrc;
 }
 
+function serializeImageSrc(src) {
+  return (src || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)")
+    .replace(/\s/g, "%20");
+}
+
 export const markdownSerializer = new MarkdownSerializer(
   {
     blockquote: defaultMarkdownSerializer.nodes.blockquote,
@@ -169,7 +177,7 @@ export const markdownSerializer = new MarkdownSerializer(
         "![" +
           state.esc(node.attrs.alt || "") +
           "](" +
-          state.esc(src) +
+          serializeImageSrc(src) +
           (node.attrs.title ? ' "' + state.esc(node.attrs.title) + '"' : "") +
           ")",
       );
@@ -227,6 +235,7 @@ export const markdownSerializer = new MarkdownSerializer(
   },
   {
     tightLists: true,
+    bulletListMarker: "-",
   },
 );
 

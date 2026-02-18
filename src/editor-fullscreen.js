@@ -170,7 +170,7 @@ function dataMfeMatchesActive(rawValue, scope, section, subsection, name) {
   }
 
   if (scope === "field") {
-    if (parsed.scope !== "field") return false;
+    if (parsed.scope !== "field" && parsed.scope !== "auto") return false;
     return (
       (parsed.section || "") === (section || "") &&
       (parsed.subsection || "") === (subsection || "") &&
@@ -1222,14 +1222,11 @@ function closeEditor() {
   closeWindow("mfe-editor");
 }
 
-function createOverlay() {
-  // Deprecated, use WindowManager
-}
-
 /**
  * Initialize editors for all editable elements
  */
 function initEditors() {
+  annotateBoundImages();
   document.querySelectorAll(".fe-editable").forEach((el) => {
     el.addEventListener("dblclick", (e) => {
       // Prevent default browser selection
@@ -1242,6 +1239,268 @@ function initEditors() {
       openFullscreenEditorForElement(target);
     });
   });
+}
+
+function annotateBoundImages(root = document) {
+  annotateEditableImages(root);
+  annotateMfeHostImages(root);
+  annotateInferredImages(root);
+}
+
+function annotateEditableImages(root = document) {
+  root.querySelectorAll(".fe-editable").forEach((el) => {
+    const scope = getMetaAttr(el, "scope") || "field";
+    const section = getMetaAttr(el, "section") || "";
+    const subsection = getMetaAttr(el, "subsection") || "";
+    const name = getMetaAttr(el, "name") || "";
+    const pageId = el.getAttribute("data-page") || "";
+
+    el.querySelectorAll("img").forEach((img) => {
+      img.setAttribute("data-mfe-image-bound", "1");
+      img.setAttribute("data-mfe-image-scope", scope);
+      img.setAttribute("data-mfe-image-section", section);
+      img.setAttribute("data-mfe-image-subsection", subsection);
+      img.setAttribute("data-mfe-image-name", name);
+      img.setAttribute("data-mfe-image-page", pageId);
+    });
+  });
+}
+
+function annotateMfeHostImages(root = document) {
+  root.querySelectorAll("[data-mfe]").forEach((host) => {
+    const hostValue = host.getAttribute("data-mfe") || "";
+    if (!hostValue) return;
+    host.querySelectorAll("img").forEach((img) => {
+      if (img.getAttribute("data-mfe-image-bound") === "1") return;
+      img.setAttribute("data-mfe-image-bound", "1");
+      img.setAttribute("data-mfe-image-host", hostValue);
+    });
+  });
+}
+
+function getImageBasename(src) {
+  const value = (src || "").split("?")[0].split("#")[0];
+  const parts = value.split("/");
+  return parts[parts.length - 1] || "";
+}
+
+function getImageMatchKey(src) {
+  const base = getImageBasename(src).toLowerCase();
+  if (!base) return "";
+  const extIdx = base.lastIndexOf(".");
+  const stem = extIdx > 0 ? base.slice(0, extIdx) : base;
+  return stem.replace(/\.\d+x\d+(?:-srcset)?$/i, "");
+}
+
+function extractMarkdownImageSrc(markdown) {
+  const m = (markdown || "").match(/!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/);
+  return m?.[1] || "";
+}
+
+function getFieldsIndex() {
+  const cfg = window.MarkdownFrontEditorConfig || {};
+  return Array.isArray(cfg.fieldsIndex) ? cfg.fieldsIndex : [];
+}
+
+function annotateInferredImages(root = document) {
+  const fields = getFieldsIndex();
+  if (!fields.length) return;
+
+  const imageFields = fields
+    .map((f) => {
+      const markdown = f?.markdownB64 ? decodeMarkdownBase64(f.markdownB64) : "";
+      const src = extractMarkdownImageSrc(markdown);
+      const key = getImageMatchKey(src);
+      if (!src || !key) return null;
+      return {
+        scope: "field",
+        section: f?.section || "",
+        subsection: f?.subsection || "",
+        name: f?.name || "",
+        key,
+      };
+    })
+    .filter(Boolean);
+
+  if (!imageFields.length) return;
+
+  root.querySelectorAll("img").forEach((img) => {
+    if (img.getAttribute("data-mfe-image-bound") === "1") return;
+    const key = getImageMatchKey(img.getAttribute("src") || "");
+    if (!key) return;
+    const matches = imageFields.filter((f) => f.key === key);
+    if (matches.length !== 1) return;
+    const match = matches[0];
+    img.setAttribute("data-mfe-image-bound", "1");
+    img.setAttribute("data-mfe-image-scope", match.scope);
+    img.setAttribute("data-mfe-image-section", match.section);
+    img.setAttribute("data-mfe-image-subsection", match.subsection);
+    img.setAttribute("data-mfe-image-name", match.name);
+    img.setAttribute("data-mfe-image-inferred", "1");
+  });
+}
+
+function syncBoundImages(newHtml) {
+  const normalizedHtml = normalizeHtmlImageSources(newHtml);
+  const nextImages = extractImageSourcesFromHtml(normalizedHtml);
+  if (nextImages.length !== 1) return 0;
+  const next = nextImages[0];
+  if (!next?.src) return 0;
+
+  const images = Array.from(
+    document.querySelectorAll('img[data-mfe-image-bound="1"]'),
+  );
+  let updated = 0;
+  images.forEach((img) => {
+    const hostValue = img.getAttribute("data-mfe-image-host") || "";
+    if (hostValue) {
+      const hostMatch = hostMatchesActiveImageField(hostValue);
+      if (hostMatch) {
+        const resolvedSrc = resolveHostImageSrc(document.body, next.src);
+        updateImageNodeSource(img, resolvedSrc);
+        updated += 1;
+        return;
+      }
+    }
+
+    const scope = img.getAttribute("data-mfe-image-scope") || "field";
+    const section = img.getAttribute("data-mfe-image-section") || "";
+    const subsection = img.getAttribute("data-mfe-image-subsection") || "";
+    const name = img.getAttribute("data-mfe-image-name") || "";
+    if (!boundImageMatchesActive(scope, section, subsection, name)) return;
+
+    const resolvedSrc = resolveHostImageSrc(document.body, next.src);
+    updateImageNodeSource(img, resolvedSrc);
+    updated += 1;
+  });
+  return updated;
+}
+
+function boundImageMatchesActive(scope, section, subsection, name) {
+  const activeScope = activeFieldScope || "field";
+  const activeSection = activeFieldSection || "";
+  const activeSubsection = activeFieldSubsection || "";
+  const activeName = activeFieldName || "";
+
+  if (activeScope === "field") {
+    return (
+      scope === "field" &&
+      section === activeSection &&
+      subsection === activeSubsection &&
+      name === activeName
+    );
+  }
+
+  if (activeScope === "section") {
+    return (
+      scope === "field" &&
+      section === activeName &&
+      subsection === ""
+    );
+  }
+
+  if (activeScope === "subsection") {
+    return (
+      scope === "field" &&
+      section === activeSection &&
+      subsection === activeName
+    );
+  }
+
+  return false;
+}
+
+function syncImagesByFieldKey(newHtml) {
+  const oldSrc = extractMarkdownImageSrc(activeRawMarkdown || "");
+  const oldKey = getImageMatchKey(oldSrc);
+  if (!oldKey) return 0;
+
+  const nextImages = extractImageSourcesFromHtml(newHtml);
+  if (nextImages.length !== 1) return 0;
+  const nextSrc = nextImages[0]?.src || "";
+  if (!nextSrc) return 0;
+
+  const resolvedSrc = resolveHostImageSrc(document.body, nextSrc);
+  let updated = 0;
+  document.querySelectorAll("img").forEach((img) => {
+    if (img.closest('[data-mfe-window="true"]')) return;
+    const current = img.getAttribute("src") || "";
+    if (getImageMatchKey(current) !== oldKey) return;
+    const scope = img.getAttribute("data-mfe-image-scope") || "field";
+    const section = img.getAttribute("data-mfe-image-section") || "";
+    const subsection = img.getAttribute("data-mfe-image-subsection") || "";
+    const name = img.getAttribute("data-mfe-image-name") || "";
+    const isBound = img.getAttribute("data-mfe-image-bound") === "1";
+    if (isBound && !boundImageMatchesActive(scope, section, subsection, name)) {
+      return;
+    }
+    updateImageNodeSource(img, resolvedSrc);
+    updated += 1;
+  });
+  return updated;
+}
+
+function hostMatchesActiveImageField(hostValue) {
+  if (
+    dataMfeMatchesActive(
+      hostValue,
+      activeFieldScope,
+      activeFieldSection,
+      activeFieldSubsection,
+      activeFieldName,
+    )
+  ) {
+    return true;
+  }
+
+  const parsed = parseDataMfeValue(hostValue);
+  if (!parsed) return false;
+  if (activeFieldScope !== "field") return false;
+  if ((activeFieldName || "") !== "image") return false;
+
+  const isSectionHost =
+    (parsed.scope === "section" &&
+      (parsed.name || "") === (activeFieldSection || "")) ||
+    (parsed.scope === "auto" &&
+      !parsed.section &&
+      (parsed.name || "") === (activeFieldSection || ""));
+  if (isSectionHost) return true;
+
+  return false;
+}
+
+function syncPictureSources(img, src) {
+  const picture = img.closest("picture");
+  if (!picture) return;
+  picture.querySelectorAll("source").forEach((source) => {
+    source.setAttribute("srcset", src);
+    source.removeAttribute("sizes");
+  });
+}
+
+function updateImageNodeSource(img, src) {
+  if (!img || !src) return;
+  img.setAttribute("src", src);
+  img.removeAttribute("srcset");
+  img.removeAttribute("sizes");
+  syncPictureSources(img, src);
+}
+
+function normalizeHtmlImageSources(html) {
+  if (!html || typeof html !== "string") return html || "";
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+    doc.querySelectorAll("img").forEach((img) => {
+      const src = img.getAttribute("src") || "";
+      if (!src) return;
+      const resolved = resolveHostImageSrc(document.body, src);
+      img.setAttribute("src", resolved);
+    });
+    return doc.body.innerHTML || html;
+  } catch (e) {
+    return html;
+  }
 }
 
 function findSectionNameForSubsection(subName) {
@@ -1436,7 +1695,7 @@ function openFullscreenEditorFromPayload(payload) {
             const htmlMap =
               data.htmlMap || (typeof data.html === "object" ? data.html : {});
             // Fallback for single field update (legacy or direct)
-            const primaryHtml =
+            const primaryHtmlRaw =
               typeof data.html === "string"
                 ? data.html
                 : htmlMap[activeFieldId] ||
@@ -1446,6 +1705,7 @@ function openFullscreenEditorFromPayload(payload) {
                       ]
                     : null) ||
                   htmlMap[fieldName];
+            const primaryHtml = normalizeHtmlImageSources(primaryHtmlRaw || "");
 
             const markdowns = data.markdowns || {};
 
@@ -1502,7 +1762,7 @@ function openFullscreenEditorFromPayload(payload) {
               }
 
               if (html) {
-                el.innerHTML = html;
+                el.innerHTML = normalizeHtmlImageSources(html);
                 if (el === activeTarget) {
                   activeTargetMatched = true;
                 }
@@ -1515,33 +1775,21 @@ function openFullscreenEditorFromPayload(payload) {
                 }
               }
             });
+            annotateBoundImages();
             // 2. Extra safety for active editor
             if (activeTarget && primaryHtml) {
               activeTarget.dataset.markdown = finalMarkdown;
               const activeTargetIsEditable =
                 activeTarget.classList?.contains("fe-editable") || false;
+              if (!activeTargetIsEditable) {
+                syncHostImagesFromHtml(activeTarget, primaryHtml);
+              }
               if (!activeTargetMatched && activeTargetIsEditable) {
                 activeTarget.innerHTML = primaryHtml;
               }
               if (!activeTarget?.isConnected) {
-                document.querySelectorAll("[data-mfe]").forEach((host) => {
-                  const value = host.getAttribute("data-mfe") || "";
-                  if (
-                    dataMfeMatchesActive(
-                      value,
-                      activeFieldScope,
-                      activeFieldSection,
-                      activeFieldSubsection,
-                      activeFieldName,
-                    )
-                  ) {
-                    if (host.classList?.contains("fe-editable")) {
-                      host.innerHTML = primaryHtml;
-                    } else {
-                      syncHostImagesFromHtml(host, primaryHtml);
-                    }
-                  }
-                });
+                syncBoundImages(primaryHtml);
+                syncImagesByFieldKey(primaryHtml);
               }
 
               if (primaryEditor) {
@@ -1688,18 +1936,10 @@ function syncHostImagesFromHtml(host, html) {
   if (!hostImg) return;
 
   const resolvedSrc = resolveHostImageSrc(host, next.src);
-  hostImg.setAttribute("src", resolvedSrc);
-  hostImg.removeAttribute("srcset");
-  hostImg.removeAttribute("sizes");
+  updateImageNodeSource(hostImg, resolvedSrc);
   if (next.alt) {
     hostImg.setAttribute("alt", next.alt);
   }
-}
-
-function getImageBasename(src) {
-  const value = (src || "").split("?")[0].split("#")[0];
-  const parts = value.split("/");
-  return parts[parts.length - 1] || "";
 }
 
 function resolveHostImageSrc(host, src) {

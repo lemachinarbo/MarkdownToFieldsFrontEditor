@@ -14,7 +14,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
             'summary' => 'Frontend editor for MarkdownToFields.',
-            'version' =>  '0.4.6',
+            'version' =>  '0.4.6.1',
             'autoload' => true,
             'singular' => true,
             'requires' => ['MarkdownToFields'],
@@ -860,6 +860,14 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         continue;
                     }
 
+                    $mergedImageOnly = $this->mergeImageSrcOnlyChange($oldFieldMarkdown, $blockMarkdown);
+                    if ($mergedImageOnly !== null) {
+                        $blockMarkdown = $mergedImageOnly;
+                    }
+                    if ($oldFieldMarkdown === $blockMarkdown) {
+                        continue;
+                    }
+
                     $replaceResult = $this->replaceUniqueMarkdownBlock($updatedMarkdown, $oldFieldMarkdown, $blockMarkdown);
                     if ($replaceResult['status'] === 'missing') {
                         $skipped[] = $key;
@@ -958,6 +966,17 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             if ($oldFieldMarkdown === null) {
                 $this->sendJsonError('Field not found in content: ' . $mdName, 400);
             }
+            $mergedImageOnly = $this->mergeImageSrcOnlyChange($oldFieldMarkdown, $blockMarkdown);
+            if ($mergedImageOnly !== null) {
+                $blockMarkdown = $mergedImageOnly;
+            }
+            if ($oldFieldMarkdown === $blockMarkdown) {
+                $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
+                if (!$content) {
+                    throw new \ProcessWire\WireException("Failed to load markdown content for language '{$languageCode}'.");
+                }
+                $this->logInfo("NOOP: unchanged markdown for '{$mdName}'");
+            } else {
             // Proceed with save even if unchanged to ensure fresh sync and HTML generation
             $this->logInfo("REQUEST: Beginning save process for '{$mdName}'");
             
@@ -985,6 +1004,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             }
 
             $this->logDebug("RESPONSE: loadContent completed via direct IO");
+            }
 
         } catch (\Throwable $e) {
             $this->sendJsonError('Failed to update markdown: ' . $e->getMessage(), 500);
@@ -1376,6 +1396,56 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         $updated = substr($document, 0, $firstPos) . $replacement . substr($document, $firstPos + strlen($search));
         return ['status' => 'replaced', 'document' => $updated];
+    }
+
+    protected function mergeImageSrcOnlyChange(string $oldMarkdown, string $newMarkdown): ?string {
+        $pattern = '/!\\[([^\\]]*)\\]\\(([^)\\s]+)(\\s+"[^"]*")?\\)/';
+
+        $oldMatches = [];
+        $newMatches = [];
+        $oldNormalized = preg_replace_callback(
+            $pattern,
+            function ($m) use (&$oldMatches) {
+                $idx = count($oldMatches);
+                $oldMatches[] = $m;
+                $title = $m[3] ?? '';
+                return '![' . $m[1] . '](__MFE_IMG_' . $idx . '__' . $title . ')';
+            },
+            $oldMarkdown
+        );
+        $newNormalized = preg_replace_callback(
+            $pattern,
+            function ($m) use (&$newMatches) {
+                $idx = count($newMatches);
+                $newMatches[] = $m;
+                $title = $m[3] ?? '';
+                return '![' . $m[1] . '](__MFE_IMG_' . $idx . '__' . $title . ')';
+            },
+            $newMarkdown
+        );
+
+        if (!$oldMatches || !$newMatches) {
+            return null;
+        }
+        if (count($oldMatches) !== count($newMatches)) {
+            return null;
+        }
+        if ($oldNormalized !== $newNormalized) {
+            return null;
+        }
+
+        $index = 0;
+        $merged = preg_replace_callback(
+            $pattern,
+            function ($m) use (&$index, $newMatches) {
+                $newSrc = $newMatches[$index][2] ?? $m[2];
+                $index += 1;
+                return str_replace($m[2], $newSrc, $m[0]);
+            },
+            $oldMarkdown
+        );
+
+        return is_string($merged) ? $merged : null;
     }
 
     protected function sendJsonError($msg, $code = 400) {
