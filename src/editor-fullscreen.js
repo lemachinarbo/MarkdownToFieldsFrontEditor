@@ -1518,7 +1518,9 @@ function openFullscreenEditorFromPayload(payload) {
             // 2. Extra safety for active editor
             if (activeTarget && primaryHtml) {
               activeTarget.dataset.markdown = finalMarkdown;
-              if (!activeTargetMatched) {
+              const activeTargetIsEditable =
+                activeTarget.classList?.contains("fe-editable") || false;
+              if (!activeTargetMatched && activeTargetIsEditable) {
                 activeTarget.innerHTML = primaryHtml;
               }
               if (!activeTarget?.isConnected) {
@@ -1533,7 +1535,11 @@ function openFullscreenEditorFromPayload(payload) {
                       activeFieldName,
                     )
                   ) {
-                    host.innerHTML = primaryHtml;
+                    if (host.classList?.contains("fe-editable")) {
+                      host.innerHTML = primaryHtml;
+                    } else {
+                      syncHostImagesFromHtml(host, primaryHtml);
+                    }
                   }
                 });
               }
@@ -1642,6 +1648,91 @@ function replaceActiveEditor(payload) {
 
   setTimeout(() => primaryEditor?.view?.focus(), 0);
   return true;
+}
+
+function extractImageSourcesFromHtml(html) {
+  if (!html || typeof html !== "string") return [];
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+    return Array.from(doc.querySelectorAll("img"))
+      .map((img) => ({
+        src: img.getAttribute("src") || "",
+        alt: img.getAttribute("alt") || "",
+      }))
+      .filter((item) => item.src);
+  } catch (e) {
+    return [];
+  }
+}
+
+function syncHostImagesFromHtml(host, html) {
+  if (!host) return;
+  const nextImages = extractImageSourcesFromHtml(html);
+  if (nextImages.length !== 1) return;
+
+  const hostImages = Array.from(host.querySelectorAll("img"));
+  if (!hostImages.length) return;
+
+  const next = nextImages[0];
+  if (!next?.src) return;
+
+  const nextName = getImageBasename(next.src);
+  let hostImg =
+    hostImages.find((img) => getImageBasename(img.getAttribute("src") || "") === nextName) ||
+    null;
+
+  if (!hostImg && hostImages.length === 1) {
+    hostImg = hostImages[0];
+  }
+  if (!hostImg) return;
+
+  const resolvedSrc = resolveHostImageSrc(host, next.src);
+  hostImg.setAttribute("src", resolvedSrc);
+  hostImg.removeAttribute("srcset");
+  hostImg.removeAttribute("sizes");
+  if (next.alt) {
+    hostImg.setAttribute("alt", next.alt);
+  }
+}
+
+function getImageBasename(src) {
+  const value = (src || "").split("?")[0].split("#")[0];
+  const parts = value.split("/");
+  return parts[parts.length - 1] || "";
+}
+
+function resolveHostImageSrc(host, src) {
+  const value = (src || "").trim();
+  if (!value) return value;
+  if (value.match(/^(https?:|\/|\?|\/\/)/)) {
+    return value;
+  }
+
+  const cleanName = value.split("?")[0].split("#")[0].split("/").pop() || value;
+
+  const firstHostImage = host.querySelector("img");
+  const currentSrc = firstHostImage?.getAttribute("src") || "";
+  const currentAssetMatch = currentSrc.match(/^(.*\/site\/assets\/files\/\d+\/)[^/?#]+/i);
+  if (currentAssetMatch?.[1]) {
+    return `${currentAssetMatch[1]}${cleanName}`;
+  }
+
+  const filesBaseFromConfig = window.MarkdownFrontEditorConfig?.pageFilesBaseUrl;
+  const filesBase =
+    typeof filesBaseFromConfig === "string" && filesBaseFromConfig.trim() !== ""
+      ? (filesBaseFromConfig.endsWith("/") ? filesBaseFromConfig : `${filesBaseFromConfig}/`)
+      : "";
+  if (filesBase) {
+    return `${filesBase}${cleanName}`;
+  }
+
+  const fromConfig = window.MarkdownFrontEditorConfig?.imageBaseUrl;
+  const base = typeof fromConfig === "string" && fromConfig.trim() !== ""
+    ? fromConfig
+    : "/site/images/";
+  const normalizedBase = base.endsWith("/") ? base : `${base}/`;
+  return `${normalizedBase}${value.replace(/^\/+/, "")}`;
 }
 
 export function openFullscreenEditorForElement(target) {

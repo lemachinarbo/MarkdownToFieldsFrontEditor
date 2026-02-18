@@ -53,7 +53,7 @@ export function createMarkdownParser(schema) {
       const max = state.eMarks[startLine];
       if (pos >= max) return false;
       const line = state.src.slice(pos, max);
-      const match = line.match(/^\s*<!--\s*([a-zA-Z0-9_:-]+)\s*-->\s*$/);
+      const match = line.match(/^\s*<!--\s*([a-zA-Z0-9_:.\/-]+)\s*-->\s*$/);
       if (!match) return false;
       if (silent) return true;
 
@@ -125,15 +125,32 @@ export function renderMarkdownToHtml(markdown) {
   const md = defaultMarkdownParser.tokenizer;
   md.set({ breaks: true, html: true });
   const withPlaceholders = src.replace(
-    /^\s*<!--\s*([a-zA-Z0-9_:-]+)\s*-->\s*$/gm,
+    /^\s*<!--\s*([a-zA-Z0-9_:.\/-]+)\s*-->\s*$/gm,
     (_, name) => `\n\n[[MFE_MARKER:${name}]]\n\n`,
   );
   let html = md.render(withPlaceholders);
   html = html.replace(
-    /<p>\s*\[\[MFE_MARKER:([a-zA-Z0-9_:-]+)\]\]\s*<\/p>/g,
+    /<p>\s*\[\[MFE_MARKER:([a-zA-Z0-9_:.\/-]+)\]\]\s*<\/p>/g,
     '<div data-mfe-marker="$1"></div>',
   );
   return html;
+}
+
+function getSerializableImageSource(node) {
+  const fromOriginal = (node?.attrs?.originalFilename || "").trim();
+  if (fromOriginal) return fromOriginal;
+
+  const fromSrc = (node?.attrs?.src || "").trim();
+  if (!fromSrc) return "";
+
+  const pageAssetsMatch = fromSrc.match(
+    /^(?:https?:\/\/[^/]+)?\/site\/assets\/files\/\d+\/([^?#]+)$/i,
+  );
+  if (pageAssetsMatch?.[1]) {
+    return pageAssetsMatch[1];
+  }
+
+  return fromSrc;
 }
 
 export const markdownSerializer = new MarkdownSerializer(
@@ -147,7 +164,7 @@ export const markdownSerializer = new MarkdownSerializer(
     listItem: defaultMarkdownSerializer.nodes.list_item,
     paragraph: defaultMarkdownSerializer.nodes.paragraph,
     image(state, node) {
-      const src = node.attrs.originalFilename || node.attrs.src || "";
+      const src = getSerializableImageSource(node);
       state.write(
         "![" +
           state.esc(node.attrs.alt || "") +

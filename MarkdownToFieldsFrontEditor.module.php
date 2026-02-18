@@ -14,7 +14,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
             'summary' => 'Frontend editor for MarkdownToFields.',
-            'version' =>  '0.4.5',
+            'version' =>  '0.4.6',
             'autoload' => true,
             'singular' => true,
             'requires' => ['MarkdownToFields'],
@@ -230,6 +230,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'languages' => $langList,
             'currentLanguage' => $currentLangCode,
             'imageBaseUrl' => rtrim((string)$this->wire()->config->urls->site, '/') . '/images/',
+            'pageFilesBaseUrl' => rtrim((string)$this->wire()->config->urls->files, '/') . '/' . (int)$page->id . '/',
             'buildStamp' => $version,
             'sectionsIndex' => $sectionsIndex,
             'fieldsIndex' => $fieldsIndex,
@@ -834,11 +835,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             }
 
             try {
-                $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
-                if (!$content) {
-                    throw new \ProcessWire\WireException("Failed to load markdown content for language '{$languageCode}'.");
-                }
-                $fullMarkdown = $content->getRawDocument();
+                $fullMarkdown = $this->loadRawMarkdownDocument($page, $languageCode);
+                $rawContent = $this->parseRawMarkdownDocument($fullMarkdown);
                 $updatedMarkdown = $fullMarkdown;
                 $skipped = [];
                 $replaced = 0;
@@ -855,7 +853,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         continue;
                     }
 
-                    $oldFieldMarkdown = $this->findScopedMarkdown($content, $scope, $mdName, $sectionName);
+                    $oldFieldMarkdown = $this->findScopedMarkdown($rawContent, $scope, $mdName, $sectionName);
 
                     if ($oldFieldMarkdown === null) {
                         $skipped[] = $key;
@@ -953,16 +951,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         // TRUST THE FRAMEWORK: Use MarkdownToFields' native mechanisms
         try {
-            // Load the current markdown document using MarkdownFileIO
-            $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
-            if (!$content) {
-                throw new \ProcessWire\WireException("Failed to load markdown content for language '{$languageCode}'.");
-            }
-            
-            // Get original field markdown from MarkdownToFields
-            // MarkdownToFields handles all field boundary extraction
-            $fullMarkdown = $content->getRawDocument();
-            $oldFieldMarkdown = $this->findScopedMarkdown($content, $mdScope, $mdName, $mdSection ?? '');
+            $fullMarkdown = $this->loadRawMarkdownDocument($page, $languageCode);
+            $rawContent = $this->parseRawMarkdownDocument($fullMarkdown);
+            $oldFieldMarkdown = $this->findScopedMarkdown($rawContent, $mdScope, $mdName, $mdSection ?? '');
             
             if ($oldFieldMarkdown === null) {
                 $this->sendJsonError('Field not found in content: ' . $mdName, 400);
@@ -1045,6 +1036,20 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'fieldId' => $requestedFieldId
         ]);
         exit;
+    }
+
+    protected function loadRawMarkdownDocument(\ProcessWire\Page $page, string $languageCode): string {
+        $path = \ProcessWire\MarkdownFileIO::getMarkdownFilePath($page, $languageCode);
+        $raw = @file_get_contents($path);
+        if ($raw === false) {
+            throw new \ProcessWire\WireException("Failed to read markdown file: {$path}");
+        }
+        return (string)$raw;
+    }
+
+    protected function parseRawMarkdownDocument(string $markdown) {
+        $parser = new \LetMeDown\LetMeDown();
+        return $parser->loadFromString($markdown);
     }
 
     /**
