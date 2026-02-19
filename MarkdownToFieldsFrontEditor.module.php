@@ -247,6 +247,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'buildStamp' => $version,
             'sectionsIndex' => $sectionsIndex,
             'fieldsIndex' => $fieldsIndex,
+            'debug' => (bool)($this->debug ?? false),
             'debugShowSections' => (bool)($this->debugShowSections ?? false),
             'debugLabels' => (bool)($this->debugShowLabels ?? false),
             'labelStyle' => (string)($this->labelStyle ?? $defaults['labelStyle']),
@@ -755,6 +756,155 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
 
         // Save endpoint
+        if($input->get->markdownFrontEditorFragments) {
+            // Must be POST
+            if(!$this->wire()->input->requestMethod('POST')) {
+                $this->sendJsonError('Invalid method', 405);
+            }
+
+            // CSRF validation
+            try { $this->wire()->session->CSRF->validate(); }
+            catch(\Exception $e) { $this->sendJsonError('Failed CSRF check', 403); }
+
+            $user = $this->wire()->user;
+            if(!$user->isLoggedIn() || !$user->hasPermission('page-edit-front')) {
+                $this->sendJsonError('Forbidden', 403);
+            }
+
+            $pageId = (int)$input->post->pageId;
+            if(!$pageId) $this->sendJsonError('Missing pageId', 400);
+
+            $langCode = $input->post->text('lang');
+            if ($langCode !== '') {
+                $languages = $this->wire()->languages;
+                if ($languages && !$languages->get($langCode)) {
+                    $this->sendJsonError('Invalid language', 400);
+                }
+            }
+
+            $page = $this->wire()->pages->get($pageId);
+            if(!$page->id) $this->sendJsonError('Page not found', 404);
+            if(!$page->editable()) $this->sendJsonError('Page not editable', 403);
+            if(!\ProcessWire\MarkdownConfig::supportsPage($page)) {
+                $this->sendJsonError('MarkdownToFields not configured for this page', 400);
+            }
+
+            $languageCode = $this->resolveRequestLanguageCode($page, $langCode);
+            $transport = $input->post->text('transport') ?: 'datastar';
+            $keysPayload = (string)$input->post('keys', 'string');
+            $keys = [];
+            if ($keysPayload !== '') {
+                $decoded = wireDecodeJSON($keysPayload);
+                if (is_array($decoded)) {
+                    $keys = array_values(array_filter(array_map('strval', $decoded)));
+                }
+            }
+            if (!$keys) {
+                $keys = (array)$input->post('keys');
+                $keys = array_values(array_filter(array_map('strval', $keys)));
+            }
+            $keys = $this->normalizeCanonicalKeys($keys);
+            if (!$keys) {
+                $this->sendJsonError('Missing keys', 400);
+            }
+
+            $targetsPayload = (string)$input->post('mountTargets', 'string');
+            $mountTargets = [];
+            if ($targetsPayload !== '') {
+                $decodedTargets = wireDecodeJSON($targetsPayload);
+                if (is_array($decodedTargets)) {
+                    foreach ($decodedTargets as $k => $targets) {
+                        $key = trim((string)$k);
+                        if (!$this->isCanonicalScopedKey($key)) continue;
+                        $mountTargets[$key] = is_array($targets) ? $targets : [];
+                    }
+                }
+            }
+            $clientGraphChecksum = trim((string)$input->post->text('graphChecksum'));
+            $clientGraphNodeCount = (int)$input->post->int('graphNodeCount');
+
+            $this->logInfo(sprintf(
+                "FRAGMENTS_REQUEST pageId=%d lang='%s' transport='%s' keys=%d mountTargetKeys=%d graph='%s' graphNodes=%d",
+                $pageId,
+                $languageCode,
+                $transport,
+                count($keys),
+                count($mountTargets),
+                $clientGraphChecksum,
+                $clientGraphNodeCount
+            ));
+
+            try {
+                $renderedHtml = $this->renderPageHtmlForLang($page, $languageCode);
+                if ($renderedHtml === '') {
+                    $this->logInfo("FRAGMENTS_ERROR reason=empty_render_html pageId={$pageId} lang='{$languageCode}'");
+                    $this->sendJsonError('Failed to render page fragments', 500);
+                }
+
+                $sectionsIndex = $this->buildSectionsIndex($page);
+                $fieldsIndex = $this->buildFieldsIndex($page);
+                $graphMeta = [];
+                $fragments = $this->extractRenderedFragmentsByKeys(
+                    $renderedHtml,
+                    $keys,
+                    $sectionsIndex,
+                    $fieldsIndex,
+                    $graphMeta
+                );
+                $serverGraphChecksum = (string)($graphMeta['graphChecksum'] ?? '');
+                $serverGraphNodeCount = (int)($graphMeta['graphNodeCount'] ?? 0);
+                if ($clientGraphChecksum !== '' && $serverGraphChecksum !== '' && $clientGraphChecksum !== $serverGraphChecksum) {
+                    $this->logInfo(sprintf(
+                        "FRAGMENTS_GRAPH_MISMATCH pageId=%d lang='%s' client='%s' clientNodes=%d server='%s' serverNodes=%d",
+                        $pageId,
+                        $languageCode,
+                        $clientGraphChecksum,
+                        $clientGraphNodeCount,
+                        $serverGraphChecksum,
+                        $serverGraphNodeCount
+                    ));
+                }
+
+                $missing = [];
+                foreach ($keys as $k) {
+                    if (!isset($fragments[$k])) $missing[] = $k;
+                }
+
+                $this->logInfo(sprintf(
+                    "FRAGMENTS_RESULT pageId=%d lang='%s' requested=%d resolved=%d missing=%d keys='%s' missingKeys='%s'",
+                    $pageId,
+                    $languageCode,
+                    count($keys),
+                    count($fragments),
+                    count($missing),
+                    implode(',', $keys),
+                    implode(',', $missing)
+                ));
+
+                if ($transport === 'json') {
+                    header('Content-Type: application/json');
+                    echo json_encode([
+                        'status' => 1,
+                        'fragments' => $fragments,
+                        'missing' => $missing,
+                    ]);
+                    exit;
+                }
+
+                $this->sendDatastarPatchElementsStream($fragments, $mountTargets, $missing);
+                exit;
+            } catch (\Throwable $e) {
+                $this->logInfo(sprintf(
+                    "FRAGMENTS_ERROR reason=exception pageId=%d lang='%s' class='%s' message='%s'",
+                    $pageId,
+                    $languageCode,
+                    get_class($e),
+                    str_replace(["\n", "\r"], ' ', (string)$e->getMessage())
+                ));
+                $this->sendJsonError('Fragment render failed', 500);
+            }
+        }
+
         if(!$input->get->markdownFrontEditorSave) return;
 
         // Must be POST
@@ -1654,6 +1804,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $docLen = strlen($document);
 
         if ($scope === 'section') {
+            // Section edits replace only direct section content.
+            // Subsection blocks remain outside this range by design.
             return $this->resolveSectionContentRange($document, $name);
         }
         if ($scope === 'subsection') {
@@ -1676,6 +1828,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $parentEnd = (int)$subRange['end'];
             $parentType = 'subsection';
         } elseif ($sectionName !== '') {
+            // Section-scoped fields live in section direct content (before first subsection marker).
             $sectionRange = $this->resolveSectionContentRange($document, $sectionName);
             if (($sectionRange['status'] ?? '') !== 'ok') return $sectionRange;
             $parentStart = (int)$sectionRange['start'];
@@ -1728,7 +1881,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return ['status' => 'ok', 'start' => $start, 'end' => $end];
     }
 
-    protected function resolveSectionContentRange(string $document, string $sectionName): array {
+    protected function resolveSectionBlockRange(string $document, string $sectionName): array {
         $markerPattern = '/<!--\s*section:' . preg_quote($sectionName, '/') . '\s*-->\s*/i';
         $markers = $this->findMarkersInRange($document, $markerPattern, 0, strlen($document));
         $count = count($markers);
@@ -1750,8 +1903,27 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return ['status' => 'ok', 'start' => $start, 'end' => $end];
     }
 
+    protected function resolveSectionContentRange(string $document, string $sectionName): array {
+        $sectionBlock = $this->resolveSectionBlockRange($document, $sectionName);
+        if (($sectionBlock['status'] ?? '') !== 'ok') return $sectionBlock;
+
+        $start = (int)$sectionBlock['start'];
+        $end = (int)$sectionBlock['end'];
+        $firstSub = $this->findFirstMarkerPosInRange(
+            $document,
+            '/<!--\s*sub:[^>]*-->\s*/i',
+            $start,
+            $end
+        );
+        if ($firstSub !== null) {
+            $end = $firstSub;
+        }
+
+        return ['status' => 'ok', 'start' => $start, 'end' => $end];
+    }
+
     protected function resolveSubsectionContentRange(string $document, string $sectionName, string $subsectionName): array {
-        $sectionRange = $this->resolveSectionContentRange($document, $sectionName);
+        $sectionRange = $this->resolveSectionBlockRange($document, $sectionName);
         if (($sectionRange['status'] ?? '') !== 'ok') return $sectionRange;
 
         $sectionStart = (int)$sectionRange['start'];
@@ -2078,6 +2250,513 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         if (strpos($markdown, "\r\n") !== false) return "\r\n";
         if (strpos($markdown, "\r") !== false) return "\r";
         return "\n";
+    }
+
+    protected function renderPageHtmlForLang(\ProcessWire\Page $page, string $languageCode): string {
+        $user = $this->wire()->user;
+        $languages = $this->wire()->languages;
+        $prevLang = null;
+        $httpHtml = '';
+        $savedGet = [
+            'markdownFrontEditorFragments' => $_GET['markdownFrontEditorFragments'] ?? null,
+            'markdownFrontEditorSave' => $_GET['markdownFrontEditorSave'] ?? null,
+            'markdownFrontEditorListImages' => $_GET['markdownFrontEditorListImages'] ?? null,
+        ];
+        if ($languages && $user && isset($user->language)) {
+            $prevLang = $user->language;
+            $nextLang = $languages->get($languageCode);
+            if ($nextLang && $nextLang->id) {
+                $user->language = $nextLang;
+            }
+        }
+
+        // Prefer real HTTP page render to ensure page/template runtime helpers
+        // run in the same context as normal frontend requests.
+        try {
+            $config = $this->wire()->config;
+            $host = (string)($config->httpHost ?: ($_SERVER['HTTP_HOST'] ?? ''));
+            $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+
+            $pageUrl = (string)$page->url;
+            if ($languages && $user && isset($user->language)) {
+                $nextLang = $languages->get($languageCode);
+                if ($nextLang && $nextLang->id) {
+                    $prev = $user->language;
+                    $user->language = $nextLang;
+                    $pageUrl = (string)$page->url;
+                    $user->language = $prev;
+                }
+            }
+
+            if ($host !== '' && $pageUrl !== '') {
+                $url = "{$scheme}://{$host}{$pageUrl}";
+                $http = new \ProcessWire\WireHttp();
+                $http->setTimeout(10.0);
+                $http->set('header', 'Accept: text/html');
+                if (!empty($_SERVER['HTTP_COOKIE'])) {
+                    $http->set('header', 'Cookie: ' . (string)$_SERVER['HTTP_COOKIE']);
+                }
+
+                $body = (string)$http->get($url);
+                $status = (int)$http->getHttpCode();
+                $this->logInfo(sprintf(
+                    "FRAGMENTS_HTTP_RENDER pageId=%d lang='%s' status=%d url='%s' len=%d",
+                    (int)$page->id,
+                    $languageCode,
+                    $status,
+                    $url,
+                    strlen($body)
+                ));
+                if ($status >= 200 && $status < 300 && trim($body) !== '') {
+                    $httpHtml = $body;
+                }
+            }
+        } catch (\Throwable $e) {
+            $this->logInfo(sprintf(
+                "FRAGMENTS_HTTP_RENDER_EXCEPTION pageId=%d lang='%s' class='%s' message='%s'",
+                (int)$page->id,
+                $languageCode,
+                get_class($e),
+                str_replace(["\n", "\r"], ' ', (string)$e->getMessage())
+            ));
+        }
+
+        if ($httpHtml !== '') {
+            if ($prevLang && $user) {
+                $user->language = $prevLang;
+            }
+            return $httpHtml;
+        }
+
+        try {
+            // Avoid recursive interception while rendering inside save/fragment request.
+            unset($_GET['markdownFrontEditorFragments'], $_GET['markdownFrontEditorSave'], $_GET['markdownFrontEditorListImages']);
+            $html = (string)$page->render();
+        } catch (\Throwable $e) {
+            $this->logInfo(sprintf(
+                "FRAGMENTS_RENDER_EXCEPTION pageId=%d lang='%s' class='%s' message='%s'",
+                (int)$page->id,
+                $languageCode,
+                get_class($e),
+                str_replace(["\n", "\r"], ' ', (string)$e->getMessage())
+            ));
+            $html = '';
+        } finally {
+            foreach ($savedGet as $k => $v) {
+                if ($v === null) {
+                    unset($_GET[$k]);
+                } else {
+                    $_GET[$k] = $v;
+                }
+            }
+            if ($prevLang && $user) {
+                $user->language = $prevLang;
+            }
+        }
+
+        if (trim($html) !== '') {
+            return $html;
+        }
+
+        return $html;
+    }
+
+    protected function extractRenderedFragmentsByKeys(
+        string $renderedHtml,
+        array $keys,
+        array $sectionsIndex,
+        array $fieldsIndex,
+        ?array &$graphMeta = null
+    ): array {
+        $keys = $this->normalizeCanonicalKeys($keys);
+        if (!$keys || trim($renderedHtml) === '') {
+            $graphMeta = ['graphChecksum' => '', 'graphNodeCount' => 0];
+            return [];
+        }
+
+        $dom = new \DOMDocument();
+        $prev = libxml_use_internal_errors(true);
+        $loaded = $dom->loadHTML(
+            '<?xml encoding="utf-8" ?>' . $renderedHtml,
+            LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD | LIBXML_NOERROR | LIBXML_NOWARNING
+        );
+        libxml_clear_errors();
+        libxml_use_internal_errors($prev);
+        if (!$loaded) return [];
+
+        $lookup = $this->buildSemanticLookupFromIndexes($sectionsIndex, $fieldsIndex);
+        $xpath = new \DOMXPath($dom);
+        $nodeByKey = [];
+        $graphKeys = [];
+
+        foreach ($xpath->query('//*[@data-mfe-key]') as $node) {
+            if (!$node instanceof \DOMElement) continue;
+            $key = trim((string)$node->getAttribute('data-mfe-key'));
+            if ($key !== '' && $this->isCanonicalScopedKey($key) && !isset($nodeByKey[$key])) {
+                $nodeByKey[$key] = $node;
+            }
+            if ($key !== '' && $this->isCanonicalScopedKey($key)) {
+                $graphKeys[$key] = true;
+            }
+        }
+
+        foreach ($xpath->query('//*[@data-mfe]') as $node) {
+            if (!$node instanceof \DOMElement) continue;
+            $raw = (string)$node->getAttribute('data-mfe');
+            $stampedKey = trim((string)$node->getAttribute('data-mfe-key'));
+            if ($this->isCanonicalScopedKey($stampedKey)) {
+                $recomputed = $this->resolveRenderedMountKeyWithContext($raw, $node, $lookup);
+                if ($recomputed === '') {
+                    $this->logInfo(sprintf(
+                        "FRAGMENTS_STAMP_ERROR reason=non_recomputable key='%s' attr='data-mfe' value='%s'",
+                        $stampedKey,
+                        str_replace(["\n", "\r"], ' ', trim($raw))
+                    ));
+                } elseif ($recomputed !== $stampedKey) {
+                    $this->logInfo(sprintf(
+                        "FRAGMENTS_STAMP_WARN reason=mismatch key='%s' recomputed='%s' attr='data-mfe' value='%s'",
+                        $stampedKey,
+                        $recomputed,
+                        str_replace(["\n", "\r"], ' ', trim($raw))
+                    ));
+                }
+                $key = $stampedKey;
+            } else {
+                $key = $this->resolveRenderedMountKeyWithContext($raw, $node, $lookup);
+            }
+            if ($key !== '' && !isset($nodeByKey[$key])) {
+                $nodeByKey[$key] = $node;
+            }
+            if ($key !== '' && $this->isCanonicalScopedKey($key)) {
+                $graphKeys[$key] = true;
+            }
+        }
+
+        foreach ($xpath->query('//*[@data-mfe-source]') as $node) {
+            if (!$node instanceof \DOMElement) continue;
+            $raw = (string)$node->getAttribute('data-mfe-source');
+            $stampedKey = trim((string)$node->getAttribute('data-mfe-key'));
+            if ($this->isCanonicalScopedKey($stampedKey)) {
+                $recomputed = $this->resolveRenderedMountKeyWithContext($raw, $node, $lookup);
+                if ($recomputed === '') {
+                    $this->logInfo(sprintf(
+                        "FRAGMENTS_STAMP_ERROR reason=non_recomputable key='%s' attr='data-mfe-source' value='%s'",
+                        $stampedKey,
+                        str_replace(["\n", "\r"], ' ', trim($raw))
+                    ));
+                } elseif ($recomputed !== $stampedKey) {
+                    $this->logInfo(sprintf(
+                        "FRAGMENTS_STAMP_WARN reason=mismatch key='%s' recomputed='%s' attr='data-mfe-source' value='%s'",
+                        $stampedKey,
+                        $recomputed,
+                        str_replace(["\n", "\r"], ' ', trim($raw))
+                    ));
+                }
+                $key = $stampedKey;
+            } else {
+                $key = $this->resolveRenderedMountKeyWithContext($raw, $node, $lookup);
+                if ($key === '') {
+                    $key = trim($raw);
+                }
+            }
+            if ($key !== '' && !$this->isCanonicalScopedKey($key)) {
+                $key = '';
+            }
+            if ($key !== '' && !isset($nodeByKey[$key])) {
+                $nodeByKey[$key] = $node;
+            }
+            if ($key !== '' && $this->isCanonicalScopedKey($key)) {
+                $graphKeys[$key] = true;
+            }
+        }
+
+        foreach ($xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " fe-editable ")]') as $node) {
+            if (!$node instanceof \DOMElement) continue;
+            $key = $this->scopedHtmlKey(
+                (string)($node->getAttribute('data-mfe-scope') ?: $node->getAttribute('data-md-scope') ?: 'field'),
+                (string)($node->getAttribute('data-mfe-name') ?: $node->getAttribute('data-md-name')),
+                (string)($node->getAttribute('data-mfe-section') ?: $node->getAttribute('data-md-section')),
+                (string)($node->getAttribute('data-mfe-subsection') ?: $node->getAttribute('data-md-subsection'))
+            );
+            if ($key !== '' && !isset($nodeByKey[$key])) {
+                $nodeByKey[$key] = $node;
+            }
+            if ($key !== '' && $this->isCanonicalScopedKey($key)) {
+                $graphKeys[$key] = true;
+            }
+        }
+
+        $graphMeta = $this->buildGraphMetaFromKeySet(array_keys($graphKeys));
+
+        $fragments = [];
+        foreach ($keys as $key) {
+            if (!isset($nodeByKey[$key])) continue;
+            $fragments[$key] = $this->domNodeInnerHtml($nodeByKey[$key]);
+        }
+
+        return $fragments;
+    }
+
+    protected function domNodeInnerHtml(\DOMNode $node): string {
+        $html = '';
+        foreach ($node->childNodes as $child) {
+            $html .= $node->ownerDocument->saveHTML($child);
+        }
+        return (string)$html;
+    }
+
+    protected function buildSemanticLookupFromIndexes(array $sections, array $fields): array {
+        $sectionNames = [];
+        $subsectionKeys = [];
+        $fieldSectionKeys = [];
+        $fieldSubsectionKeys = [];
+        $fieldTopLevelNames = [];
+
+        foreach ($sections as $section) {
+            $sec = trim((string)($section['name'] ?? ''));
+            if ($sec === '') continue;
+            $sectionNames[$sec] = true;
+            $subs = is_array($section['subsections'] ?? null) ? $section['subsections'] : [];
+            foreach ($subs as $sub) {
+                $subName = trim((string)($sub['name'] ?? ''));
+                if ($subName === '') continue;
+                $subsectionKeys["{$sec}/{$subName}"] = true;
+            }
+        }
+
+        foreach ($fields as $field) {
+            $name = trim((string)($field['name'] ?? ''));
+            $sec = trim((string)($field['section'] ?? ''));
+            $sub = trim((string)($field['subsection'] ?? ''));
+            if ($name === '') continue;
+            if ($sec === '' && $sub === '') {
+                $fieldTopLevelNames[$name] = true;
+                continue;
+            }
+            if ($sec !== '' && $sub !== '') {
+                $fieldSubsectionKeys["{$sec}/{$sub}/{$name}"] = true;
+                continue;
+            }
+            if ($sec !== '') {
+                $fieldSectionKeys["{$sec}/{$name}"] = true;
+            }
+        }
+
+        return [
+            'sectionNames' => $sectionNames,
+            'subsectionKeys' => $subsectionKeys,
+            'fieldSectionKeys' => $fieldSectionKeys,
+            'fieldSubsectionKeys' => $fieldSubsectionKeys,
+            'fieldTopLevelNames' => $fieldTopLevelNames,
+        ];
+    }
+
+    protected function resolveRenderedMountKeyWithContext(string $rawValue, \DOMElement $host, array $lookup): string {
+        $direct = $this->resolveRenderedMountKey($rawValue, $lookup);
+        if ($direct !== '') return $direct;
+
+        $parts = $this->splitMountPath(str_replace(':', '/', trim($rawValue)));
+        if (!$parts) return '';
+        $ctx = $this->inferRenderedContextFromAncestors($host, $lookup);
+        if (!$ctx || ($ctx['section'] ?? '') === '') return '';
+
+        $section = (string)($ctx['section'] ?? '');
+        $subsection = (string)($ctx['subsection'] ?? '');
+        if (count($parts) === 1) {
+            $name = $parts[0];
+            if ($subsection !== '' && !empty($lookup['fieldSubsectionKeys']["{$section}/{$subsection}/{$name}"])) {
+                return "subsection:{$section}:{$subsection}:{$name}";
+            }
+            if (!empty($lookup['fieldSectionKeys']["{$section}/{$name}"])) {
+                return "field:{$section}:{$name}";
+            }
+            return '';
+        }
+        if (count($parts) === 2) {
+            [$a, $b] = $parts;
+            if (!empty($lookup['fieldSubsectionKeys']["{$section}/{$a}/{$b}"])) {
+                return "subsection:{$section}:{$a}:{$b}";
+            }
+        }
+        return '';
+    }
+
+    protected function inferRenderedContextFromAncestors(\DOMElement $host, array $lookup): ?array {
+        $node = $host->parentNode;
+        while ($node instanceof \DOMElement) {
+            $raw = trim((string)$node->getAttribute('data-mfe'));
+            if ($raw !== '') {
+                $key = $this->resolveRenderedMountKey($raw, $lookup);
+                if (str_starts_with($key, 'section:')) {
+                    return ['section' => substr($key, strlen('section:')), 'subsection' => ''];
+                }
+                if (str_starts_with($key, 'subsection:')) {
+                    $parts = explode(':', $key);
+                    return ['section' => (string)($parts[1] ?? ''), 'subsection' => (string)($parts[2] ?? '')];
+                }
+                if (str_starts_with($key, 'field:')) {
+                    $parts = explode(':', $key);
+                    return ['section' => (string)($parts[1] ?? ''), 'subsection' => ''];
+                }
+            }
+            $node = $node->parentNode;
+        }
+        return null;
+    }
+
+    protected function resolveRenderedMountKey(string $rawValue, array $lookup): string {
+        $raw = trim($rawValue);
+        if ($raw === '') return '';
+        $lower = strtolower($raw);
+        $pathParts = $this->splitMountPath(str_replace(':', '/', $raw));
+
+        if (str_starts_with($lower, 'field:')) {
+            $parts = array_values(array_filter(array_map('trim', explode(':', $raw)), fn($p) => $p !== ''));
+            // field:name
+            if (count($parts) === 2) {
+                return "field:{$parts[1]}";
+            }
+            // field:section:name
+            if (count($parts) >= 3) {
+                return "field:{$parts[1]}:{$parts[2]}";
+            }
+            return '';
+        }
+        if (str_starts_with($lower, 'section:')) {
+            $parts = $this->splitMountPath(substr($raw, 8));
+            return $parts ? "section:{$parts[0]}" : '';
+        }
+        if (str_starts_with($lower, 'subsection:')) {
+            $parts = array_values(array_filter(array_map('trim', explode(':', $raw)), fn($p) => $p !== ''));
+            // subsection:section:sub
+            if (count($parts) === 3) {
+                return "subsection:{$parts[1]}:{$parts[2]}";
+            }
+            // subsection:section:sub:field
+            if (count($parts) >= 4) {
+                return "subsection:{$parts[1]}:{$parts[2]}:{$parts[3]}";
+            }
+            return '';
+        }
+        if (str_starts_with($lower, 'sub:')) {
+            $path = str_starts_with($lower, 'sub:') ? substr($raw, 4) : substr($raw, 11);
+            $parts = $this->splitMountPath(str_replace(':', '/', $path));
+            if (count($parts) < 2) return '';
+            return "subsection:{$parts[0]}:{$parts[1]}";
+        }
+
+        if (count($pathParts) === 1) {
+            $a = $pathParts[0];
+            if (!empty($lookup['sectionNames'][$a])) return "section:{$a}";
+            if (!empty($lookup['fieldTopLevelNames'][$a])) return "field:{$a}";
+            return '';
+        }
+        if (count($pathParts) === 2) {
+            [$a, $b] = $pathParts;
+            if (!empty($lookup['subsectionKeys']["{$a}/{$b}"])) return "subsection:{$a}:{$b}";
+            if (!empty($lookup['fieldSectionKeys']["{$a}/{$b}"])) return "field:{$a}:{$b}";
+            return '';
+        }
+        if (count($pathParts) >= 3) {
+            [$a, $b, $c] = $pathParts;
+            if (!empty($lookup['fieldSubsectionKeys']["{$a}/{$b}/{$c}"])) return "subsection:{$a}:{$b}:{$c}";
+            return '';
+        }
+        return '';
+    }
+
+    protected function splitMountPath(string $value): array {
+        $parts = array_map('trim', explode('/', $value));
+        return array_values(array_filter($parts, fn($p) => $p !== ''));
+    }
+
+    protected function isCanonicalScopedKey(string $key): bool {
+        if ($key === '') return false;
+        if (preg_match('/^section:[^:]+$/', $key)) return true;
+        if (preg_match('/^field:[^:]+$/', $key)) return true;
+        if (preg_match('/^field:[^:]+:[^:]+$/', $key)) return true;
+        if (preg_match('/^subsection:[^:]+:[^:]+$/', $key)) return true;
+        if (preg_match('/^subsection:[^:]+:[^:]+:[^:]+$/', $key)) return true;
+        return false;
+    }
+
+    protected function normalizeCanonicalKeys(array $keys): array {
+        $out = [];
+        foreach ($keys as $keyRaw) {
+            $key = trim((string)$keyRaw);
+            if ($key === '') continue;
+            if (!$this->isCanonicalScopedKey($key)) continue;
+            $out[$key] = true;
+        }
+        return array_keys($out);
+    }
+
+    protected function buildGraphMetaFromKeySet(array $keys): array {
+        $normalized = $this->normalizeCanonicalKeys($keys);
+        sort($normalized, SORT_STRING);
+        $checksum = '';
+        if ($normalized) {
+            $checksum = 'mfe-g-' . $this->fnv1aHashBase36(json_encode($normalized));
+        }
+        return [
+            'graphChecksum' => $checksum,
+            'graphNodeCount' => count($normalized),
+        ];
+    }
+
+    protected function fnv1aHashBase36(string $input): string {
+        $hash = 2166136261;
+        $len = strlen($input);
+        for ($i = 0; $i < $len; $i++) {
+            $hash ^= ord($input[$i]);
+            $hash = ($hash * 16777619) & 0xFFFFFFFF;
+        }
+        if ($hash < 0) {
+            $hash = $hash & 0xFFFFFFFF;
+        }
+        return base_convert((string)$hash, 10, 36);
+    }
+
+    protected function sendDatastarPatchElementsStream(array $fragments, array $mountTargets, array $missing = []): void {
+        header('Content-Type: text/event-stream');
+        header('Cache-Control: no-cache, no-transform');
+        header('Connection: keep-alive');
+
+        $eventsSent = 0;
+        foreach ($fragments as $key => $html) {
+            $targets = $mountTargets[$key] ?? [];
+            if (!is_array($targets) || !$targets) continue;
+            foreach ($targets as $target) {
+                $selector = trim((string)($target['selector'] ?? ''));
+                if ($selector === '') continue;
+                $mode = trim((string)($target['mode'] ?? 'inner'));
+                if ($mode === '') $mode = 'inner';
+
+                echo "event: datastar-patch-elements\n";
+                echo "data: key {$key}\n";
+                echo "data: selector {$selector}\n";
+                echo "data: mode {$mode}\n";
+                foreach (preg_split("/\r\n|\n|\r/", (string)$html) as $line) {
+                    echo "data: elements {$line}\n";
+                }
+                echo "\n";
+                $eventsSent++;
+            }
+        }
+
+        if ($missing) {
+            echo "event: datastar-patch-signals\n";
+            echo "data: signals " . json_encode(['mfe_missing' => array_values($missing)]) . "\n\n";
+        }
+        $this->logInfo(sprintf(
+            "FRAGMENTS_STREAM events=%d fragmentKeys=%d targetKeys=%d missing=%d",
+            $eventsSent,
+            count($fragments),
+            count($mountTargets),
+            count($missing)
+        ));
+        @ob_flush();
+        flush();
     }
 
     protected function sendJsonError($msg, $code = 400) {

@@ -28,6 +28,7 @@ import {
   fetchTranslations,
   saveTranslation,
   getSaveUrl,
+  getFragmentsUrl,
   fetchCsrfToken,
 } from "./editor-core.js";
 import { Marker } from "./marker-extension.js";
@@ -45,8 +46,8 @@ import {
 import {
   buildSemanticLookup,
   scopedHtmlKeyFromMeta,
-  applyChangedHtmlByKeyStrict,
-  fanOutChangedHtmlBySource,
+  collectMountTargetsByKey,
+  compileMountTargetsByKey,
   syncEditableMarkdownAttributesFromFieldsIndex as syncFieldsIndexToEditableAttrs,
 } from "./sync-by-key.js";
 import {
@@ -85,6 +86,10 @@ const draftMarkdownByScopedKey = new Map();
 let suppressDirtyTracking = 0;
 let breadcrumbAnchor = null;
 let navigatingViaBreadcrumb = false;
+let lastCompileReport = null;
+let patchCycleCounter = 0;
+let mountWatchObserver = null;
+let mountWatchDebounceTimer = null;
 
 function runWithoutDirtyTracking(fn) {
   suppressDirtyTracking += 1;
@@ -111,7 +116,7 @@ function syncDirtyStatusForActiveField() {
   statusManager.clearDirty(activeFieldId);
 }
 
-function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
+async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
   const { updateActiveEditor = true } = options;
   const activeScopedKey = getActiveScopedHtmlKey();
   const htmlMap =
@@ -124,9 +129,13 @@ function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
       : activeScopedKey
         ? [activeScopedKey]
         : [];
+  const requestedKeysFromServer = Array.from(
+    new Set((Array.isArray(changedKeys) ? changedKeys : []).filter(Boolean)),
+  );
   console.warn("[mfe:save-sync] fragment response", {
     activeScopedKey,
     changedKeys,
+    requestedKeys,
     hasFragments: Boolean(data.fragments),
     fragmentsKeys: data.fragments ? Object.keys(data.fragments).length : 0,
     htmlMapKeys: data.htmlMap ? Object.keys(data.htmlMap).length : 0,
@@ -170,29 +179,113 @@ function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
     : [];
   const semanticLookup = buildSemanticLookup({ sections, fields });
 
-  const debugSync = Boolean(window.MarkdownFrontEditorConfig?.debugLabels);
-  applyChangedHtmlByKeyStrict({
-    changedKeys,
-    htmlMap,
+  const compiled = compileMountTargetsByKey({
+    changedKeys: requestedKeysFromServer,
     root: document,
-    normalizeHtml: normalizeHtmlImageSources,
-    warnedMissingMountKeys,
-    debug: debugSync,
     getMetaAttr,
     semanticLookup,
-    isOuterSwapKey: (key, mount) => {
-      if (!key || !key.startsWith("section:")) return false;
-      const rootKey = mount.getAttribute?.("data-mfe-root") || "";
-      return rootKey === key;
-    },
   });
-  fanOutChangedHtmlBySource({
-    changedKeys,
-    htmlMap,
+  const mountTargets = compiled.targetsByKey || collectMountTargetsByKey({
+    changedKeys: requestedKeysFromServer,
     root: document,
-    normalizeHtml: normalizeHtmlImageSources,
+    getMetaAttr,
     semanticLookup,
   });
+  const requestedKeys = Object.keys(mountTargets || {});
+  const nonMountedRequestedKeys = requestedKeysFromServer.filter(
+    (k) => !requestedKeys.includes(k),
+  );
+  lastCompileReport = compiled.report || null;
+  console.warn("[mfe:fragment-sync] mount targets", {
+    changedKeys: requestedKeysFromServer,
+    targetKeys: requestedKeys,
+    nonMountedRequestedKeys,
+    report: lastCompileReport,
+  });
+  if (lastCompileReport?.graphChecksum) {
+    window.__MFE_GRAPH = lastCompileReport.graphChecksum;
+  }
+  if (lastCompileReport?.ambiguous?.length || lastCompileReport?.unresolved?.length) {
+    console.warn("[mfe:bind] compile report", lastCompileReport);
+    if (console.table) {
+      const rows = [
+        ...((lastCompileReport.ambiguous || []).map((v) => ({ type: "ambiguous", value: v }))),
+        ...((lastCompileReport.unresolved || []).map((v) => ({ type: "unresolved", value: v }))),
+      ];
+      if (rows.length) console.table(rows);
+    }
+  }
+
+  const { current } = getLanguagesConfig();
+  const currentPageId =
+    activeTarget?.getAttribute("data-page") ||
+    activeFieldId?.split(":")?.[0] ||
+    "0";
+  if (!requestedKeys.length) {
+    console.warn("[mfe:fragment-sync] no canonical mount keys, preview patch skipped", {
+      changedKeys: requestedKeysFromServer,
+    });
+  } else {
+    try {
+      const patchResult = await requestRenderedFragmentsDatastar({
+        pageId: currentPageId,
+        lang: current,
+        keys: requestedKeys,
+        mountTargets,
+        graphChecksum: lastCompileReport?.graphChecksum || "",
+        graphNodeCount: Number(lastCompileReport?.graphNodeCount || 0),
+      });
+      if (isDevMode()) {
+        const appliedKeys = Array.from(
+          new Set(
+            (Array.isArray(patchResult?.applied) ? patchResult.applied : [])
+              .filter((a) => Number(a?.updated || 0) > 0)
+              .map((a) => String(a?.key || ""))
+              .filter(Boolean),
+          ),
+        );
+        const skippedKeys = Array.from(
+          new Set([
+            ...nonMountedRequestedKeys,
+            ...requestedKeys.filter((k) => !appliedKeys.includes(k)),
+          ]),
+        );
+        console.warn("[mfe:fragment-sync] coverage", {
+          cycleId: patchResult?.cycleId,
+          requestedKeys,
+          appliedKeys,
+          skippedKeys,
+        });
+      }
+      if (Array.isArray(patchResult?.missingKeys) && patchResult.missingKeys.length) {
+        const editableFallbackUpdated = applyChangedHtmlEditableOnly({
+          changedKeys: patchResult.missingKeys,
+          htmlMap,
+        });
+        console.warn("[mfe:fragment-sync] missing-key editable fallback", {
+          missingKeys: patchResult.missingKeys,
+          editableFallbackUpdated,
+        });
+      }
+      if (Array.isArray(patchResult?.skippedSectionKeys) && patchResult.skippedSectionKeys.length) {
+        const sectionEditableUpdated = applyEditableFallbackInSectionHosts({
+          sectionKeys: patchResult.skippedSectionKeys,
+          mountTargets,
+          htmlMap,
+        });
+        console.warn("[mfe:fragment-sync] skipped-section editable fallback", {
+          skippedSectionKeys: patchResult.skippedSectionKeys,
+          sectionEditableUpdated,
+        });
+      }
+      console.warn("[mfe:fragment-sync] datastar applied", patchResult);
+    } catch (e) {
+      console.warn("[mfe:fragment-sync] datastar fetch failed, preview skipped", {
+        message: e?.message || String(e),
+        changedKeys: requestedKeys,
+      });
+    }
+  }
   syncFieldsIndexToEditableAttrs({
     root: document,
     fields,
@@ -250,7 +343,7 @@ async function savePendingDrafts() {
     if (!data.status) {
       throw new Error(data.message || "Save failed");
     }
-    handlePrimarySaveResponse(data, markdown, { updateActiveEditor: false });
+    await handlePrimarySaveResponse(data, markdown, { updateActiveEditor: false });
   }
 }
 
@@ -261,6 +354,302 @@ function getMetaAttr(el, name) {
     el.getAttribute(`data-md-${name}`) ||
     ""
   );
+}
+
+function applyChangedHtmlEditableOnly({ changedKeys, htmlMap }) {
+  const keys = Array.isArray(changedKeys) ? changedKeys.filter(Boolean) : [];
+  if (!keys.length) return 0;
+  const keySet = new Set(keys);
+  let updated = 0;
+  document.querySelectorAll(".fe-editable").forEach((el) => {
+    if (el.closest('[data-mfe-window="true"]')) return;
+    const key = scopedHtmlKeyFromMeta(
+      getMetaAttr(el, "scope") || "field",
+      getMetaAttr(el, "section") || "",
+      getMetaAttr(el, "subsection") || "",
+      getMetaAttr(el, "name") || "",
+    );
+    if (!keySet.has(key)) return;
+    const html = htmlMap?.[key];
+    if (typeof html !== "string") return;
+    el.innerHTML = normalizeHtmlImageSources(html);
+    updated += 1;
+  });
+  return updated;
+}
+
+function applyEditableFallbackInSectionHosts({ sectionKeys, mountTargets, htmlMap }) {
+  const keys = Array.isArray(sectionKeys) ? sectionKeys.filter(Boolean) : [];
+  if (!keys.length) return 0;
+  let updated = 0;
+  keys.forEach((sectionKey) => {
+    const targets = Array.isArray(mountTargets?.[sectionKey]) ? mountTargets[sectionKey] : [];
+    targets.forEach((target) => {
+      const selector = target?.selector || "";
+      if (!selector) return;
+      const hosts = Array.from(document.querySelectorAll(selector));
+      hosts.forEach((host) => {
+        if (!host || !host.isConnected) return;
+        const editables = [];
+        if (host.classList?.contains("fe-editable")) editables.push(host);
+        host.querySelectorAll?.(".fe-editable")?.forEach((el) => editables.push(el));
+        editables.forEach((el) => {
+          const key = scopedHtmlKeyFromMeta(
+            getMetaAttr(el, "scope") || "field",
+            getMetaAttr(el, "section") || "",
+            getMetaAttr(el, "subsection") || "",
+            getMetaAttr(el, "name") || "",
+          );
+          const html = htmlMap?.[key];
+          if (typeof html !== "string") return;
+          el.innerHTML = normalizeHtmlImageSources(html);
+          updated += 1;
+        });
+      });
+    });
+  });
+  return updated;
+}
+
+function applyDatastarPatchElement({ selector, mode, elements, cycleId }) {
+  if (!selector) return 0;
+  const nodes = Array.from(document.querySelectorAll(selector));
+  if (!nodes.length) return 0;
+  const patchMode = mode || "inner";
+  let updated = 0;
+  nodes.forEach((node) => {
+    if (!node || !node.isConnected) return;
+    if (patchMode === "outer" || patchMode === "replace") {
+      node.outerHTML = elements || "";
+      updated += 1;
+      return;
+    }
+    node.innerHTML = elements || "";
+    if (cycleId !== undefined && cycleId !== null) {
+      node.setAttribute("data-mfe-last-patch", String(cycleId));
+    }
+    updated += 1;
+  });
+  return updated;
+}
+
+function parseDatastarEventBlock(block) {
+  const lines = String(block || "")
+    .split(/\r?\n/)
+    .filter(Boolean);
+  let event = "message";
+  const payload = {};
+  lines.forEach((line) => {
+    if (line.startsWith("event:")) {
+      event = line.slice(6).trim();
+      return;
+    }
+    if (!line.startsWith("data:")) return;
+    let raw = line.slice(5);
+    if (raw.startsWith(" ")) raw = raw.slice(1);
+    const sep = raw.indexOf(" ");
+    if (sep <= 0) return;
+    const key = raw.slice(0, sep);
+    const value = raw.slice(sep + 1);
+    if (key === "elements") {
+      payload.elements = payload.elements
+        ? `${payload.elements}\n${value}`
+        : value;
+      return;
+    }
+    payload[key] = value;
+  });
+  return { event, payload };
+}
+
+function keyDepth(key) {
+  if (!key) return 99;
+  if (key.startsWith("section:")) return 1;
+  if (key.startsWith("field:")) return 2;
+  if (key.startsWith("subsection:")) return key.split(":").length >= 4 ? 3 : 2;
+  return 50;
+}
+
+function isDescendantKey(child, parent) {
+  if (!child || !parent || child === parent) return false;
+  if (parent.startsWith("section:")) {
+    const sec = parent.slice("section:".length);
+    return child.startsWith(`field:${sec}:`) || child.startsWith(`subsection:${sec}:`);
+  }
+  if (parent.startsWith("subsection:")) {
+    const parts = parent.split(":");
+    if (parts.length === 3) return child.startsWith(`${parent}:`);
+  }
+  return false;
+}
+
+async function requestRenderedFragmentsDatastar({
+  pageId,
+  lang,
+  keys,
+  mountTargets,
+  graphChecksum,
+  graphNodeCount,
+}) {
+  const cycleId = ++patchCycleCounter;
+  console.warn("[mfe:fragment-api] request", {
+    cycleId,
+    pageId,
+    lang: lang || "",
+    keys: Array.isArray(keys) ? keys : [],
+    mountTargetKeys: Object.keys(mountTargets || {}),
+  });
+  const csrf = await fetchCsrfToken();
+  const formData = new FormData();
+  formData.append("pageId", String(pageId || "0"));
+  if (lang) formData.append("lang", String(lang));
+  formData.append("transport", "datastar");
+  formData.append("keys", JSON.stringify(keys || []));
+  formData.append("mountTargets", JSON.stringify(mountTargets || {}));
+  if (graphChecksum) formData.append("graphChecksum", String(graphChecksum));
+  if (Number.isFinite(graphNodeCount) && graphNodeCount > 0) {
+    formData.append("graphNodeCount", String(graphNodeCount));
+  }
+  if (csrf) formData.append(csrf.name, csrf.value);
+
+  const response = await fetch(getFragmentsUrl(), {
+    method: "POST",
+    body: formData,
+    credentials: "same-origin",
+    headers: {
+      Accept: "text/event-stream",
+    },
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (!response.body) return { updated: 0 };
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let updated = 0;
+  let events = 0;
+  let patches = 0;
+  let signals = 0;
+  const applied = [];
+  const queued = [];
+  const missingKeys = [];
+  const skippedSectionKeys = [];
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split(/\n\n/);
+    buffer = chunks.pop() || "";
+    chunks.forEach((chunk) => {
+      const evt = parseDatastarEventBlock(chunk);
+      if (!evt) return;
+      events += 1;
+      if (evt.event === "datastar-patch-signals") {
+        signals += 1;
+        try {
+          const parsedSignals = JSON.parse(evt.payload?.signals || "{}");
+          const missing = Array.isArray(parsedSignals?.mfe_missing)
+            ? parsedSignals.mfe_missing
+            : [];
+          missing.forEach((k) => {
+            if (typeof k === "string" && k.trim() !== "") {
+              missingKeys.push(k.trim());
+            }
+          });
+        } catch (_e) {}
+        console.warn("[mfe:fragment-api] signal", evt.payload || {});
+        return;
+      }
+      if (evt.event !== "datastar-patch-elements") return;
+      patches += 1;
+      queued.push({
+        key: evt.payload.key || "",
+        selector: evt.payload.selector || "",
+        mode: evt.payload.mode || "inner",
+        elements: evt.payload.elements || "",
+      });
+    });
+  }
+  if (buffer.trim() !== "") {
+    const evt = parseDatastarEventBlock(buffer);
+    if (evt && evt.event === "datastar-patch-elements") {
+      patches += 1;
+      queued.push({
+        key: evt.payload.key || "",
+        selector: evt.payload.selector || "",
+        mode: evt.payload.mode || "inner",
+        elements: evt.payload.elements || "",
+      });
+    }
+  }
+
+  queued.sort((a, b) => keyDepth(a.key) - keyDepth(b.key));
+  const appliedParents = new Set();
+  queued.forEach((patch) => {
+    for (const parent of appliedParents) {
+      if (isDescendantKey(patch.key, parent)) {
+        console.warn("[mfe:fragment-api] patch skipped child-after-parent", {
+          key: patch.key,
+          parent,
+          selector: patch.selector,
+        });
+        return;
+      }
+    }
+    const patchHtml = patch.elements || "";
+    const candidateNodes = Array.from(
+      document.querySelectorAll(patch.selector || ""),
+    );
+    if (
+      patch.key?.startsWith("section:") &&
+      candidateNodes.some(
+        (n) =>
+          n &&
+          (n.classList?.contains("fe-editable") ||
+            n.querySelector?.(".fe-editable")),
+      ) &&
+      !patchHtml.includes("fe-editable")
+    ) {
+      if (!skippedSectionKeys.includes(patch.key)) {
+        skippedSectionKeys.push(patch.key);
+      }
+      console.warn("[mfe:fragment-api] section patch skipped (would drop editable wrappers)", {
+        key: patch.key,
+        selector: patch.selector,
+      });
+      return;
+    }
+    const appliedCount = applyDatastarPatchElement({
+      selector: patch.selector || "",
+      mode: patch.mode || "inner",
+      elements: patchHtml,
+      cycleId,
+    });
+    updated += appliedCount;
+    if (appliedCount > 0 && patch.key) {
+      appliedParents.add(patch.key);
+    }
+    applied.push({
+      key: patch.key || "",
+      selector: patch.selector || "",
+      mode: patch.mode || "inner",
+      htmlLen: (patch.elements || "").length,
+      updated: appliedCount,
+    });
+    console.warn("[mfe:fragment-api] patch", {
+      cycleId,
+      key: patch.key || "",
+      selector: patch.selector || "",
+      mode: patch.mode || "inner",
+      htmlLen: (patch.elements || "").length,
+      updated: appliedCount,
+    });
+  });
+
+  const result = { cycleId, updated, events, patches, signals, missingKeys, skippedSectionKeys, applied };
+  console.warn("[mfe:fragment-api] result", result);
+  return result;
 }
 
 function getImageBaseUrl() {
@@ -1899,11 +2288,17 @@ function openFullscreenEditorFromPayload(payload) {
         })
         .then((data) => {
           if (data.status) {
-            handlePrimarySaveResponse(data, finalMarkdown, {
-              updateActiveEditor: true,
-            });
-
-            if (resolve) resolve();
+            Promise.resolve(
+              handlePrimarySaveResponse(data, finalMarkdown, {
+                updateActiveEditor: true,
+              }),
+            )
+              .then(() => {
+                if (resolve) resolve();
+              })
+              .catch((err) => {
+                if (reject) reject(err);
+              });
           } else {
             alert(`Save failed: ${data.message || "Unknown error"}`);
             if (reject) reject(new Error(data.message || "Save failed"));
@@ -2083,6 +2478,110 @@ export function openFullscreenEditorForElement(target) {
   return openFullscreenEditorFromPayload(payload);
 }
 
+function recompileMountGraph() {
+  const sections = Array.isArray(window.MarkdownFrontEditorConfig?.sectionsIndex)
+    ? window.MarkdownFrontEditorConfig.sectionsIndex
+    : [];
+  const fields = Array.isArray(window.MarkdownFrontEditorConfig?.fieldsIndex)
+    ? window.MarkdownFrontEditorConfig.fieldsIndex
+    : [];
+  const semanticLookup = buildSemanticLookup({ sections, fields });
+  const compiled = compileMountTargetsByKey({
+    changedKeys: [],
+    root: document,
+    getMetaAttr,
+    semanticLookup,
+  });
+  lastCompileReport = compiled.report || null;
+  if (lastCompileReport?.graphChecksum) {
+    window.__MFE_GRAPH = lastCompileReport.graphChecksum;
+  }
+  console.warn("[mfe:bind] recompileMountGraph", lastCompileReport || {});
+  if (lastCompileReport && console.table) {
+    const rows = [
+      ...((lastCompileReport.ambiguous || []).map((v) => ({ type: "ambiguous", value: v }))),
+      ...((lastCompileReport.unresolved || []).map((v) => ({ type: "unresolved", value: v }))),
+    ];
+    if (rows.length) console.table(rows);
+  }
+  return lastCompileReport || { nodes: 0, ambiguous: [], unresolved: [] };
+}
+
+function isDevMode() {
+  const cfg = window.MarkdownFrontEditorConfig || {};
+  return Boolean(cfg.debug || cfg.debugShowSections || cfg.debugLabels);
+}
+
+function nodeTouchesMfe(node) {
+  if (!node || node.nodeType !== 1) return false;
+  const el = /** @type {Element} */ (node);
+  if (
+    el.matches?.("[data-mfe], [data-mfe-source], [data-mfe-key]") ||
+    el.closest?.("[data-mfe], [data-mfe-source], [data-mfe-key]")
+  ) {
+    return true;
+  }
+  if (el.querySelector?.("[data-mfe], [data-mfe-source], [data-mfe-key]")) {
+    return true;
+  }
+  return false;
+}
+
+function unwatchMountGraph() {
+  if (mountWatchDebounceTimer) {
+    clearTimeout(mountWatchDebounceTimer);
+    mountWatchDebounceTimer = null;
+  }
+  if (mountWatchObserver) {
+    mountWatchObserver.disconnect();
+    mountWatchObserver = null;
+  }
+  return true;
+}
+
+function watchMountGraph() {
+  if (!isDevMode()) {
+    console.warn("[mfe:bind] watch unavailable outside dev mode");
+    return false;
+  }
+  unwatchMountGraph();
+  mountWatchObserver = new MutationObserver((mutations) => {
+    let shouldRecompile = false;
+    for (const m of mutations) {
+      if (
+        m.type === "attributes" &&
+        (m.attributeName === "data-mfe" ||
+          m.attributeName === "data-mfe-source" ||
+          m.attributeName === "data-mfe-key")
+      ) {
+        shouldRecompile = true;
+        break;
+      }
+      if (m.type === "childList") {
+        const touched = [...(m.addedNodes || []), ...(m.removedNodes || [])];
+        if (touched.some((n) => nodeTouchesMfe(n))) {
+          shouldRecompile = true;
+          break;
+        }
+      }
+    }
+    if (!shouldRecompile) return;
+    if (mountWatchDebounceTimer) clearTimeout(mountWatchDebounceTimer);
+    mountWatchDebounceTimer = setTimeout(() => {
+      mountWatchDebounceTimer = null;
+      recompileMountGraph();
+    }, 80);
+  });
+  mountWatchObserver.observe(document.documentElement || document.body, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ["data-mfe", "data-mfe-source", "data-mfe-key"],
+  });
+  console.warn("[mfe:bind] watch enabled");
+  return true;
+}
+
 /**
  * Public API for ProcessWire module
  */
@@ -2109,12 +2608,31 @@ window.MarkdownFrontEditor = {
   isOpen() {
     return activeEditor !== null;
   },
+
+  recompile() {
+    return recompileMountGraph();
+  },
+
+  watch() {
+    return watchMountGraph();
+  },
+
+  unwatch() {
+    return unwatchMountGraph();
+  },
 };
 
+window.MarkdownFrontEditorRecompile = recompileMountGraph;
+
 export function initFullscreenEditor() {
+  window.MarkdownFrontEditorRecompile = recompileMountGraph;
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initEditors);
+    document.addEventListener("DOMContentLoaded", () => {
+      initEditors();
+      recompileMountGraph();
+    });
   } else {
     initEditors();
+    recompileMountGraph();
   }
 }

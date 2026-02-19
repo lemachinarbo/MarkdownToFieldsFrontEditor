@@ -323,6 +323,10 @@ export function getSaveUrl() {
   return "?markdownFrontEditorSave=1";
 }
 
+export function getFragmentsUrl() {
+  return "?markdownFrontEditorFragments=1";
+}
+
 export async function fetchCsrfToken() {
   try {
     const response = await fetch("?markdownFrontEditorToken=1", {

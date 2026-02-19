@@ -60,17 +60,23 @@ If a section only contains subsections, it may not have its own content. In that
 
 ### Live Preview Editor
 
-When you save in the editor, two things happen:
+When you save, this module does two things:
 
-1. The markdown file is saved.
-2. The page is updated live, so you can see the result right away.
+1. Saves markdown (this is the real source of truth).
+2. Tries to patch the page live (preview only).
 
-That live update is only a preview.  
-If something looks wrong, refresh. Reload shows the real HTML rendered from saved markdown.
+Live preview is **server-rendered fragment sync** (DataStar SSE).  
+If a fragment cannot be resolved for a key, save is still correct and the editor falls back to updating only the editable node(s).  
+If needed, refresh to see the fully re-rendered page.
 
-In short: save updates your markdown, but the preview is only a temporal visual update.
+Use `data-mfe` to mark preview zones:
 
-If the preview of one area isn't updating correctly, try adding a clear `data-mfe` host around that area so the editor knows exactly what to patch.
+```txt
+data-mfe="body"              section
+data-mfe="body/features"     subsection or section field
+data-mfe="body/features/end" subsection field
+data-mfe="title"             top-level field (optional shorthand)
+```
 
 Example:
 
@@ -80,52 +86,72 @@ Example:
 </div>
 ```
 
-```
-data-mfe="body"              section
-data-mfe="body/features"     subsection or section field (resolved from content index)
-data-mfe="body/features/end" subsection field
-data-mfe="title"             top-level field (optional shorthand)
-```
+`data-mfe` can use either:
+- path form: `body/features/end`
+- scoped form: `subsection:body:features:end`
 
+Scoped form reference:
+- `section:body`
+- `subsection:body:features`
+- `field:body:title`
+- `subsection:body:features:end`
 
 ### Rendering The Same Field Twice
 
-If a field is printed in multiple places, the preview by default updates only the primary "node", but the extra copies must declare their 'source' with `data-mfe-source` so the editor knows which content to update:
+If the same content is rendered in multiple places, one node should be the main `data-mfe` mount.  
+Extra copies should use `data-mfe-source` so they mirror the same saved content.
 
 ```html
 <section data-mfe="body">
   <div data-mfe="body/features/end">
-    <!-- this is the primary node for this content, so it gets the live update -->
-    <?= $content->body->features->end->html ?> 
+    <?= $content->body->features->end->html ?>
   </div>
 
   <aside>
-    <div>
-      <!-- this is a copy without source, so it won't get the live update -->
-      <?= $content->body->features->end->html ?> 
-    </div>
     <div data-mfe-source="body/features/end">
-      <!-- this is a copy with source, so it will get the live update -->
-      <?= $content->body->features->end->html ?> 
+      <?= $content->body->features->end->html ?>
     </div>
   </aside>
 </section>
 ```
 
 `data-mfe-source` accepts:
-- slash path: `body/features/end` (recommended)
-- scoped key: `subsection:body:features:end` (internal format)
+- path form: `body/features/end` (recommended)
+- scoped form: `subsection:body:features:end`
 
-Why this split:
-- `data-mfe` is the main editable/bound area.
-- `data-mfe-source` is an extra mirror of that same content.
-- This avoids preview conflicts when the same content is printed in more than one place.
+### Identity Protocol (V0.5)
 
-Canonical keys are type-first:
-- `section` = whole section
-- `subsection` = whole subsection
-- `field` = field inside a section
-- `subsection:...:...:fieldName` = field inside a subsection
+Live preview now uses a stamped canonical identity per mount.
+
+- Authors keep writing shorthand (`data-mfe`, `data-mfe-source`).
+- Compiler resolves canonical identity and stamps:
+  - `data-mfe-key` (canonical key used across network)
+  - `data-mfe-sig` (structural signature)
+  - `data-mfe-key-id` (runtime patch selector id)
+- In debug mode it also stamps:
+  - `data-mfe-path` (human-readable path, e.g. `topics.description`)
+
+Canonical keys:
+
+```txt
+section:hero
+field:topics:title
+subsection:methods:logos
+subsection:methods:logos:cta
+```
+
+Important rule:
+- If `data-mfe-key` is present, runtime uses that key directly (no shorthand inference for that node).
+
+Debug helpers:
+- `window.MarkdownFrontEditor.recompile()` -> recompute and restamp mount graph.
+- `window.MarkdownFrontEditor.watch()` -> dev-only MutationObserver auto-recompile.
+- `window.MarkdownFrontEditor.unwatch()` -> stop watch mode.
+
+Diagnostics you may see in logs:
+- `mfe_missing` -> fragment key not resolved server-side; editable-only fallback applied.
+- `FRAGMENTS_GRAPH_MISMATCH` -> client and server mount graph checksums differ.
+- `FRAGMENTS_STAMP_WARN` / `FRAGMENTS_STAMP_ERROR` -> stamped key mismatch or non-recomputable key on server render.
 
 
 
