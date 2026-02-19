@@ -1,5 +1,13 @@
 # Changelog
 
+## V0.4.6.3
+- Live preview sync is now strict-mount only: updates apply only to `.fe-editable` and explicit `data-mfe-slot` mounts.
+- Added read-only runtime mapping for existing `data-mfe` section/subsection hosts (no DOM mutation/injection).
+- Removed runtime boundary injection and host-level HTML fallback replacement to avoid layout-dependent preview side effects.
+- Added sync/draft utility modules (`src/sync-by-key.js`, `src/draft-utils.js`) to reduce editor runtime complexity.
+- Missing mount diagnostics are now debug-gated (shown only when debug labels are enabled).
+- README now documents the explicit mount contract required for deterministic preview updates.
+
 ## V0.4.6.2
 - Removed hardcoded frontend path assumptions (`/site/images`, `/site/assets/files`); image URL resolution is now ProcessWire-config-first (`pageFilesBaseUrl`, `imageBaseUrl`) with generic fallbacks.
 - Fixed subsection/section image live-refresh matching for `data-mfe` hosts in disconnected-target saves.

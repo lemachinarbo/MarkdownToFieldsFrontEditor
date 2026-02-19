@@ -56,37 +56,51 @@ If a section only contains subsections, it may not have its own content. In that
 - Rendering `->text` (or otherwise transforming the HTML) breaks that exact match, so **field rollovers won’t appear**.
   - In this case, you can still define explicit section/subsection hosts in your template (see below).
 
-### Custom editable zones
+### Explicit Mount Contract (Recommended for Deterministic Preview)
 
-If your templates render fields individually (instead of raw section HTML), add a **lightweight host** to define a editable zone (aka the zone that appears when you rollover):
+Live preview updates are now **strict-key based**.  
+The editor replaces HTML inside:
 
-**Section**
+- `.fe-editable` field nodes
+- explicit mount nodes with `data-mfe-slot`
+- read-only `data-mfe` hosts (`section` / `subsection`) when the host is a safe direct mount
+
+No runtime DOM injection or wrapper insertion is used.
+
+Use these mounts in templates:
+
+**Section mount**
 ```html
 <section data-mfe="hero">
-  ...
+  <div data-mfe-slot="section:hero"></div>
 </section>
 ```
 
-**Subsection**
+**Subsection mount**
 ```html
-<div data-mfe="hero:left">
-  ...
+<div data-mfe="hero/left">
+  <div data-mfe-slot="subsection:hero:left"></div>
 </div>
 ```
 
-**Field (top-level or sectioned)**
+**Field mount (`.fe-editable` metadata)**
 ```html
-<div data-mfe="title">...</div>
-<div data-mfe="hero/title">...</div>
+<div
+  class="fe-editable md-edit"
+  data-mfe-scope="field"
+  data-mfe-section="hero"
+  data-mfe-name="title"
+  data-page="1234"
+  data-markdown-b64="..."
+></div>
 ```
 
-Rules:
-- `data-mfe="hero"` → section host
-- `data-mfe="hero:left"` → subsection host (section `hero`, subsection `left`)
-- `data-mfe="title"` → field host (auto-resolves field first, then section fallback)
-- `data-mfe="hero/title"` → field host inside section `hero`
-- Explicit forms are also supported: `field:title`, `field:hero/title`, `section:hero`, `sub:hero/left`
-- The closest `data-mfe` host controls the rollover bounds for that area.
+Key rules:
+- `section:{name}` -> `data-mfe-slot="section:{name}"`
+- `subsection:{section}:{sub}` -> `data-mfe-slot="subsection:{section}:{sub}"`
+- `field` keys are resolved from `.fe-editable` metadata (`scope/section/subsection/name`)
+- `data-mfe="foo"` and `data-mfe="foo/bar"` are auto-mapped at runtime as section/subsection mounts when safe.
+- If a changed key has no mount, save still works, but live preview for that key is skipped.
 
 
 #### Clicking the zones

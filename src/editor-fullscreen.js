@@ -38,8 +38,17 @@ import {
 } from "./content-index.js";
 import { createImagePicker } from "./image-picker.js";
 import {
+  normalizeComparableMarkdown,
+  parseFieldId,
+  clearDraftsCoveredByChangedKeys,
+} from "./draft-utils.js";
+import {
+  scopedHtmlKeyFromMeta,
+  applyChangedHtmlByKeyStrict,
+  syncEditableMarkdownAttributesFromFieldsIndex as syncFieldsIndexToEditableAttrs,
+} from "./sync-by-key.js";
+import {
   openWindow,
-  closeTopWindow,
   closeWindow,
   updateWindowById,
 } from "./window-manager.js";
@@ -84,14 +93,6 @@ function runWithoutDirtyTracking(fn) {
   }
 }
 
-function normalizeComparableMarkdown(markdown) {
-  return String(markdown || "")
-    .replace(/\r\n/g, "\n")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n+$/g, "")
-    .trimEnd();
-}
-
 function hasActivePrimaryDraft() {
   if (activeFieldId && primaryDraftsByFieldId.has(activeFieldId)) return true;
   const scopedKey = getActiveScopedHtmlKey();
@@ -108,112 +109,6 @@ function syncDirtyStatusForActiveField() {
   statusManager.clearDirty(activeFieldId);
 }
 
-function scopedKeyFromFieldId(fieldId) {
-  if (!fieldId || typeof fieldId !== "string") return "";
-  const parts = fieldId.split(":");
-  if (parts.length < 4) return "";
-  const scope = parts[1] || "";
-  if (scope === "section") {
-    const name = parts[3] || parts[2] || "";
-    return name ? `section:${name}` : "";
-  }
-  if (scope === "subsection") {
-    const section = parts[2] || "";
-    const name = parts[3] || "";
-    return section && name ? `subsection:${section}:${name}` : "";
-  }
-  if (scope === "field") {
-    if (parts.length >= 5) {
-      const section = parts[2] || "";
-      const subsection = parts[3] || "";
-      const name = parts[4] || "";
-      return section && subsection && name
-        ? `subsection:${section}:${subsection}:${name}`
-        : "";
-    }
-    const section = parts[2] || "";
-    const name = parts[3] || "";
-    if (section && name) return `field:${section}:${name}`;
-    if (name) return `field:${name}`;
-    return "";
-  }
-  return "";
-}
-
-function parseFieldId(fieldId) {
-  if (!fieldId || typeof fieldId !== "string") return null;
-  const parts = fieldId.split(":");
-  if (parts.length < 4) return null;
-  const pageId = parts[0] || "0";
-  const scope = parts[1] || "field";
-  const section = parts[2] || "";
-  let subsection = "";
-  let name = "";
-
-  if (scope === "section") {
-    name = parts[3] || parts[2] || "";
-  } else if (scope === "subsection") {
-    name = parts[3] || "";
-  } else if (scope === "field") {
-    if (parts.length >= 5) {
-      subsection = parts[3] || "";
-      name = parts[4] || "";
-    } else {
-      name = parts[3] || "";
-    }
-  } else {
-    name = parts[3] || "";
-  }
-
-  if (!name) return null;
-  return { fieldId, pageId, scope, section, subsection, name };
-}
-
-function changedKeyCoversTarget(changedKey, targetKey) {
-  if (!changedKey || !targetKey) return false;
-  if (changedKey === targetKey) return true;
-  if (changedKey.startsWith("section:")) {
-    const section = changedKey.slice(8);
-    if (!section) return false;
-    return (
-      targetKey.startsWith(`section:${section}`) ||
-      targetKey.startsWith(`subsection:${section}:`) ||
-      targetKey.startsWith(`field:${section}:`)
-    );
-  }
-  if (changedKey.startsWith("subsection:")) {
-    return targetKey.startsWith(`${changedKey}:`) || targetKey === changedKey;
-  }
-  return false;
-}
-
-function clearDraftsCoveredByChangedKeys(changedKeys) {
-  const keys = Array.isArray(changedKeys) ? changedKeys.filter(Boolean) : [];
-  if (!keys.length) return { scopedCleared: 0, fieldCleared: 0 };
-
-  let scopedCleared = 0;
-  let fieldCleared = 0;
-
-  const shouldClear = (targetKey) =>
-    keys.some((changedKey) => changedKeyCoversTarget(changedKey, targetKey));
-
-  for (const [scopeKey] of Array.from(draftMarkdownByScopedKey.entries())) {
-    if (!shouldClear(scopeKey)) continue;
-    draftMarkdownByScopedKey.delete(scopeKey);
-    scopedCleared += 1;
-  }
-
-  for (const [fieldId] of Array.from(primaryDraftsByFieldId.entries())) {
-    const scopeKey = scopedKeyFromFieldId(fieldId);
-    if (!scopeKey || !shouldClear(scopeKey)) continue;
-    primaryDraftsByFieldId.delete(fieldId);
-    statusManager.clearDirty(fieldId);
-    fieldCleared += 1;
-  }
-
-  return { scopedCleared, fieldCleared };
-}
-
 function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
   const { updateActiveEditor = true } = options;
   const activeScopedKey = getActiveScopedHtmlKey();
@@ -224,7 +119,12 @@ function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
       : activeScopedKey
         ? [activeScopedKey]
         : [];
-  const clearedDrafts = clearDraftsCoveredByChangedKeys(changedKeys);
+  clearDraftsCoveredByChangedKeys({
+    changedKeys,
+    draftMarkdownByScopedKey,
+    primaryDraftsByFieldId,
+    clearDirtyByFieldId: (fieldId) => statusManager.clearDirty(fieldId),
+  });
   if (activeFieldId) {
     primaryDraftsByFieldId.delete(activeFieldId);
   }
@@ -239,20 +139,6 @@ function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
       ? htmlMap[activeScopedKey]
       : (typeof data.html === "string" ? data.html : "");
   const primaryHtml = normalizeHtmlImageSources(primaryHtmlRaw || "");
-  console.warn("[mfe:save-sync] response summary", {
-    hasActiveTarget: Boolean(activeTarget),
-    hasPrimaryHtml: Boolean(primaryHtml),
-    htmlMapKeys: Object.keys(htmlMap || {}).length,
-    changedKeys,
-    markdownKeys: Object.keys(data.markdowns || {}).length,
-    activeFieldScope,
-    activeFieldSection,
-    activeFieldSubsection,
-    activeFieldName,
-    activeScopedKey,
-    clearedDrafts,
-  });
-
   if (data.sectionsIndex) {
     window.MarkdownFrontEditorConfig =
       window.MarkdownFrontEditorConfig || {};
@@ -265,12 +151,23 @@ function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
     window.MarkdownFrontEditorConfig.fieldsIndex = data.fieldsIndex;
   }
 
-  injectHostBoundaries();
-  const mappedUpdated = applyChangedHtmlByKey(changedKeys, htmlMap);
-  const markdownAttrUpdated = syncEditableMarkdownAttributesFromFieldsIndex();
-  console.warn("[mfe:save-sync] mapped editable update", {
-    mappedUpdated,
-    markdownAttrUpdated,
+  const debugSync = Boolean(window.MarkdownFrontEditorConfig?.debugLabels);
+  applyChangedHtmlByKeyStrict({
+    changedKeys,
+    htmlMap,
+    root: document,
+    normalizeHtml: normalizeHtmlImageSources,
+    warnedMissingMountKeys,
+    debug: debugSync,
+    getMetaAttr,
+  });
+  syncFieldsIndexToEditableAttrs({
+    root: document,
+    fields: Array.isArray(window.MarkdownFrontEditorConfig?.fieldsIndex)
+      ? window.MarkdownFrontEditorConfig.fieldsIndex
+      : [],
+    getMetaAttr,
+    decodeMarkdownBase64,
   });
   annotateBoundImages();
 
@@ -279,16 +176,6 @@ function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
     if (activeTarget.classList?.contains("fe-editable")) {
       activeTarget.setAttribute("data-markdown-b64", encodeMarkdownBase64(finalMarkdown));
     }
-    const activeTargetIsEditable =
-      activeTarget.classList?.contains("fe-editable") || false;
-    console.warn("[mfe:save-sync] active target mode", {
-      activeTargetIsEditable,
-      activeTargetConnected: Boolean(activeTarget?.isConnected),
-    });
-    if (!activeTarget?.isConnected) {
-      console.warn("[mfe:save-sync] disconnected target, strict keyed mounts applied only");
-    }
-
     if (primaryEditor) {
       const selection = primaryEditor.state.selection;
       runWithoutDirtyTracking(() => {
@@ -351,101 +238,6 @@ function getImageBaseUrl() {
       ? fromConfig
       : "/";
   return base.endsWith("/") ? base : `${base}/`;
-}
-
-function parseDataMfeValue(value) {
-  const raw = (value || "").trim();
-  if (!raw) return null;
-  const lower = raw.toLowerCase();
-  const splitPath = (path) =>
-    (path || "")
-      .split("/")
-      .map((p) => p.trim())
-      .filter(Boolean);
-
-  if (lower.startsWith("section:")) {
-    const parts = splitPath(raw.slice(8));
-    if (!parts.length) return null;
-    return { scope: "section", section: "", subsection: "", name: parts[0] };
-  }
-  if (lower.startsWith("sub:") || lower.startsWith("subsection:")) {
-    const path = lower.startsWith("sub:") ? raw.slice(4) : raw.slice(11);
-    const parts = splitPath(path.replace(/:/g, "/"));
-    if (parts.length < 2) return null;
-    return { scope: "subsection", section: parts[0], subsection: "", name: parts[1] };
-  }
-  if (lower.startsWith("field:")) {
-    const parts = splitPath(raw.slice(6));
-    if (parts.length === 1) {
-      return { scope: "field", section: "", subsection: "", name: parts[0] };
-    }
-    if (parts.length === 2) {
-      return { scope: "field", section: parts[0], subsection: "", name: parts[1] };
-    }
-    return {
-      scope: "field",
-      section: parts[0] || "",
-      subsection: parts[1] || "",
-      name: parts[2] || "",
-    };
-  }
-
-  const parts = splitPath(raw);
-  if (parts.length === 1) {
-    return { scope: "auto", section: "", subsection: "", name: parts[0] };
-  }
-  if (parts.length === 2) {
-    return { scope: "auto", section: parts[0], subsection: "", name: parts[1] };
-  }
-  return {
-    scope: "field",
-    section: parts[0] || "",
-    subsection: parts[1] || "",
-    name: parts[2] || "",
-  };
-}
-
-function dataMfeMatchesActive(rawValue, scope, section, subsection, name) {
-  const parsed = parseDataMfeValue(rawValue);
-  if (!parsed) return false;
-
-  if (scope === "subsection") {
-    if (
-      parsed.scope === "subsection" &&
-      (parsed.section || "") === (section || "") &&
-      (parsed.name || "") === (name || "")
-    ) {
-      return true;
-    }
-    if (
-      parsed.scope === "auto" &&
-      (parsed.section || "") === (section || "") &&
-      (parsed.name || "") === (name || "")
-    ) {
-      return true;
-    }
-    return false;
-  }
-
-  if (scope === "section") {
-    return (
-      (parsed.scope === "section" && (parsed.name || "") === (name || "")) ||
-      (parsed.scope === "auto" &&
-        !parsed.section &&
-        (parsed.name || "") === (name || ""))
-    );
-  }
-
-  if (scope === "field") {
-    if (parsed.scope !== "field" && parsed.scope !== "auto") return false;
-    return (
-      (parsed.section || "") === (section || "") &&
-      (parsed.subsection || "") === (subsection || "") &&
-      (parsed.name || "") === (name || "")
-    );
-  }
-
-  return false;
 }
 
 function buildFieldId(pageId, scope, section, subsection, name) {
@@ -527,11 +319,6 @@ async function keepPendingChangesBeforeSwitch() {
       draftMarkdownByScopedKey.delete(currentScopedKey);
     }
     syncDirtyStatusForActiveField();
-    console.warn("[mfe:draft] switch without changes", {
-      activeFieldId,
-      currentScopedKey,
-      markdownLen: markdown.length,
-    });
     return true;
   }
 
@@ -544,11 +331,6 @@ async function keepPendingChangesBeforeSwitch() {
     }
     primaryDirty = false;
     syncDirtyStatusForActiveField();
-    console.warn("[mfe:draft] switch with equivalent markdown (no-op)", {
-      activeFieldId,
-      currentScopedKey,
-      markdownLen: markdown.length,
-    });
     return true;
   }
 
@@ -557,14 +339,6 @@ async function keepPendingChangesBeforeSwitch() {
     draftMarkdownByScopedKey.set(currentScopedKey, markdown);
   }
   propagateDraftToAncestors(oldMarkdown, markdown);
-  console.warn("[mfe:draft] stashed before switch", {
-    activeFieldId,
-    currentScopedKey,
-    markdownLen: markdown.length,
-    primaryDirty,
-    scopedDraftCount: draftMarkdownByScopedKey.size,
-    draftCount: primaryDraftsByFieldId.size,
-  });
   return true;
 }
 
@@ -1618,7 +1392,6 @@ function closeEditor() {
  */
 function initEditors() {
   annotateBoundImages();
-  injectHostBoundaries();
   document.querySelectorAll(".fe-editable").forEach((el) => {
     el.addEventListener("dblclick", (e) => {
       // Prevent default browser selection
@@ -1637,129 +1410,6 @@ function annotateBoundImages(root = document) {
   annotateEditableImages(root);
   annotateMfeHostImages(root);
   annotateInferredImages(root);
-}
-
-function injectHostBoundaries(root = document) {
-  let sectionInjected = 0;
-  let subsectionInjected = 0;
-  let sectionInferredInjected = 0;
-
-  root.querySelectorAll("[data-mfe]").forEach((host) => {
-    const hostValue = host.getAttribute("data-mfe") || "";
-    const parsed = parseDataMfeValue(hostValue);
-    if (!parsed) return;
-    const isSectionHost =
-      parsed.scope === "section" ||
-      (parsed.scope === "auto" &&
-        !parsed.section &&
-        !parsed.subsection &&
-        Boolean(parsed.name));
-    if (!isSectionHost) return;
-    const sectionName = parsed.name || "";
-    if (!sectionName) return;
-    const hasNestedMfe = Boolean(host.querySelector("[data-mfe]"));
-    // Plain section hosts should mount directly on host (keeps CSS selectors like `.section > h2` intact).
-    if (!hasNestedMfe) {
-      const existingSlot = host.querySelector(`[data-mfe-slot="section:${sectionName}"]`);
-      if (existingSlot) {
-        const moveOut = Array.from(existingSlot.childNodes);
-        moveOut.forEach((node) => host.insertBefore(node, existingSlot));
-        existingSlot.remove();
-      }
-      host.setAttribute("data-mfe-boundaries", "1");
-      return;
-    }
-    const slotId = `section:${sectionName}`;
-    let slot = host.querySelector(`[data-mfe-slot="${slotId}"]`);
-    if (!slot) {
-      slot = document.createElement("div");
-      slot.setAttribute("data-mfe-slot", slotId);
-      // Structural section hosts (with nested data-mfe blocks) must keep this slot hidden
-      // to avoid adding visible grid/flex children that alter layout.
-      slot.setAttribute("hidden", "");
-      host.insertBefore(slot, host.firstChild || null);
-      sectionInjected += 1;
-    }
-    host.setAttribute("data-mfe-boundaries", "1");
-  });
-
-  root.querySelectorAll("[data-mfe]").forEach((host) => {
-    const hostValue = host.getAttribute("data-mfe") || "";
-    const parsed = parseDataMfeValue(hostValue);
-    if (!parsed) return;
-    const isSubsectionHost =
-      parsed.scope === "subsection" ||
-      (parsed.scope === "auto" &&
-        Boolean(parsed.section) &&
-        !parsed.subsection &&
-        Boolean(parsed.name));
-    if (!isSubsectionHost) return;
-    const sectionName = parsed.section || "";
-    const subName = parsed.name || "";
-    if (!sectionName || !subName) return;
-    const slotId = `subsection:${sectionName}:${subName}`;
-    let slot = host.querySelector(`[data-mfe-slot="${slotId}"]`);
-    if (!slot) {
-      slot = document.createElement("div");
-      slot.setAttribute("data-mfe-slot", slotId);
-      host.insertBefore(slot, host.firstChild || null);
-      // First-time boundary creation: move current rendered subsection content into slot.
-      const toMove = Array.from(host.childNodes).filter((node) => node !== slot);
-      toMove.forEach((node) => slot.appendChild(node));
-      subsectionInjected += 1;
-    }
-    host.setAttribute("data-mfe-boundaries", "1");
-  });
-
-  const sections = Array.isArray(window.MarkdownFrontEditorConfig?.sectionsIndex)
-    ? window.MarkdownFrontEditorConfig.sectionsIndex
-    : [];
-  sections.forEach((section) => {
-    const sectionName = (section?.name || "").trim();
-    if (!sectionName) return;
-    const slotId = `section:${sectionName}`;
-    if (root.querySelector(`[data-mfe-slot="${slotId}"]`)) return;
-
-    const editable =
-      root.querySelector(`.fe-editable[data-mfe-section="${sectionName}"]`) ||
-      root.querySelector(`.fe-editable[data-md-section="${sectionName}"]`);
-    if (!editable) return;
-    const host = editable.closest("[data-mfe]");
-    if (!host) return;
-
-    const slot = document.createElement("div");
-    slot.setAttribute("data-mfe-slot", slotId);
-    host.insertBefore(slot, host.firstChild || null);
-    const toMove = Array.from(host.childNodes).filter((node) => node !== slot);
-    toMove.forEach((node) => slot.appendChild(node));
-    host.setAttribute("data-mfe-boundaries", "1");
-    sectionInferredInjected += 1;
-  });
-
-  if (sectionInjected || subsectionInjected || sectionInferredInjected) {
-    console.warn("[mfe:strict-sync] host boundaries injected", {
-      sectionInjected,
-      subsectionInjected,
-      sectionInferredInjected,
-    });
-  }
-}
-
-function scopedHtmlKeyFromMeta(scope, section, subsection, name) {
-  const s = scope || "field";
-  const sec = section || "";
-  const sub = subsection || "";
-  const n = name || "";
-  if (s === "section") return n ? `section:${n}` : "";
-  if (s === "subsection") return sec && n ? `subsection:${sec}:${n}` : "";
-  if (s === "field") {
-    if (sub && sec && n) return `subsection:${sec}:${sub}:${n}`;
-    if (sec && n) return `field:${sec}:${n}`;
-    if (n) return `field:${n}`;
-    return "";
-  }
-  if (s === "block") return sec && n ? `block:${sec}:${n}` : "";
-  return n ? `${s}:${n}` : "";
 }
 
 function getActiveScopedHtmlKey() {
@@ -1872,118 +1522,6 @@ function propagateDraftToAncestors(oldMarkdown, newMarkdown) {
   }
 }
 
-function collectMountsByKey(root = document) {
-  const mounts = new Map();
-
-  root.querySelectorAll(".fe-editable").forEach((el) => {
-    if (el.closest('[data-mfe-window="true"]')) return;
-    const key = scopedHtmlKeyFromMeta(
-      getMetaAttr(el, "scope") || "field",
-      getMetaAttr(el, "section") || "",
-      getMetaAttr(el, "subsection") || "",
-      getMetaAttr(el, "name") || "",
-    );
-    if (key) mounts.set(key, el);
-  });
-
-  root.querySelectorAll("[data-mfe-slot]").forEach((el) => {
-    if (el.closest('[data-mfe-window="true"]')) return;
-    const key = (el.getAttribute("data-mfe-slot") || "").trim();
-    if (key) mounts.set(key, el);
-  });
-
-  root.querySelectorAll("[data-mfe]").forEach((host) => {
-    if (host.closest('[data-mfe-window="true"]')) return;
-    const parsed = parseDataMfeValue(host.getAttribute("data-mfe") || "");
-    if (!parsed) return;
-    if (parsed.scope === "subsection" && parsed.section && parsed.name) {
-      const key = `subsection:${parsed.section}:${parsed.name}`;
-      const slot = host.querySelector(`[data-mfe-slot="${key}"]`);
-      mounts.set(key, slot || host);
-      return;
-    }
-    if (parsed.scope === "section" && parsed.name) {
-      const key = `section:${parsed.name}`;
-      const slot = host.querySelector(`[data-mfe-slot="${key}"]`);
-      mounts.set(key, slot || host);
-      return;
-    }
-    if (
-      parsed.scope === "auto" &&
-      !parsed.section &&
-      !parsed.subsection &&
-      parsed.name
-    ) {
-      const key = `section:${parsed.name}`;
-      const slot = host.querySelector(`[data-mfe-slot="${key}"]`);
-      mounts.set(key, slot || host);
-    }
-  });
-
-  return mounts;
-}
-
-function applyChangedHtmlByKey(changedKeys, htmlMap, root = document) {
-  injectHostBoundaries(root);
-  const mounts = collectMountsByKey(root);
-  console.warn("[mfe:strict-sync] apply start", {
-    changedKeys,
-    mountCount: mounts.size,
-  });
-  let updated = 0;
-  const updatedKeys = [];
-  changedKeys.forEach((key) => {
-    if (!key) return;
-    const html = htmlMap?.[key];
-    if (typeof html !== "string") return;
-    const mount = mounts.get(key);
-    if (!mount) {
-      if (!warnedMissingMountKeys.has(key)) {
-        warnedMissingMountKeys.add(key);
-        console.warn("[mfe:strict-sync] missing mount for changed key", { key });
-      }
-      return;
-    }
-    mount.innerHTML = normalizeHtmlImageSources(html);
-    updated += 1;
-    updatedKeys.push(key);
-  });
-  console.warn("[mfe:strict-sync] apply result", {
-    updated,
-    updatedKeys,
-  });
-  return updated;
-}
-
-function syncEditableMarkdownAttributesFromFieldsIndex(root = document) {
-  const fields = Array.isArray(window.MarkdownFrontEditorConfig?.fieldsIndex)
-    ? window.MarkdownFrontEditorConfig.fieldsIndex
-    : [];
-  if (!fields.length) return 0;
-
-  const mounts = collectMountsByKey(root);
-  let updated = 0;
-  fields.forEach((f) => {
-    const key = scopedHtmlKeyFromMeta(
-      "field",
-      f?.section || "",
-      f?.subsection || "",
-      f?.name || "",
-    );
-    if (!key) return;
-    const mount = mounts.get(key);
-    if (!mount || !mount.classList?.contains("fe-editable")) return;
-    const markdownB64 = f?.markdownB64 || "";
-    if (!markdownB64) return;
-    mount.setAttribute("data-markdown-b64", markdownB64);
-    try {
-      mount.setAttribute("data-markdown", decodeMarkdownBase64(markdownB64));
-    } catch (_e) {}
-    updated += 1;
-  });
-  return updated;
-}
-
 function annotateEditableImages(root = document) {
   root.querySelectorAll(".fe-editable").forEach((el) => {
     const scope = getMetaAttr(el, "scope") || "field";
@@ -2075,343 +1613,6 @@ function annotateInferredImages(root = document) {
     img.setAttribute("data-mfe-image-name", match.name);
     img.setAttribute("data-mfe-image-inferred", "1");
   });
-}
-
-function syncBoundImages(newHtml) {
-  const normalizedHtml = normalizeHtmlImageSources(newHtml);
-  const nextImages = extractImageSourcesFromHtml(normalizedHtml);
-  if (nextImages.length !== 1) {
-    console.warn("[mfe:image-sync] syncBoundImages skipped", {
-      reason: "next_image_count",
-      nextCount: nextImages.length,
-    });
-    return 0;
-  }
-  const next = nextImages[0];
-  if (!next?.src) {
-    console.warn("[mfe:image-sync] syncBoundImages skipped", {
-      reason: "missing_next_src",
-    });
-    return 0;
-  }
-
-  const images = Array.from(
-    document.querySelectorAll('img[data-mfe-image-bound="1"]'),
-  );
-  let updated = 0;
-  images.forEach((img) => {
-    const hostValue = img.getAttribute("data-mfe-image-host") || "";
-    if (hostValue) {
-      const hostMatch = hostMatchesActiveImageField(hostValue);
-      if (hostMatch) {
-        const resolvedSrc = resolveHostImageSrc(document.body, next.src);
-        updateImageNodeSource(img, resolvedSrc);
-        updated += 1;
-        return;
-      }
-    }
-
-    const scope = img.getAttribute("data-mfe-image-scope") || "field";
-    const section = img.getAttribute("data-mfe-image-section") || "";
-    const subsection = img.getAttribute("data-mfe-image-subsection") || "";
-    const name = img.getAttribute("data-mfe-image-name") || "";
-    if (!boundImageMatchesActive(scope, section, subsection, name)) return;
-
-    const resolvedSrc = resolveHostImageSrc(document.body, next.src);
-    updateImageNodeSource(img, resolvedSrc);
-    updated += 1;
-  });
-  console.warn("[mfe:image-sync] syncBoundImages result", {
-    updated,
-    nextSrc: next.src,
-  });
-  return updated;
-}
-
-function boundImageMatchesActive(scope, section, subsection, name) {
-  const activeScope = activeFieldScope || "field";
-  const activeSection = activeFieldSection || "";
-  const activeSubsection = activeFieldSubsection || "";
-  const activeName = activeFieldName || "";
-
-  if (activeScope === "field") {
-    return (
-      scope === "field" &&
-      section === activeSection &&
-      subsection === activeSubsection &&
-      name === activeName
-    );
-  }
-
-  if (activeScope === "section") {
-    return (
-      scope === "field" &&
-      section === activeName &&
-      subsection === ""
-    );
-  }
-
-  if (activeScope === "subsection") {
-    return (
-      scope === "field" &&
-      section === activeSection &&
-      subsection === activeName
-    );
-  }
-
-  return false;
-}
-
-function syncImagesByFieldKey(newHtml) {
-  const oldSrc = extractMarkdownImageSrc(activeRawMarkdown || "");
-  const oldKey = getImageMatchKey(oldSrc);
-  if (!oldKey) {
-    console.warn("[mfe:image-sync] syncImagesByFieldKey skipped", {
-      reason: "missing_old_key",
-      oldSrc,
-    });
-    return 0;
-  }
-
-  const nextImages = extractImageSourcesFromHtml(newHtml);
-  if (nextImages.length !== 1) {
-    console.warn("[mfe:image-sync] syncImagesByFieldKey skipped", {
-      reason: "next_image_count",
-      oldKey,
-      nextCount: nextImages.length,
-    });
-    return 0;
-  }
-  const nextSrc = nextImages[0]?.src || "";
-  if (!nextSrc) {
-    console.warn("[mfe:image-sync] syncImagesByFieldKey skipped", {
-      reason: "missing_next_src",
-      oldKey,
-    });
-    return 0;
-  }
-
-  const resolvedSrc = resolveHostImageSrc(document.body, nextSrc);
-  let updated = 0;
-  document.querySelectorAll("img").forEach((img) => {
-    if (img.closest('[data-mfe-window="true"]')) return;
-    const current = img.getAttribute("src") || "";
-    if (getImageMatchKey(current) !== oldKey) return;
-    const rawScope = img.getAttribute("data-mfe-image-scope");
-    const rawSection = img.getAttribute("data-mfe-image-section");
-    const rawSubsection = img.getAttribute("data-mfe-image-subsection");
-    const rawName = img.getAttribute("data-mfe-image-name");
-    const scope = rawScope || "field";
-    const section = rawSection || "";
-    const subsection = rawSubsection || "";
-    const name = rawName || "";
-    const isBound = img.getAttribute("data-mfe-image-bound") === "1";
-    const hasBoundMeta = !!(rawScope || rawSection || rawSubsection || rawName);
-    if (
-      isBound &&
-      hasBoundMeta &&
-      !boundImageMatchesActive(scope, section, subsection, name)
-    ) {
-      return;
-    }
-    updateImageNodeSource(img, resolvedSrc);
-    updated += 1;
-  });
-  console.warn("[mfe:image-sync] syncImagesByFieldKey result", {
-    oldSrc,
-    oldKey,
-    nextSrc,
-    resolvedSrc,
-    updated,
-  });
-  return updated;
-}
-
-function syncEditableHtmlByActiveScope(newHtml) {
-  const html = normalizeHtmlImageSources(newHtml || "");
-  if (!html) {
-    console.warn("[mfe:html-sync] skipped", { reason: "empty_html" });
-    return 0;
-  }
-
-  let updated = 0;
-  let candidates = 0;
-  const sample = [];
-  document.querySelectorAll(".fe-editable").forEach((el) => {
-    if (el.closest('[data-mfe-window="true"]')) return;
-    candidates += 1;
-    const scope = getMetaAttr(el, "scope") || "field";
-    const section = getMetaAttr(el, "section") || "";
-    const subsection = getMetaAttr(el, "subsection") || "";
-    const name = getMetaAttr(el, "name") || "";
-
-    let matches = false;
-    if ((activeFieldScope || "field") === "field") {
-      matches =
-        scope === "field" &&
-        section === (activeFieldSection || "") &&
-        subsection === (activeFieldSubsection || "") &&
-        name === (activeFieldName || "");
-    } else if (activeFieldScope === "section") {
-      matches = scope === "section" && name === (activeFieldName || "");
-    } else if (activeFieldScope === "subsection") {
-      matches =
-        scope === "subsection" &&
-        section === (activeFieldSection || "") &&
-        name === (activeFieldName || "");
-    }
-
-    if (!matches) return;
-    el.innerHTML = html;
-    updated += 1;
-    if (sample.length < 3) {
-      sample.push({ scope, section, subsection, name });
-    }
-  });
-
-  console.warn("[mfe:html-sync] result", {
-    activeFieldScope,
-    activeFieldSection,
-    activeFieldSubsection,
-    activeFieldName,
-    candidates,
-    updated,
-    sample,
-  });
-  return updated;
-}
-
-function syncHostsHtmlByActiveScope(newHtml) {
-  const html = normalizeHtmlImageSources(newHtml || "");
-  if (!html) {
-    console.warn("[mfe:host-sync] skipped", { reason: "empty_html" });
-    return 0;
-  }
-  if (activeFieldScope !== "section" && activeFieldScope !== "subsection") {
-    console.warn("[mfe:host-sync] skipped", {
-      reason: "unsupported_scope",
-      activeFieldScope,
-    });
-    return 0;
-  }
-
-  let updated = 0;
-  const sample = [];
-  const hosts = Array.from(document.querySelectorAll("[data-mfe]"));
-  hosts.forEach((host) => {
-    if (host.closest('[data-mfe-window="true"]')) return;
-    const hostValue = host.getAttribute("data-mfe") || "";
-    if (
-      !dataMfeMatchesActive(
-        hostValue,
-        activeFieldScope,
-        activeFieldSection,
-        activeFieldSubsection,
-        activeFieldName,
-      )
-    ) {
-      return;
-    }
-    if (activeFieldScope === "section") {
-      const slotId = `section:${activeFieldName || ""}`;
-      let slot = host.querySelector(`[data-mfe-slot="${slotId}"]`);
-      if (!slot) {
-        slot = document.createElement("div");
-        slot.setAttribute("data-mfe-slot", slotId);
-        host.insertBefore(slot, host.firstChild || null);
-      }
-      slot.innerHTML = html;
-      if (html.trim()) {
-        slot.removeAttribute("hidden");
-      } else {
-        slot.setAttribute("hidden", "");
-      }
-    } else {
-      host.innerHTML = html;
-    }
-    updated += 1;
-    if (sample.length < 3) {
-      sample.push({ hostValue });
-    }
-  });
-
-  console.warn("[mfe:host-sync] result", {
-    activeFieldScope,
-    activeFieldSection,
-    activeFieldSubsection,
-    activeFieldName,
-    hosts: hosts.length,
-    updated,
-    sample,
-  });
-  return updated;
-}
-
-function hostMatchesActiveImageField(hostValue) {
-  if (
-    dataMfeMatchesActive(
-      hostValue,
-      activeFieldScope,
-      activeFieldSection,
-      activeFieldSubsection,
-      activeFieldName,
-    )
-  ) {
-    return true;
-  }
-
-  const parsed = parseDataMfeValue(hostValue);
-  if (!parsed) return false;
-
-  if (activeFieldScope === "subsection") {
-    const sectionMatch = (parsed.section || "") === (activeFieldSection || "");
-    const subsectionMatch = (parsed.subsection || "") === (activeFieldName || "");
-    if (!sectionMatch || !subsectionMatch) return false;
-    // Subsection-level image edits should target canonical image fields in that subsection.
-    if ((parsed.scope === "field" || parsed.scope === "auto") && (parsed.name || "") === "image") {
-      return true;
-    }
-    return false;
-  }
-
-  if (activeFieldScope === "section") {
-    const sectionMatch = (parsed.section || "") === (activeFieldName || "");
-    if (!sectionMatch) return false;
-    if ((parsed.scope === "field" || parsed.scope === "auto") && !parsed.subsection && (parsed.name || "") === "image") {
-      return true;
-    }
-    return false;
-  }
-
-  if (activeFieldScope !== "field") return false;
-  if ((activeFieldName || "") !== "image") return false;
-
-  const isSectionHost =
-    (parsed.scope === "section" &&
-      (parsed.name || "") === (activeFieldSection || "")) ||
-    (parsed.scope === "auto" &&
-      !parsed.section &&
-      (parsed.name || "") === (activeFieldSection || ""));
-  if (isSectionHost) return true;
-
-  return false;
-}
-
-function syncPictureSources(img, src) {
-  const picture = img.closest("picture");
-  if (!picture) return;
-  picture.querySelectorAll("source").forEach((source) => {
-    source.setAttribute("srcset", src);
-    source.removeAttribute("sizes");
-  });
-}
-
-function updateImageNodeSource(img, src) {
-  if (!img || !src) return;
-  img.setAttribute("src", src);
-  img.removeAttribute("srcset");
-  img.removeAttribute("sizes");
-  syncPictureSources(img, src);
 }
 
 function normalizeHtmlImageSources(html) {
@@ -2603,19 +1804,6 @@ function openFullscreenEditorFromPayload(payload) {
     ? draftMarkdownByScopedKey.get(nextScopedKey) || null
     : null;
   const effectiveMarkdown = scopedDraftMarkdown ?? draftMarkdown ?? markdownContent;
-  console.warn("[mfe:draft] open payload", {
-    nextFieldId,
-    nextScopedKey,
-    hasScopedDraft: Boolean(scopedDraftMarkdown),
-    hasDraft: Boolean(draftMarkdown),
-    draftLen: scopedDraftMarkdown
-      ? scopedDraftMarkdown.length
-      : draftMarkdown
-        ? draftMarkdown.length
-        : 0,
-    sourceLen: (markdownContent || "").length,
-  });
-
   activeRawMarkdown = effectiveMarkdown;
   activeDisplayMarkdown = effectiveMarkdown;
 
@@ -2758,19 +1946,6 @@ function replaceActiveEditor(payload) {
     ? draftMarkdownByScopedKey.get(nextScopedKey) || null
     : null;
   const effectiveMarkdown = scopedDraftMarkdown ?? draftMarkdown ?? markdownContent;
-  console.warn("[mfe:draft] replace payload", {
-    nextFieldId,
-    nextScopedKey,
-    hasScopedDraft: Boolean(scopedDraftMarkdown),
-    hasDraft: Boolean(draftMarkdown),
-    draftLen: scopedDraftMarkdown
-      ? scopedDraftMarkdown.length
-      : draftMarkdown
-        ? draftMarkdown.length
-        : 0,
-    sourceLen: (markdownContent || "").length,
-  });
-
   activeEditor = primaryEditor;
   activeTarget = payload.element;
   activeFieldName = fieldName;
@@ -2814,50 +1989,6 @@ function replaceActiveEditor(payload) {
 
   setTimeout(() => primaryEditor?.view?.focus(), 0);
   return true;
-}
-
-function extractImageSourcesFromHtml(html) {
-  if (!html || typeof html !== "string") return [];
-  try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, "text/html");
-    return Array.from(doc.querySelectorAll("img"))
-      .map((img) => ({
-        src: img.getAttribute("src") || "",
-        alt: img.getAttribute("alt") || "",
-      }))
-      .filter((item) => item.src);
-  } catch (e) {
-    return [];
-  }
-}
-
-function syncHostImagesFromHtml(host, html) {
-  if (!host) return;
-  const nextImages = extractImageSourcesFromHtml(html);
-  if (nextImages.length !== 1) return;
-
-  const hostImages = Array.from(host.querySelectorAll("img"));
-  if (!hostImages.length) return;
-
-  const next = nextImages[0];
-  if (!next?.src) return;
-
-  const nextName = getImageBasename(next.src);
-  let hostImg =
-    hostImages.find((img) => getImageBasename(img.getAttribute("src") || "") === nextName) ||
-    null;
-
-  if (!hostImg && hostImages.length === 1) {
-    hostImg = hostImages[0];
-  }
-  if (!hostImg) return;
-
-  const resolvedSrc = resolveHostImageSrc(host, next.src);
-  updateImageNodeSource(hostImg, resolvedSrc);
-  if (next.alt) {
-    hostImg.setAttribute("alt", next.alt);
-  }
 }
 
 function resolveHostImageSrc(host, src) {
