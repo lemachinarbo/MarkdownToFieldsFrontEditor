@@ -377,7 +377,6 @@ function applyEditLabelAttributes(el) {
   const subsection = getMetaAttr(el, "subsection") || "";
   const label = getEditLabel(scope, name, section, subsection);
   el.setAttribute("data-mfe-label", label);
-  el.setAttribute("data-mfe-label-debug", debugLabels ? "1" : "0");
 
   const fieldType = el.getAttribute("data-field-type") || "";
   const isSectionLike = scope === "section" || scope === "subsection";
@@ -420,7 +419,6 @@ function applyDataMfeLabelAttributes(el) {
     resolved.subsection || "",
   );
   el.setAttribute("data-mfe-label", label);
-  el.setAttribute("data-mfe-label-debug", debugLabels ? "1" : "0");
 }
 
 function getRectFromChildren(el) {

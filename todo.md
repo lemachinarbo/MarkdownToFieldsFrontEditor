@@ -1,3 +1,11 @@
+# Editor north star
+
+Protect architecture quality as features grow. Priorities:
+- Content Map view for structural navigation
+- Invariant guards at every identity boundary
+- Zero heuristic fallbacks, always deterministic resolution
+
+Rule: never trade determinism for convenience, even for “temporary” fixes.
 
 # Todo
 - Image picker:
@@ -12,6 +20,27 @@
 - Why book button gets editable? ius because multiple scrion use the same class or something? markdown using same label?
 - If the markdown contains HTML, we keep it as HTML. However, if the user adds styling using the toolbar (such as H1, italic, bold, etc.), we must save it as markdown. For example, italic should be saved as *foo*, not <em>foo>.
 - A full-page plan editor, similar to a large Word document, making it easy to view sections and compare translations as a whole.
+
+- Crazy idea: 
+
+Imagine markdown is
+```
+<!-- section:hero -->
+
+Foo
+
+<!-- bar -->
+Bar
+```
+
+And template only renders `hero->bar->html`.
+
+In frontend user will only see Bar, BUT can edit Foo if he goes up to Hero on breadcrumbs, but he will never see it on the frontend, only Bar.
+
+What if... we add a VIEW or something that shows user the exact part that are displayed in the page. Maybe is part of the whole document view? 
+
+So we can add a `Content Map view` mode where the editor shows the full document structure, not just what the template renders. Visible parts appear normal, hidden parts appear dimmed or listed in a tree, so users can navigate and edit sections that exist in the source but aren’t currently rendered on the page. This would map rendered DOM back to canonical content keys, helping users locate invisible content and understand what part of the document they’re editing.
+
 
 # Features
 - Add internal linking

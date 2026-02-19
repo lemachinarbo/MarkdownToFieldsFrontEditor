@@ -79,7 +79,6 @@ let activeFieldSubsection = "";
 let activeFieldId = null;
 let activeRawMarkdown = null;
 let activeDisplayMarkdown = null;
-const warnedMissingMountKeys = new Set();
 let suppressNextCloseConfirm = false;
 const primaryDraftsByFieldId = new Map();
 const draftMarkdownByScopedKey = new Map();
@@ -90,6 +89,18 @@ let lastCompileReport = null;
 let patchCycleCounter = 0;
 let mountWatchObserver = null;
 let mountWatchDebounceTimer = null;
+
+function debugWarn(...args) {
+  if (!isDevMode()) return;
+  console.warn(...args);
+}
+
+function debugTable(rows) {
+  if (!isDevMode()) return;
+  if (!console.table) return;
+  if (!Array.isArray(rows) || !rows.length) return;
+  console.table(rows);
+}
 
 function runWithoutDirtyTracking(fn) {
   suppressDirtyTracking += 1;
@@ -132,10 +143,10 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
   const requestedKeysFromServer = Array.from(
     new Set((Array.isArray(changedKeys) ? changedKeys : []).filter(Boolean)),
   );
-  console.warn("[mfe:save-sync] fragment response", {
+  debugWarn("[mfe:save-sync] fragment response", {
     activeScopedKey,
     changedKeys,
-    requestedKeys,
+    requestedKeys: requestedKeysFromServer,
     hasFragments: Boolean(data.fragments),
     fragmentsKeys: data.fragments ? Object.keys(data.fragments).length : 0,
     htmlMapKeys: data.htmlMap ? Object.keys(data.htmlMap).length : 0,
@@ -196,7 +207,7 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
     (k) => !requestedKeys.includes(k),
   );
   lastCompileReport = compiled.report || null;
-  console.warn("[mfe:fragment-sync] mount targets", {
+  debugWarn("[mfe:fragment-sync] mount targets", {
     changedKeys: requestedKeysFromServer,
     targetKeys: requestedKeys,
     nonMountedRequestedKeys,
@@ -206,14 +217,12 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
     window.__MFE_GRAPH = lastCompileReport.graphChecksum;
   }
   if (lastCompileReport?.ambiguous?.length || lastCompileReport?.unresolved?.length) {
-    console.warn("[mfe:bind] compile report", lastCompileReport);
-    if (console.table) {
-      const rows = [
-        ...((lastCompileReport.ambiguous || []).map((v) => ({ type: "ambiguous", value: v }))),
-        ...((lastCompileReport.unresolved || []).map((v) => ({ type: "unresolved", value: v }))),
-      ];
-      if (rows.length) console.table(rows);
-    }
+    debugWarn("[mfe:bind] compile report", lastCompileReport);
+    const rows = [
+      ...((lastCompileReport.ambiguous || []).map((v) => ({ type: "ambiguous", value: v }))),
+      ...((lastCompileReport.unresolved || []).map((v) => ({ type: "unresolved", value: v }))),
+    ];
+    debugTable(rows);
   }
 
   const { current } = getLanguagesConfig();
@@ -222,7 +231,7 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
     activeFieldId?.split(":")?.[0] ||
     "0";
   if (!requestedKeys.length) {
-    console.warn("[mfe:fragment-sync] no canonical mount keys, preview patch skipped", {
+    debugWarn("[mfe:fragment-sync] no canonical mount keys, preview patch skipped", {
       changedKeys: requestedKeysFromServer,
     });
   } else {
@@ -250,7 +259,7 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
             ...requestedKeys.filter((k) => !appliedKeys.includes(k)),
           ]),
         );
-        console.warn("[mfe:fragment-sync] coverage", {
+        debugWarn("[mfe:fragment-sync] coverage", {
           cycleId: patchResult?.cycleId,
           requestedKeys,
           appliedKeys,
@@ -262,7 +271,7 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
           changedKeys: patchResult.missingKeys,
           htmlMap,
         });
-        console.warn("[mfe:fragment-sync] missing-key editable fallback", {
+        debugWarn("[mfe:fragment-sync] missing-key editable fallback", {
           missingKeys: patchResult.missingKeys,
           editableFallbackUpdated,
         });
@@ -273,14 +282,14 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
           mountTargets,
           htmlMap,
         });
-        console.warn("[mfe:fragment-sync] skipped-section editable fallback", {
+        debugWarn("[mfe:fragment-sync] skipped-section editable fallback", {
           skippedSectionKeys: patchResult.skippedSectionKeys,
           sectionEditableUpdated,
         });
       }
-      console.warn("[mfe:fragment-sync] datastar applied", patchResult);
+      debugWarn("[mfe:fragment-sync] datastar applied", patchResult);
     } catch (e) {
-      console.warn("[mfe:fragment-sync] datastar fetch failed, preview skipped", {
+      debugWarn("[mfe:fragment-sync] datastar fetch failed, preview skipped", {
         message: e?.message || String(e),
         changedKeys: requestedKeys,
       });
@@ -492,7 +501,7 @@ async function requestRenderedFragmentsDatastar({
   graphNodeCount,
 }) {
   const cycleId = ++patchCycleCounter;
-  console.warn("[mfe:fragment-api] request", {
+  debugWarn("[mfe:fragment-api] request", {
     cycleId,
     pageId,
     lang: lang || "",
@@ -558,7 +567,7 @@ async function requestRenderedFragmentsDatastar({
             }
           });
         } catch (_e) {}
-        console.warn("[mfe:fragment-api] signal", evt.payload || {});
+        debugWarn("[mfe:fragment-api] signal", evt.payload || {});
         return;
       }
       if (evt.event !== "datastar-patch-elements") return;
@@ -589,7 +598,7 @@ async function requestRenderedFragmentsDatastar({
   queued.forEach((patch) => {
     for (const parent of appliedParents) {
       if (isDescendantKey(patch.key, parent)) {
-        console.warn("[mfe:fragment-api] patch skipped child-after-parent", {
+        debugWarn("[mfe:fragment-api] patch skipped child-after-parent", {
           key: patch.key,
           parent,
           selector: patch.selector,
@@ -614,7 +623,7 @@ async function requestRenderedFragmentsDatastar({
       if (!skippedSectionKeys.includes(patch.key)) {
         skippedSectionKeys.push(patch.key);
       }
-      console.warn("[mfe:fragment-api] section patch skipped (would drop editable wrappers)", {
+      debugWarn("[mfe:fragment-api] section patch skipped (would drop editable wrappers)", {
         key: patch.key,
         selector: patch.selector,
       });
@@ -637,7 +646,7 @@ async function requestRenderedFragmentsDatastar({
       htmlLen: (patch.elements || "").length,
       updated: appliedCount,
     });
-    console.warn("[mfe:fragment-api] patch", {
+    debugWarn("[mfe:fragment-api] patch", {
       cycleId,
       key: patch.key || "",
       selector: patch.selector || "",
@@ -648,7 +657,7 @@ async function requestRenderedFragmentsDatastar({
   });
 
   const result = { cycleId, updated, events, patches, signals, missingKeys, skippedSectionKeys, applied };
-  console.warn("[mfe:fragment-api] result", result);
+  debugWarn("[mfe:fragment-api] result", result);
   return result;
 }
 
@@ -2496,13 +2505,13 @@ function recompileMountGraph() {
   if (lastCompileReport?.graphChecksum) {
     window.__MFE_GRAPH = lastCompileReport.graphChecksum;
   }
-  console.warn("[mfe:bind] recompileMountGraph", lastCompileReport || {});
-  if (lastCompileReport && console.table) {
+  debugWarn("[mfe:bind] recompileMountGraph", lastCompileReport || {});
+  if (lastCompileReport) {
     const rows = [
       ...((lastCompileReport.ambiguous || []).map((v) => ({ type: "ambiguous", value: v }))),
       ...((lastCompileReport.unresolved || []).map((v) => ({ type: "unresolved", value: v }))),
     ];
-    if (rows.length) console.table(rows);
+    debugTable(rows);
   }
   return lastCompileReport || { nodes: 0, ambiguous: [], unresolved: [] };
 }
@@ -2541,7 +2550,7 @@ function unwatchMountGraph() {
 
 function watchMountGraph() {
   if (!isDevMode()) {
-    console.warn("[mfe:bind] watch unavailable outside dev mode");
+    debugWarn("[mfe:bind] watch unavailable outside dev mode");
     return false;
   }
   unwatchMountGraph();
@@ -2578,7 +2587,7 @@ function watchMountGraph() {
     attributes: true,
     attributeFilter: ["data-mfe", "data-mfe-source", "data-mfe-key"],
   });
-  console.warn("[mfe:bind] watch enabled");
+  debugWarn("[mfe:bind] watch enabled");
   return true;
 }
 

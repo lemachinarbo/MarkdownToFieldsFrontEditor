@@ -15,41 +15,6 @@ export function scopedHtmlKeyFromMeta(scope, section, subsection, name) {
   return n ? `${s}:${n}` : "";
 }
 
-function isSectionKey(key) {
-  return typeof key === "string" && key.startsWith("section:");
-}
-
-function isCoveredBySectionKey(changedSet, key, mounts) {
-  if (!key || isSectionKey(key)) return false;
-  const sectionMatch = key.match(/^(?:section|subsection|field):([^:]+)/);
-  const section = sectionMatch?.[1] || "";
-  if (!section) return false;
-  const sectionKey = `section:${section}`;
-  if (!changedSet.has(sectionKey)) return false;
-  // Only prune descendants if we can actually apply the section fragment.
-  return mounts?.has(sectionKey) || false;
-}
-
-function pruneChangedKeys(changedKeys, mounts) {
-  const keys = Array.isArray(changedKeys) ? changedKeys.filter(Boolean) : [];
-  const changedSet = new Set(keys);
-  return keys.filter((key) => !isCoveredBySectionKey(changedSet, key, mounts));
-}
-
-export function pruneChangedKeysForRequest(changedKeys) {
-  const keys = Array.isArray(changedKeys) ? changedKeys.filter(Boolean) : [];
-  if (!keys.length) return [];
-  const set = new Set(keys);
-  return keys.filter((key) => {
-    if (!key || key.startsWith("section:")) return true;
-    const m = key.match(/^(?:field|subsection):([^:]+)/);
-    if (!m) return true;
-    const section = m[1] || "";
-    if (!section) return true;
-    return !set.has(`section:${section}`);
-  });
-}
-
 function splitPath(value) {
   return (value || "")
     .split("/")
@@ -101,11 +66,6 @@ export function buildSemanticLookup({ sections = [], fields = [] } = {}) {
     fieldSubsectionKeys,
     fieldTopLevelNames,
   };
-}
-
-function resolveDataMfeKey(rawValue, lookup) {
-  const candidates = resolveDataMfeCandidates(rawValue, lookup);
-  return candidates.length === 1 ? candidates[0] : "";
 }
 
 function resolveDataMfeCandidates(rawValue, lookup) {
@@ -266,6 +226,16 @@ function isDevDiagnosticsEnabled() {
   return Boolean(cfg.debug || cfg.debugShowSections || cfg.debugLabels);
 }
 
+function debugWarn(...args) {
+  if (!isDevDiagnosticsEnabled()) return;
+  console.warn(...args);
+}
+
+function debugError(...args) {
+  if (!isDevDiagnosticsEnabled()) return;
+  console.error(...args);
+}
+
 function getDomPath(el) {
   const parts = [];
   let node = el;
@@ -343,7 +313,7 @@ function ensureMountKeyId(el, key, sig) {
   const id = `mfe-k-${hashMountKey(source)}`;
   const existingSig = mountIdSignatureMap.get(id);
   if (existingSig && existingSig !== source) {
-    console.warn("[mfe:bind] mount id collision", {
+    debugWarn("[mfe:bind] mount id collision", {
       id,
       previous: existingSig,
       next: source,
@@ -426,104 +396,6 @@ export function collectStrictMountsByKey(root, getMetaAttr, semanticLookup) {
   collectReadOnlyHostMounts(root, mounts, semanticLookup);
 
   return mounts;
-}
-
-export function applyChangedHtmlByKeyStrict({
-  changedKeys,
-  htmlMap,
-  root,
-  normalizeHtml,
-  warnedMissingMountKeys,
-  debug,
-  getMetaAttr,
-  isOuterSwapKey,
-  semanticLookup,
-}) {
-  const mounts = collectStrictMountsByKey(root, getMetaAttr, semanticLookup);
-  console.warn("[mfe:fragment-sync] mounts collected", {
-    mountCount: mounts.size,
-    changedKeysIn: Array.isArray(changedKeys) ? changedKeys : [],
-    htmlMapKeys: htmlMap ? Object.keys(htmlMap).length : 0,
-  });
-  let updated = 0;
-  const keys = pruneChangedKeys(changedKeys, mounts);
-  console.warn("[mfe:fragment-sync] changed keys pruned", {
-    changedKeysOut: keys,
-  });
-  keys.forEach((key) => {
-    if (!key) return;
-    const html = htmlMap?.[key];
-    if (typeof html !== "string") {
-      console.warn("[mfe:fragment-sync] missing html fragment", { key });
-      return;
-    }
-
-    const mount = mounts.get(key);
-    if (!mount) {
-      if (debug && warnedMissingMountKeys && !warnedMissingMountKeys.has(key)) {
-        warnedMissingMountKeys.add(key);
-        console.warn("[mfe:strict-sync] missing mount for changed key", { key });
-      }
-      console.warn("[mfe:fragment-sync] no mount for key", { key });
-      return;
-    }
-
-    const normalized = normalizeHtml(html);
-    const doOuterSwap =
-      typeof isOuterSwapKey === "function" && isOuterSwapKey(key, mount);
-    console.warn("[mfe:fragment-sync] applying fragment", {
-      key,
-      mode: doOuterSwap ? "outerHTML" : "innerHTML",
-      mountTag: mount.tagName || "",
-      mountClass: mount.className || "",
-      mountDataMfe: mount.getAttribute?.("data-mfe") || "",
-      mountDataSlot: mount.getAttribute?.("data-mfe-slot") || "",
-      htmlLen: normalized.length,
-    });
-    if (doOuterSwap) {
-      mount.outerHTML = normalized;
-    } else {
-      mount.innerHTML = normalized;
-    }
-    updated += 1;
-  });
-
-  return updated;
-}
-
-export function fanOutChangedHtmlBySource({
-  changedKeys,
-  htmlMap,
-  root,
-  normalizeHtml,
-  semanticLookup,
-}) {
-  const keys = Array.isArray(changedKeys) ? changedKeys.filter(Boolean) : [];
-  if (!keys.length) return 0;
-  let updated = 0;
-
-  keys.forEach((key) => {
-    const html = htmlMap?.[key];
-    if (typeof html !== "string") return;
-    const normalized = normalizeHtml(html);
-    root.querySelectorAll("[data-mfe-source]").forEach((el) => {
-      if (el.closest('[data-mfe-window="true"]')) return;
-      const raw = (el.getAttribute("data-mfe-source") || "").trim();
-      if (!raw) return;
-      const resolved = resolveDataMfeKeyWithContext(raw, el, semanticLookup);
-      const sourceKey = resolved || raw;
-      if (sourceKey !== key) return;
-      el.innerHTML = normalized;
-      updated += 1;
-    });
-  });
-
-  console.warn("[mfe:fragment-sync] source fanout", {
-    changedKeys: keys,
-    updated,
-  });
-
-  return updated;
 }
 
 export function syncEditableMarkdownAttributesFromFieldsIndex({
@@ -624,7 +496,7 @@ export function compileMountTargetsByKey({
     if (devDiagnostics) {
       const seenSig = keyIdToSig.get(keyId);
       if (seenSig && seenSig.sig !== sig) {
-        console.error("[mfe:bind] invariant violation keyId->sig", {
+        debugError("[mfe:bind] invariant violation keyId->sig", {
           keyId,
           previousSig: seenSig.sig,
           nextSig: sig,
@@ -754,7 +626,7 @@ export function compileMountTargetsByKey({
           sig,
           node,
         }));
-        console.warn("[mfe:bind] invariant warning key->multiple-sig", {
+        debugWarn("[mfe:bind] invariant warning key->multiple-sig", {
           key,
           sigCount: sigMap.size,
           entries,
