@@ -1,12 +1,11 @@
 # Changelog
 
 ## V0.4.6.3
-- Live preview sync is now strict-mount only: updates apply only to `.fe-editable` and explicit `data-mfe-slot` mounts.
-- Added read-only runtime mapping for existing `data-mfe` section/subsection hosts (no DOM mutation/injection).
-- Removed runtime boundary injection and host-level HTML fallback replacement to avoid layout-dependent preview side effects.
-- Added sync/draft utility modules (`src/sync-by-key.js`, `src/draft-utils.js`) to reduce editor runtime complexity.
-- Missing mount diagnostics are now debug-gated (shown only when debug labels are enabled).
-- README now documents the explicit mount contract required for deterministic preview updates.
+- Save replacement is now structural and scope-based (section/subsection/field identity), not raw text search.
+- Field saves now resolve identity from `fieldId` (when provided), including subsection fields.
+- 409 is kept for true structural ambiguity, preventing cross-field mutation.
+- Live preview sync applies by changed scoped keys and supports multiview fan-out via `data-mfe-source`.
+- `data-mfe-source` now accepts both scoped keys (`subsection:body:features:end`) and slash paths (`body/features/end`).
 
 ## V0.4.6.2
 - Removed hardcoded frontend path assumptions (`/site/images`, `/site/assets/files`); image URL resolution is now ProcessWire-config-first (`pageFilesBaseUrl`, `imageBaseUrl`) with generic fallbacks.

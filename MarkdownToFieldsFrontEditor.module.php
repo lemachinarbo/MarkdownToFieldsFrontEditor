@@ -14,7 +14,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
             'summary' => 'Frontend editor for MarkdownToFields.',
-            'version' =>  '0.4.6.2',
+            'version' =>  '0.4.6.3',
             'autoload' => true,
             'singular' => true,
             'requires' => ['MarkdownToFields'],
@@ -409,6 +409,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         $sectionMarkdown = (string)($section->markdown ?? '');
                         $safeSection = htmlspecialchars($sectionName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                         $safeSectionB64 = htmlspecialchars(base64_encode($sectionMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                        $sourceKey = $this->scopedHtmlKey('field', (string)$fname, (string)$sectionName, '');
+                        $safeSourceKey = htmlspecialchars($sourceKey, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                         
                         // Check if already wrapped
                         if (
@@ -419,7 +421,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         // Find and wrap the field
                         $originalHtml = $f->html;
                         $displayHtml = $f->html;
-                        $wrapper = '<div class="fe-editable md-edit" data-md-scope="field" data-mfe-scope="field" data-md-name="' . $safeAttr . '" data-mfe-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-mfe-section="' . $safeSection . '" data-md-section-b64="' . $safeSectionB64 . '" data-mfe-section-b64="' . $safeSectionB64 . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
+                        $wrapper = '<div class="fe-editable md-edit" data-md-scope="field" data-mfe-scope="field" data-md-name="' . $safeAttr . '" data-mfe-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-mfe-section="' . $safeSection . '" data-md-section-b64="' . $safeSectionB64 . '" data-mfe-section-b64="' . $safeSectionB64 . '" data-mfe-source="' . $safeSourceKey . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
                         
                         // Find original HTML in output and replace with wrapped version
                         $pos = stripos($rebuilt, $originalHtml);
@@ -447,6 +449,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                                 $safeSectionB64 = htmlspecialchars(base64_encode($sectionMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                                 $safeSubsection = htmlspecialchars($subsectionName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                                 $safeSubsectionB64 = htmlspecialchars(base64_encode($subsectionMarkdown), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                                $sourceKey = $this->scopedHtmlKey('field', (string)$fname, (string)$sectionName, (string)$subsectionName);
+                                $safeSourceKey = htmlspecialchars($sourceKey, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
                                 
                                 // Check if already wrapped
                                 if (
@@ -456,7 +460,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                                 
                                 $originalHtml = $f->html;
                                 $displayHtml = $f->html;
-                                $wrapper = '<div class="fe-editable md-edit" data-md-scope="field" data-mfe-scope="field" data-md-name="' . $safeAttr . '" data-mfe-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-mfe-section="' . $safeSection . '" data-md-section-b64="' . $safeSectionB64 . '" data-mfe-section-b64="' . $safeSectionB64 . '" data-md-subsection="' . $safeSubsection . '" data-mfe-subsection="' . $safeSubsection . '" data-md-subsection-b64="' . $safeSubsectionB64 . '" data-mfe-subsection-b64="' . $safeSubsectionB64 . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
+                                $wrapper = '<div class="fe-editable md-edit" data-md-scope="field" data-mfe-scope="field" data-md-name="' . $safeAttr . '" data-mfe-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-mfe-section="' . $safeSection . '" data-md-section-b64="' . $safeSectionB64 . '" data-mfe-section-b64="' . $safeSectionB64 . '" data-md-subsection="' . $safeSubsection . '" data-mfe-subsection="' . $safeSubsection . '" data-md-subsection-b64="' . $safeSubsectionB64 . '" data-mfe-subsection-b64="' . $safeSubsectionB64 . '" data-mfe-source="' . $safeSourceKey . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
                                 
                                 $pos = stripos($rebuilt, $originalHtml);
                                 if ($pos !== false) {
@@ -544,7 +548,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         // Wrap in editable container with metadata
         $safeAttr = htmlspecialchars($fieldName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $safeType = htmlspecialchars($fieldType, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-        $out = "<div class=\"fe-editable md-edit\" data-md-scope=\"field\" data-mfe-scope=\"field\" data-md-name=\"{$safeAttr}\" data-mfe-name=\"{$safeAttr}\" data-field-type=\"{$safeType}\" data-page=\"{$page->id}\">";
+        $sourceKey = htmlspecialchars($this->scopedHtmlKey('field', $fieldName, '', ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $out = "<div class=\"fe-editable md-edit\" data-md-scope=\"field\" data-mfe-scope=\"field\" data-md-name=\"{$safeAttr}\" data-mfe-name=\"{$safeAttr}\" data-mfe-source=\"{$sourceKey}\" data-field-type=\"{$safeType}\" data-page=\"{$page->id}\">";
         $out .= $html;
         $out .= "</div>";
         $event->return = $out;
@@ -823,6 +828,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         'name' => (string)($entry['name'] ?? ''),
                         'scope' => (string)($entry['scope'] ?? 'field'),
                         'section' => (string)($entry['section'] ?? ''),
+                        'subsection' => (string)($entry['subsection'] ?? ''),
                         'markdown' => $md,
                     ];
                 }
@@ -868,8 +874,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         continue;
                     }
 
-                    $oldFieldMarkdown = $this->findScopedMarkdown($rawContent, $scope, $mdName, $sectionName);
-
+                    $oldFieldMarkdown = $this->findScopedMarkdown(
+                        $rawContent,
+                        (string)$scope,
+                        (string)$mdName,
+                        (string)$sectionName,
+                        (string)($entry['subsection'] ?? '')
+                    );
                     if ($oldFieldMarkdown === null) {
                         $skipped[] = $key;
                         continue;
@@ -887,7 +898,24 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         continue;
                     }
 
-                    $replaceResult = $this->replaceUniqueMarkdownBlock($updatedMarkdown, $oldFieldMarkdown, $blockMarkdown);
+                    $replaceResult = $this->replaceUniqueMarkdownBlock(
+                        $updatedMarkdown,
+                        $blockMarkdown,
+                        (string)$scope,
+                        (string)$mdName,
+                        (string)$sectionName,
+                        (string)($entry['subsection'] ?? ''),
+                        [
+                            'mode' => 'batch',
+                            'key' => (string)$key,
+                            'scope' => (string)$scope,
+                            'name' => (string)$mdName,
+                            'section' => (string)$sectionName,
+                            'subsection' => (string)($entry['subsection'] ?? ''),
+                            'pageId' => (string)$pageId,
+                            'lang' => (string)$languageCode,
+                        ]
+                    );
                     if ($replaceResult['status'] === 'missing') {
                         $skipped[] = $key;
                         continue;
@@ -897,7 +925,12 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                     }
                     $updatedMarkdown = $replaceResult['document'];
                     $replaced += 1;
-                    $changedKeys[] = $this->scopedHtmlKey($scope, $mdName, $sectionName);
+                    $changedKeys[] = $this->scopedHtmlKey(
+                        (string)$scope,
+                        (string)$mdName,
+                        (string)$sectionName,
+                        (string)($entry['subsection'] ?? '')
+                    );
                 }
 
                 if ($replaced > 0) {
@@ -915,12 +948,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 $scope = $entry['scope'] ?: 'field';
                 $sectionName = $entry['section'];
                 $blockMarkdown = (string)($entry['markdown'] ?? '');
-                $canonicalHtml = $this->findScopedHtml($content, $scope, $mdName, $sectionName);
-                if ($canonicalHtml && strpos((string)$blockMarkdown, '<') !== false && strpos((string)$blockMarkdown, '>') !== false) {
-                    $parsedown = new \Parsedown();
-                    $parsedown->setSafeMode(false);
-                    $canonicalHtml = $parsedown->text((string)$blockMarkdown);
-                }
+                $canonicalHtml = $this->findScopedHtml(
+                    $content,
+                    (string)$scope,
+                    (string)$mdName,
+                    (string)$sectionName,
+                    (string)($entry['subsection'] ?? '')
+                );
                 if ($canonicalHtml !== null) {
                     $htmlMap[$key] = $canonicalHtml;
                 }
@@ -938,6 +972,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 'status' => 1, 
                 'html' => $finalHtmlMap, 
                 'htmlMap' => $finalHtmlMap,
+                'fragments' => $finalHtmlMap,
                 'changed' => $expandedChanged,
                 'sectionsIndex' => $this->buildSectionsIndex($page),
                 'fieldsIndex' => $this->buildFieldsIndex($page),
@@ -953,6 +988,17 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         $mdName = $input->post->text('mdName');
         if(!$mdName) $this->sendJsonError('Missing mdName', 400);
+        $mdSubsection = $input->post->text('mdSubsection');
+        if ($fieldId !== '') {
+            $fieldIdentity = $this->parseFieldIdentityFromFieldId($fieldId, (string)$pageId);
+            if ($fieldIdentity === null) {
+                $this->sendJsonError('Invalid fieldId identity', 400);
+            }
+            $mdScope = (string)$fieldIdentity['scope'];
+            $mdName = (string)$fieldIdentity['name'];
+            $mdSection = (string)$fieldIdentity['section'];
+            $mdSubsection = (string)$fieldIdentity['subsection'];
+        }
 
         // Trace payload details
         $markdownLen = strlen((string)$markdown);
@@ -986,7 +1032,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         try {
             $fullMarkdown = $this->loadRawMarkdownDocument($page, $languageCode);
             $rawContent = $this->parseRawMarkdownDocument($fullMarkdown);
-            $oldFieldMarkdown = $this->findScopedMarkdown($rawContent, $mdScope, $mdName, $mdSection ?? '');
+            $oldFieldMarkdown = $this->findScopedMarkdown(
+                $rawContent,
+                (string)$mdScope,
+                (string)$mdName,
+                (string)($mdSection ?? ''),
+                (string)($mdSubsection ?? '')
+            );
             $handledByEmptyScopeInsert = false;
             $changedKeys = [];
 
@@ -1003,7 +1055,12 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         if ($insertedMarkdown !== $fullMarkdown) {
                             \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $insertedMarkdown, $languageCode);
                             $this->logInfo("INSERT_EMPTY_SCOPE: mdName='{$mdName}' scope='{$mdScope}' section='{$mdSection}'");
-                            $changedKeys[] = $this->scopedHtmlKey($mdScope, $mdName, (string)($mdSection ?? ''));
+                            $changedKeys[] = $this->scopedHtmlKey(
+                                $mdScope,
+                                $mdName,
+                                (string)($mdSection ?? ''),
+                                (string)($mdSubsection ?? '')
+                            );
                         }
                         $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
                         if (!$content) {
@@ -1037,7 +1094,24 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 $this->logInfo("REQUEST: Beginning save process for '{$mdName}'");
                 
                 // Simple string replacement - preserves all markdown formatting
-                $replaceResult = $this->replaceUniqueMarkdownBlock($fullMarkdown, $oldFieldMarkdown, $blockMarkdown);
+                $replaceResult = $this->replaceUniqueMarkdownBlock(
+                    $fullMarkdown,
+                    $blockMarkdown,
+                    (string)$mdScope,
+                    (string)$mdName,
+                    (string)($mdSection ?? ''),
+                    (string)($mdSubsection ?? ''),
+                    [
+                        'mode' => 'single',
+                        'scope' => (string)$mdScope,
+                        'name' => (string)$mdName,
+                        'section' => (string)($mdSection ?? ''),
+                        'subsection' => (string)($mdSubsection ?? ''),
+                        'fieldId' => (string)($fieldId ?? ''),
+                        'pageId' => (string)$pageId,
+                        'lang' => (string)$languageCode,
+                    ]
+                );
                 if ($replaceResult['status'] === 'missing') {
                     $this->sendJsonError('Failed to find field content for replacement', 400);
                 }
@@ -1053,7 +1127,12 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 // Use MarkdownFileIO's native save mechanism (respect current language or override)
                 \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $updatedMarkdown, $languageCode);
                 $this->logInfo("SUCCESS: Markdown file updated");
-                $changedKeys[] = $this->scopedHtmlKey($mdScope, $mdName, (string)($mdSection ?? ''));
+                $changedKeys[] = $this->scopedHtmlKey(
+                    $mdScope,
+                    $mdName,
+                    (string)($mdSection ?? ''),
+                    (string)($mdSubsection ?? '')
+                );
                 $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
                 
                 if (!$content) {
@@ -1072,8 +1151,20 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $allHtml = $this->getAllFieldsHtml($content);
         
         // Target field specifics
-        $canonicalHtml = $this->findScopedHtml($content, $mdScope, $mdName, $mdSection ?? '');
-        $canonicalMd = $this->findScopedMarkdown($content, $mdScope, $mdName, $mdSection ?? '');
+        $canonicalHtml = $this->findScopedHtml(
+            $content,
+            (string)$mdScope,
+            (string)$mdName,
+            (string)($mdSection ?? ''),
+            (string)($mdSubsection ?? '')
+        );
+        $canonicalMd = $this->findScopedMarkdown(
+            $content,
+            (string)$mdScope,
+            (string)$mdName,
+            (string)($mdSection ?? ''),
+            (string)($mdSubsection ?? '')
+        );
         if ($canonicalMd === null) {
             $this->logDebug(
                 "RESPONSE: Field not found after save mdName='{$mdName}' scope='{$mdScope}' section='{$mdSection}'"
@@ -1087,14 +1178,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $this->logDebug(
             "RESPONSE: Final HTML. Field: {$mdName}. " . $srcInfo
         );
-        
-        // If the incoming markdown contains raw HTML tags, preserve them
-        if ($canonicalHtml && strpos($blockMarkdown, '<') !== false && strpos($blockMarkdown, '>') !== false) {
-            $parsedown = new \Parsedown();
-            $parsedown->setSafeMode(false);
-            $canonicalHtml = $parsedown->text($blockMarkdown);
-            $this->logDebug("RESPONSE: Markdown contains HTML tags, regenerated with Parsedown");
-        }
         
         $requestedFieldId = $this->wire->input->post->fieldId;
         if ($requestedFieldId) {
@@ -1114,6 +1197,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'status' => 1, 
             'html' => $canonicalHtml, // For fallback
             'htmlMap' => $allHtml,    // Primary source for syncing
+            'fragments' => $allHtml,
             'changed' => $expandedChanged,
             'sectionsIndex' => $this->buildSectionsIndex($page),
             'fieldsIndex' => $this->buildFieldsIndex($page),
@@ -1324,7 +1408,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return $fields;
     }
 
-    protected function findScopedMarkdown($content, string $scope, string $name, string $sectionName = ''): ?string {
+    protected function findScopedMarkdown(
+        $content,
+        string $scope,
+        string $name,
+        string $sectionName = '',
+        string $subsectionName = ''
+    ): ?string {
         if ($scope === 'block') {
             if ($sectionName === '' || !isset($content->sectionsByName[$sectionName])) {
                 return null;
@@ -1364,13 +1454,33 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             return null;
         }
 
+        if ($scope === 'field' && $sectionName !== '' && isset($content->sectionsByName[$sectionName])) {
+            $section = $content->sectionsByName[$sectionName];
+            if ($subsectionName !== '') {
+                if (isset($section->subsections[$subsectionName]) && isset($section->subsections[$subsectionName]->fields[$name])) {
+                    return (string)($section->subsections[$subsectionName]->fields[$name]->markdown ?? '');
+                }
+                return null;
+            }
+            if (isset($section->fields[$name])) {
+                return (string)($section->fields[$name]->markdown ?? '');
+            }
+            return null;
+        }
+
         if (!isset($content->sections) || !is_array($content->sections)) return null;
         foreach ($content->sections as $section) {
+            if ($sectionName !== '' && ((string)($section->name ?? '')) !== $sectionName) {
+                continue;
+            }
             if (isset($section->fields[$name])) {
                 return (string)($section->fields[$name]->markdown ?? '');
             }
             if (isset($section->subsections)) {
                 foreach ($section->subsections as $subsection) {
+                    if ($subsectionName !== '' && ((string)($subsection->name ?? '')) !== $subsectionName) {
+                        continue;
+                    }
                     if (isset($subsection->fields[$name])) {
                         return (string)($subsection->fields[$name]->markdown ?? '');
                     }
@@ -1380,7 +1490,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return null;
     }
 
-    protected function findScopedHtml($content, string $scope, string $name, string $sectionName = ''): ?string {
+    protected function findScopedHtml(
+        $content,
+        string $scope,
+        string $name,
+        string $sectionName = '',
+        string $subsectionName = ''
+    ): ?string {
         if ($scope === 'block') {
             if ($sectionName === '' || !isset($content->sectionsByName[$sectionName])) {
                 return null;
@@ -1420,13 +1536,33 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             return null;
         }
 
+        if ($scope === 'field' && $sectionName !== '' && isset($content->sectionsByName[$sectionName])) {
+            $section = $content->sectionsByName[$sectionName];
+            if ($subsectionName !== '') {
+                if (isset($section->subsections[$subsectionName]) && isset($section->subsections[$subsectionName]->fields[$name])) {
+                    return (string)($section->subsections[$subsectionName]->fields[$name]->html ?? '');
+                }
+                return null;
+            }
+            if (isset($section->fields[$name])) {
+                return (string)($section->fields[$name]->html ?? '');
+            }
+            return null;
+        }
+
         if (!isset($content->sections) || !is_array($content->sections)) return null;
         foreach ($content->sections as $section) {
+            if ($sectionName !== '' && ((string)($section->name ?? '')) !== $sectionName) {
+                continue;
+            }
             if (isset($section->fields[$name])) {
                 return (string)($section->fields[$name]->html ?? '');
             }
             if (isset($section->subsections)) {
                 foreach ($section->subsections as $subsection) {
+                    if ($subsectionName !== '' && ((string)($subsection->name ?? '')) !== $subsectionName) {
+                        continue;
+                    }
                     if (isset($subsection->fields[$name])) {
                         return (string)($subsection->fields[$name]->html ?? '');
                     }
@@ -1443,23 +1579,335 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return (string)\ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
     }
 
-    protected function replaceUniqueMarkdownBlock(string $document, string $search, string $replacement): array {
-        if ($search === '') {
+    protected function replaceUniqueMarkdownBlock(
+        string $document,
+        string $replacement,
+        string $scope,
+        string $name,
+        string $sectionName = '',
+        string $subsectionName = '',
+        array $ctx = []
+    ): array {
+        $docLen = strlen($document);
+        $replacementLen = strlen($replacement);
+        $ctxStr = $this->formatReplaceContextForLog($ctx);
+        $scopeNorm = trim($scope);
+        $nameNorm = trim($name);
+        $sectionNorm = trim($sectionName);
+        $subsectionNorm = trim($subsectionName);
+
+        if ($scopeNorm === '' || $nameNorm === '') {
+            $this->logDebug(
+                "REPLACE_UNIQUE status=missing reason=invalid_identity docLen={$docLen} replacementLen={$replacementLen} scope='{$scopeNorm}' name='{$nameNorm}' {$ctxStr}"
+            );
             return ['status' => 'missing', 'document' => $document];
         }
 
-        $firstPos = strpos($document, $search);
-        if ($firstPos === false) {
+        $range = $this->resolveScopedReplacementRange(
+            $document,
+            $scopeNorm,
+            $nameNorm,
+            $sectionNorm,
+            $subsectionNorm
+        );
+        if (($range['status'] ?? '') !== 'ok') {
+            $status = ($range['status'] ?? '') === 'ambiguous' ? 'ambiguous' : 'missing';
+            $this->logDebug(
+                "REPLACE_UNIQUE status={$status} reason=" . (string)($range['reason'] ?? 'range_not_found') . " docLen={$docLen} replacementLen={$replacementLen} scope='{$scopeNorm}' section='{$sectionNorm}' subsection='{$subsectionNorm}' name='{$nameNorm}' markers=" . (string)($range['markers'] ?? 0) . " {$ctxStr}"
+            );
+            return ['status' => $status, 'document' => $document];
+        }
+
+        $start = (int)$range['start'];
+        $end = (int)$range['end'];
+        if ($end < $start) {
+            $this->logDebug(
+                "REPLACE_UNIQUE status=missing reason=invalid_range docLen={$docLen} replacementLen={$replacementLen} start={$start} end={$end} scope='{$scopeNorm}' section='{$sectionNorm}' subsection='{$subsectionNorm}' name='{$nameNorm}' {$ctxStr}"
+            );
             return ['status' => 'missing', 'document' => $document];
         }
 
-        $secondPos = strpos($document, $search, $firstPos + strlen($search));
-        if ($secondPos !== false) {
-            return ['status' => 'ambiguous', 'document' => $document];
+        $after = substr($document, $end);
+        $safeReplacement = $replacement;
+        if (
+            $safeReplacement !== '' &&
+            preg_match('/^\s*<!--\s*(section:|sub:|[^>]+)-->/i', $after) &&
+            !preg_match('/\R\s*\R?\s*$/', $safeReplacement)
+        ) {
+            $safeReplacement .= "\n\n";
         }
 
-        $updated = substr($document, 0, $firstPos) . $replacement . substr($document, $firstPos + strlen($search));
+        $updated = substr($document, 0, $start) . $safeReplacement . $after;
+        $this->logDebug(
+            "REPLACE_UNIQUE status=replaced reason=scoped_range docLen={$docLen} replacementLen={$replacementLen} start={$start} end={$end} scope='{$scopeNorm}' section='{$sectionNorm}' subsection='{$subsectionNorm}' name='{$nameNorm}' replacementSha1=" . sha1($replacement) . " {$ctxStr}"
+        );
         return ['status' => 'replaced', 'document' => $updated];
+    }
+
+    protected function resolveScopedReplacementRange(
+        string $document,
+        string $scope,
+        string $name,
+        string $sectionName,
+        string $subsectionName
+    ): array {
+        $docLen = strlen($document);
+
+        if ($scope === 'section') {
+            return $this->resolveSectionContentRange($document, $name);
+        }
+        if ($scope === 'subsection') {
+            if ($sectionName === '') {
+                return ['status' => 'missing', 'reason' => 'missing_section_for_subsection'];
+            }
+            return $this->resolveSubsectionContentRange($document, $sectionName, $name);
+        }
+        if ($scope !== 'field') {
+            return ['status' => 'missing', 'reason' => 'unsupported_scope'];
+        }
+
+        $parentStart = 0;
+        $parentEnd = $docLen;
+        $parentType = 'document';
+        if ($sectionName !== '' && $subsectionName !== '') {
+            $subRange = $this->resolveSubsectionContentRange($document, $sectionName, $subsectionName);
+            if (($subRange['status'] ?? '') !== 'ok') return $subRange;
+            $parentStart = (int)$subRange['start'];
+            $parentEnd = (int)$subRange['end'];
+            $parentType = 'subsection';
+        } elseif ($sectionName !== '') {
+            $sectionRange = $this->resolveSectionContentRange($document, $sectionName);
+            if (($sectionRange['status'] ?? '') !== 'ok') return $sectionRange;
+            $parentStart = (int)$sectionRange['start'];
+            $parentEnd = (int)$sectionRange['end'];
+            $parentType = 'section';
+        }
+
+        $fieldPattern = '/<!--\s*' . preg_quote($name, '/') . '(?:\.\.\.)?\s*-->\s*/i';
+        $fieldMarkers = $this->findMarkersInRange($document, $fieldPattern, $parentStart, $parentEnd);
+        $count = count($fieldMarkers);
+        if ($count === 0) return ['status' => 'missing', 'reason' => 'field_marker_not_found'];
+        if ($count > 1) return ['status' => 'ambiguous', 'reason' => 'field_marker_ambiguous', 'markers' => $count];
+
+        $marker = $fieldMarkers[0];
+        $start = (int)$marker['end'];
+        $end = $parentEnd;
+
+        $nextField = $this->findFirstMarkerPosInRange(
+            $document,
+            '/<!--\s*(?!section:|sub:)[^>]+-->\s*/i',
+            $start,
+            $parentEnd
+        );
+        if ($nextField !== null) {
+            $end = min($end, $nextField);
+        }
+        if ($parentType !== 'subsection') {
+            $nextSub = $this->findFirstMarkerPosInRange(
+                $document,
+                '/<!--\s*sub:[^>]*-->\s*/i',
+                $start,
+                $parentEnd
+            );
+            if ($nextSub !== null) {
+                $end = min($end, $nextSub);
+            }
+        }
+        if ($parentType === 'document') {
+            $nextSection = $this->findFirstMarkerPosInRange(
+                $document,
+                '/<!--\s*section:[^>]*-->\s*/i',
+                $start,
+                $parentEnd
+            );
+            if ($nextSection !== null) {
+                $end = min($end, $nextSection);
+            }
+        }
+
+        return ['status' => 'ok', 'start' => $start, 'end' => $end];
+    }
+
+    protected function resolveSectionContentRange(string $document, string $sectionName): array {
+        $markerPattern = '/<!--\s*section:' . preg_quote($sectionName, '/') . '\s*-->\s*/i';
+        $markers = $this->findMarkersInRange($document, $markerPattern, 0, strlen($document));
+        $count = count($markers);
+        if ($count === 0) return ['status' => 'missing', 'reason' => 'section_marker_not_found'];
+        if ($count > 1) return ['status' => 'ambiguous', 'reason' => 'section_marker_ambiguous', 'markers' => $count];
+
+        $start = (int)$markers[0]['end'];
+        $docLen = strlen($document);
+        $end = $docLen;
+        $nextSection = $this->findFirstMarkerPosInRange(
+            $document,
+            '/<!--\s*section:[^>]*-->\s*/i',
+            $start,
+            $docLen
+        );
+        if ($nextSection !== null) {
+            $end = $nextSection;
+        }
+        return ['status' => 'ok', 'start' => $start, 'end' => $end];
+    }
+
+    protected function resolveSubsectionContentRange(string $document, string $sectionName, string $subsectionName): array {
+        $sectionRange = $this->resolveSectionContentRange($document, $sectionName);
+        if (($sectionRange['status'] ?? '') !== 'ok') return $sectionRange;
+
+        $sectionStart = (int)$sectionRange['start'];
+        $sectionEnd = (int)$sectionRange['end'];
+        $subPattern = '/<!--\s*sub:' . preg_quote($subsectionName, '/') . '\s*-->\s*/i';
+        $subMarkers = $this->findMarkersInRange($document, $subPattern, $sectionStart, $sectionEnd);
+        $count = count($subMarkers);
+        if ($count === 0) return ['status' => 'missing', 'reason' => 'subsection_marker_not_found'];
+        if ($count > 1) return ['status' => 'ambiguous', 'reason' => 'subsection_marker_ambiguous', 'markers' => $count];
+
+        $start = (int)$subMarkers[0]['end'];
+        $end = $sectionEnd;
+        $nextSub = $this->findFirstMarkerPosInRange(
+            $document,
+            '/<!--\s*sub:[^>]*-->\s*/i',
+            $start,
+            $sectionEnd
+        );
+        if ($nextSub !== null) {
+            $end = $nextSub;
+        }
+        return ['status' => 'ok', 'start' => $start, 'end' => $end];
+    }
+
+    protected function findMarkersInRange(string $document, string $pattern, int $start, int $end): array {
+        $out = [];
+        if ($end <= $start) return $out;
+        if (!preg_match_all($pattern, $document, $matches, PREG_OFFSET_CAPTURE)) {
+            return $out;
+        }
+        foreach ($matches[0] as $capture) {
+            $text = (string)($capture[0] ?? '');
+            $pos = (int)($capture[1] ?? -1);
+            if ($pos < $start || $pos >= $end) continue;
+            $len = strlen($text);
+            $out[] = [
+                'pos' => $pos,
+                'end' => $pos + $len,
+                'len' => $len,
+            ];
+        }
+        return $out;
+    }
+
+    protected function findFirstMarkerPosInRange(string $document, string $pattern, int $start, int $end): ?int {
+        if ($end <= $start) return null;
+        if (!preg_match($pattern, $document, $m, PREG_OFFSET_CAPTURE, $start)) {
+            return null;
+        }
+        $pos = (int)($m[0][1] ?? -1);
+        if ($pos < $start || $pos >= $end) {
+            return null;
+        }
+        return $pos;
+    }
+
+    protected function parseFieldIdentityFromFieldId(string $fieldId, string $expectedPageId = ''): ?array {
+        $id = trim($fieldId);
+        if ($id === '') return null;
+        $parts = explode(':', $id);
+        if (count($parts) < 3) return null;
+
+        $pagePart = (string)$parts[0];
+        if ($expectedPageId !== '' && $pagePart !== (string)$expectedPageId) {
+            return null;
+        }
+
+        $scope = trim((string)$parts[1]);
+        if ($scope === '') return null;
+
+        if ($scope === 'section') {
+            if (count($parts) === 3) {
+                return [
+                    'scope' => 'section',
+                    'section' => '',
+                    'subsection' => '',
+                    'name' => (string)$parts[2],
+                ];
+            }
+            if (count($parts) < 4) return null;
+            return [
+                'scope' => 'section',
+                'section' => '',
+                'subsection' => '',
+                'name' => (string)$parts[3],
+            ];
+        }
+
+        if ($scope === 'subsection') {
+            if (count($parts) < 4) return null;
+            return [
+                'scope' => 'subsection',
+                'section' => (string)$parts[2],
+                'subsection' => '',
+                'name' => (string)$parts[3],
+            ];
+        }
+
+        if ($scope === 'field') {
+            if (count($parts) === 3) {
+                return [
+                    'scope' => 'field',
+                    'section' => '',
+                    'subsection' => '',
+                    'name' => (string)$parts[2],
+                ];
+            }
+            if (count($parts) === 4) {
+                return [
+                    'scope' => 'field',
+                    'section' => (string)$parts[2],
+                    'subsection' => '',
+                    'name' => (string)$parts[3],
+                ];
+            }
+            if (count($parts) >= 5) {
+                return [
+                    'scope' => 'field',
+                    'section' => (string)$parts[2],
+                    'subsection' => (string)$parts[3],
+                    'name' => implode(':', array_slice($parts, 4)),
+                ];
+            }
+        }
+
+        if ($scope === 'block') {
+            if (count($parts) < 4) return null;
+            return [
+                'scope' => 'block',
+                'section' => (string)$parts[2],
+                'subsection' => '',
+                'name' => (string)$parts[3],
+            ];
+        }
+
+        return null;
+    }
+
+    protected function formatReplaceContextForLog(array $ctx): string {
+        if (!$ctx) return '';
+        $pairs = [];
+        foreach ($ctx as $k => $v) {
+            $key = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)$k);
+            if ($key === '') continue;
+            $val = str_replace(["\r", "\n", "'"], ["\\r", "\\n", "\\'"], (string)$v);
+            $pairs[] = "{$key}='{$val}'";
+        }
+        return implode(' ', $pairs);
+    }
+
+    protected function buildReplaceContextSnippet(string $document, int $pos, int $len): string {
+        $radius = 60;
+        $start = max(0, $pos - $radius);
+        $end = min(strlen($document), $pos + $len + $radius);
+        $slice = substr($document, $start, max(0, $end - $start));
+        return str_replace(["\r", "\n", "'"], ["\\r", "\\n", "\\'"], (string)$slice);
     }
 
     protected function insertIntoEmptyScopedMarkdownBlock(
@@ -1701,7 +2149,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return $htmlMap;
     }
 
-    protected function scopedHtmlKey(string $scope, string $name, string $sectionName = ''): string {
+    protected function scopedHtmlKey(string $scope, string $name, string $sectionName = '', string $subsectionName = ''): string {
         if ($scope === 'section') {
             return "section:{$name}";
         }
@@ -1709,6 +2157,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             return "subsection:{$sectionName}:{$name}";
         }
         if ($scope === 'field') {
+            if ($sectionName !== '' && $subsectionName !== '') {
+                return "subsection:{$sectionName}:{$subsectionName}:{$name}";
+            }
             if ($sectionName !== '') {
                 return "field:{$sectionName}:{$name}";
             }

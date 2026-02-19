@@ -56,51 +56,77 @@ If a section only contains subsections, it may not have its own content. In that
 - Rendering `->text` (or otherwise transforming the HTML) breaks that exact match, so **field rollovers won’t appear**.
   - In this case, you can still define explicit section/subsection hosts in your template (see below).
 
-### Explicit Mount Contract (Recommended for Deterministic Preview)
 
-Live preview updates are now **strict-key based**.  
-The editor replaces HTML inside:
 
-- `.fe-editable` field nodes
-- explicit mount nodes with `data-mfe-slot`
-- read-only `data-mfe` hosts (`section` / `subsection`) when the host is a safe direct mount
+### Live Preview Editor
 
-No runtime DOM injection or wrapper insertion is used.
+When you save in the editor, two things happen:
 
-Use these mounts in templates:
+1. The markdown file is saved.
+2. The page is updated live, so you can see the result right away.
 
-**Section mount**
+That live update is only a preview.  
+If something looks wrong, refresh. Reload shows the real HTML rendered from saved markdown.
+
+In short: save updates your markdown, but the preview is only a temporal visual update.
+
+If the preview of one area isn't updating correctly, try adding a clear `data-mfe` host around that area so the editor knows exactly what to patch.
+
+Example:
+
 ```html
-<section data-mfe="hero">
-  <div data-mfe-slot="section:hero"></div>
-</section>
-```
-
-**Subsection mount**
-```html
-<div data-mfe="hero/left">
-  <div data-mfe-slot="subsection:hero:left"></div>
+<div data-mfe="body/features/end">
+  <?= $content->body->features->end->html ?>
 </div>
 ```
 
-**Field mount (`.fe-editable` metadata)**
-```html
-<div
-  class="fe-editable md-edit"
-  data-mfe-scope="field"
-  data-mfe-section="hero"
-  data-mfe-name="title"
-  data-page="1234"
-  data-markdown-b64="..."
-></div>
+```
+data-mfe="body"              section
+data-mfe="body/features"     subsection or section field (resolved from content index)
+data-mfe="body/features/end" subsection field
+data-mfe="title"             top-level field (optional shorthand)
 ```
 
-Key rules:
-- `section:{name}` -> `data-mfe-slot="section:{name}"`
-- `subsection:{section}:{sub}` -> `data-mfe-slot="subsection:{section}:{sub}"`
-- `field` keys are resolved from `.fe-editable` metadata (`scope/section/subsection/name`)
-- `data-mfe="foo"` and `data-mfe="foo/bar"` are auto-mapped at runtime as section/subsection mounts when safe.
-- If a changed key has no mount, save still works, but live preview for that key is skipped.
+
+### Rendering The Same Field Twice
+
+If a field is printed in multiple places, the preview by default updates only the primary "node", but the extra copies must declare their 'source' with `data-mfe-source` so the editor knows which content to update:
+
+```html
+<section data-mfe="body">
+  <div data-mfe="body/features/end">
+    <!-- this is the primary node for this content, so it gets the live update -->
+    <?= $content->body->features->end->html ?> 
+  </div>
+
+  <aside>
+    <div>
+      <!-- this is a copy without source, so it won't get the live update -->
+      <?= $content->body->features->end->html ?> 
+    </div>
+    <div data-mfe-source="body/features/end">
+      <!-- this is a copy with source, so it will get the live update -->
+      <?= $content->body->features->end->html ?> 
+    </div>
+  </aside>
+</section>
+```
+
+`data-mfe-source` accepts:
+- slash path: `body/features/end` (recommended)
+- scoped key: `subsection:body:features:end` (internal format)
+
+Why this split:
+- `data-mfe` is the main editable/bound area.
+- `data-mfe-source` is an extra mirror of that same content.
+- This avoids preview conflicts when the same content is printed in more than one place.
+
+Canonical keys are type-first:
+- `section` = whole section
+- `subsection` = whole subsection
+- `field` = field inside a section
+- `subsection:...:...:fieldName` = field inside a subsection
+
 
 
 #### Clicking the zones

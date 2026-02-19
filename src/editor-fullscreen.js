@@ -43,8 +43,10 @@ import {
   clearDraftsCoveredByChangedKeys,
 } from "./draft-utils.js";
 import {
+  buildSemanticLookup,
   scopedHtmlKeyFromMeta,
   applyChangedHtmlByKeyStrict,
+  fanOutChangedHtmlBySource,
   syncEditableMarkdownAttributesFromFieldsIndex as syncFieldsIndexToEditableAttrs,
 } from "./sync-by-key.js";
 import {
@@ -112,13 +114,23 @@ function syncDirtyStatusForActiveField() {
 function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
   const { updateActiveEditor = true } = options;
   const activeScopedKey = getActiveScopedHtmlKey();
-  const htmlMap = data.htmlMap || (typeof data.html === "object" ? data.html : {});
+  const htmlMap =
+    data.fragments ||
+    data.htmlMap ||
+    (typeof data.html === "object" ? data.html : {});
   const changedKeys =
     Array.isArray(data.changed) && data.changed.length
       ? data.changed
       : activeScopedKey
         ? [activeScopedKey]
         : [];
+  console.warn("[mfe:save-sync] fragment response", {
+    activeScopedKey,
+    changedKeys,
+    hasFragments: Boolean(data.fragments),
+    fragmentsKeys: data.fragments ? Object.keys(data.fragments).length : 0,
+    htmlMapKeys: data.htmlMap ? Object.keys(data.htmlMap).length : 0,
+  });
   clearDraftsCoveredByChangedKeys({
     changedKeys,
     draftMarkdownByScopedKey,
@@ -150,6 +162,13 @@ function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
       window.MarkdownFrontEditorConfig || {};
     window.MarkdownFrontEditorConfig.fieldsIndex = data.fieldsIndex;
   }
+  const sections = Array.isArray(window.MarkdownFrontEditorConfig?.sectionsIndex)
+    ? window.MarkdownFrontEditorConfig.sectionsIndex
+    : [];
+  const fields = Array.isArray(window.MarkdownFrontEditorConfig?.fieldsIndex)
+    ? window.MarkdownFrontEditorConfig.fieldsIndex
+    : [];
+  const semanticLookup = buildSemanticLookup({ sections, fields });
 
   const debugSync = Boolean(window.MarkdownFrontEditorConfig?.debugLabels);
   applyChangedHtmlByKeyStrict({
@@ -160,16 +179,29 @@ function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
     warnedMissingMountKeys,
     debug: debugSync,
     getMetaAttr,
+    semanticLookup,
+    isOuterSwapKey: (key, mount) => {
+      if (!key || !key.startsWith("section:")) return false;
+      const rootKey = mount.getAttribute?.("data-mfe-root") || "";
+      return rootKey === key;
+    },
+  });
+  fanOutChangedHtmlBySource({
+    changedKeys,
+    htmlMap,
+    root: document,
+    normalizeHtml: normalizeHtmlImageSources,
+    semanticLookup,
   });
   syncFieldsIndexToEditableAttrs({
     root: document,
-    fields: Array.isArray(window.MarkdownFrontEditorConfig?.fieldsIndex)
-      ? window.MarkdownFrontEditorConfig.fieldsIndex
-      : [],
+    fields,
+    sections,
     getMetaAttr,
     decodeMarkdownBase64,
   });
   annotateBoundImages();
+  initEditors();
 
   if (updateActiveEditor && activeTarget && primaryHtml) {
     activeTarget.dataset.markdown = finalMarkdown;
@@ -1393,6 +1425,7 @@ function closeEditor() {
 function initEditors() {
   annotateBoundImages();
   document.querySelectorAll(".fe-editable").forEach((el) => {
+    if (el.dataset.mfeDblclickBound === "1") return;
     el.addEventListener("dblclick", (e) => {
       // Prevent default browser selection
       e.preventDefault();
@@ -1403,6 +1436,7 @@ function initEditors() {
 
       openFullscreenEditorForElement(target);
     });
+    el.dataset.mfeDblclickBound = "1";
   });
 }
 
