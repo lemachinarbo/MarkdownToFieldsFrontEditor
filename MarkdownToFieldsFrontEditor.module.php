@@ -27,8 +27,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
     public static function getDefaultData() {
         return [
             'toolbarButtons' => 'bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split,markers',
-            'editableTargets' => ['tag', 'container'],
             'allowedImageExtensions' => 'jpg,jpeg,png,gif,webp,svg',
+            'strictSectionReplace' => true,
             'debug' => false,
             'debugShowSections' => false,
             'debugShowLabels' => false,
@@ -55,46 +55,20 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $f->columnWidth = 100;
         $inputfields->add($f);
 
-        $targetsField = wire('modules')->get('InputfieldCheckboxes');
-        $targetsField->name = 'editableTargets';
-        $targetsField->label = 'Editable Targets';
-        $targetsField->description = 'Choose which field types get auto-wrapped for editing.';
-        $targetsField->options = [
-            'tag' => 'Tag fields (<!-- name -->)',
-            'container' => 'Container fields (<!-- name... -->)',
-            'bind' => 'Bind fields (<!-- field:name -->)',
-        ];
-        $targetsField->value = !empty($data['editableTargets']) ? $data['editableTargets'] : $defaults['editableTargets'];
-        $targetsField->notes = 'Defaults: tag, container';
-        $targetsField->columnWidth = 100;
-        $inputfields->add($targetsField);
+        $behaviorFieldset = wire('modules')->get('InputfieldFieldset');
+        $behaviorFieldset->label = 'Editor Behavior';
+        $behaviorFieldset->description = 'General editor behavior options.';
 
-        $debugLoggingField = wire('modules')->get('InputfieldCheckbox');
-        $debugLoggingField->name = 'debug';
-        $debugLoggingField->label = 'Enable Debug Logging';
-        $debugLoggingField->description = 'When enabled, verbose diagnostic logs are written to markdown-front-edit.txt';
-        $debugLoggingField->value = 1;
-        $debugLoggingField->checked = !empty($data['debug']);
-        $debugLoggingField->columnWidth = 100;
-        $inputfields->add($debugLoggingField);
-
-        $debugField = wire('modules')->get('InputfieldCheckbox');
-        $debugField->name = 'debugShowSections';
-        $debugField->label = 'Debug: Always Show Section Bounds';
-        $debugField->description = 'When enabled, section/subsection wrappers are outlined with labels in the frontend.';
-        $debugField->value = 1;
-        $debugField->checked = !empty($data['debugShowSections']);
-        $debugField->columnWidth = 100;
-        $inputfields->add($debugField);
-
-        $debugLabelsField = wire('modules')->get('InputfieldCheckbox');
-        $debugLabelsField->name = 'debugShowLabels';
-        $debugLabelsField->label = 'Debug: Show editable areas Labels';
-        $debugLabelsField->description = 'Shows scope labels like "section:hero" in the rollover helper.';
-        $debugLabelsField->value = 1;
-        $debugLabelsField->checked = !empty($data['debugShowLabels']);
-        $debugLabelsField->columnWidth = 100;
-        $inputfields->add($debugLabelsField);
+        $strictReplaceField = wire('modules')->get('InputfieldCheckbox');
+        $strictReplaceField->name = 'strictSectionReplace';
+        $strictReplaceField->label = 'Enable Safe Parent Live Preview Replacement';
+        $strictReplaceField->description = 'When enabled (default), section/subsection parent live preview replacement runs only when safe; otherwise child zones are updated to avoid breaking nested editable areas.';
+        $strictReplaceField->value = 1;
+        $strictReplaceField->checked = array_key_exists('strictSectionReplace', $data)
+            ? !empty($data['strictSectionReplace'])
+            : !empty($defaults['strictSectionReplace']);
+        $strictReplaceField->columnWidth = 100;
+        $behaviorFieldset->add($strictReplaceField);
 
         $labelStyleField = wire('modules')->get('InputfieldRadios');
         $labelStyleField->name = 'labelStyle';
@@ -106,7 +80,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         ];
         $labelStyleField->value = !empty($data['labelStyle']) ? $data['labelStyle'] : $defaults['labelStyle'];
         $labelStyleField->columnWidth = 100;
-        $inputfields->add($labelStyleField);
+        $behaviorFieldset->add($labelStyleField);
 
         $confirmUnsavedField = wire('modules')->get('InputfieldCheckbox');
         $confirmUnsavedField->name = 'confirmOnUnsavedClose';
@@ -117,7 +91,42 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             ? !empty($data['confirmOnUnsavedClose'])
             : !empty($defaults['confirmOnUnsavedClose']);
         $confirmUnsavedField->columnWidth = 100;
-        $inputfields->add($confirmUnsavedField);
+        $behaviorFieldset->add($confirmUnsavedField);
+
+        $inputfields->add($behaviorFieldset);
+
+        $debugFieldset = wire('modules')->get('InputfieldFieldset');
+        $debugFieldset->label = 'Debug Options';
+        $debugFieldset->description = 'All debug helpers in one place.';
+
+        $debugLoggingField = wire('modules')->get('InputfieldCheckbox');
+        $debugLoggingField->name = 'debug';
+        $debugLoggingField->label = 'Enable Debug Logging';
+        $debugLoggingField->description = 'When enabled, verbose diagnostic logs are written to markdown-front-edit.txt';
+        $debugLoggingField->value = 1;
+        $debugLoggingField->checked = !empty($data['debug']);
+        $debugLoggingField->columnWidth = 100;
+        $debugFieldset->add($debugLoggingField);
+
+        $debugField = wire('modules')->get('InputfieldCheckbox');
+        $debugField->name = 'debugShowSections';
+        $debugField->label = 'Debug: Always Show Section Bounds';
+        $debugField->description = 'When enabled, section/subsection wrappers are outlined with labels in the frontend.';
+        $debugField->value = 1;
+        $debugField->checked = !empty($data['debugShowSections']);
+        $debugField->columnWidth = 100;
+        $debugFieldset->add($debugField);
+
+        $debugLabelsField = wire('modules')->get('InputfieldCheckbox');
+        $debugLabelsField->name = 'debugShowLabels';
+        $debugLabelsField->label = 'Debug: Show editable areas Labels';
+        $debugLabelsField->description = 'Shows scope labels like "section:hero" in the rollover helper.';
+        $debugLabelsField->value = 1;
+        $debugLabelsField->checked = !empty($data['debugShowLabels']);
+        $debugLabelsField->columnWidth = 100;
+        $debugFieldset->add($debugLabelsField);
+
+        $inputfields->add($debugFieldset);
 
         return $inputfields;
     }
@@ -142,7 +151,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $defaults = self::getDefaultData();
         $this->wire('modules')->saveConfig($this, [
             'toolbarButtons' => $defaults['toolbarButtons'],
-            'editableTargets' => $defaults['editableTargets'],
+            'strictSectionReplace' => $defaults['strictSectionReplace'],
             'debug' => $defaults['debug'],
             'debugShowSections' => $defaults['debugShowSections'],
             'debugShowLabels' => $defaults['debugShowLabels'],
@@ -243,7 +252,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         $frontConfig = [
             'toolbarButtons' => $toolbarButtons,
-            'editableTargets' => $this->getEditableTargets(),
             'languages' => $langList,
             'currentLanguage' => $currentLangCode,
             'imageBaseUrl' => rtrim((string)$this->wire()->config->urls->site, '/') . '/images/',
@@ -254,6 +262,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'debug' => (bool)($this->debug ?? false),
             'debugShowSections' => (bool)($this->debugShowSections ?? false),
             'debugLabels' => (bool)($this->debugShowLabels ?? false),
+            'strictSectionReplace' => (bool)($this->strictSectionReplace ?? $defaults['strictSectionReplace']),
             'labelStyle' => (string)($this->labelStyle ?? $defaults['labelStyle']),
             'confirmOnUnsavedClose' => (bool)($this->confirmOnUnsavedClose ?? $defaults['confirmOnUnsavedClose']),
         ];
@@ -328,9 +337,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
         if (!isset($content->sections) || !is_array($content->sections)) return;
 
-        $targets = $this->getEditableTargets();
-        $allow = fn($kind) => in_array($kind, $targets, true);
-
         $sectionNameByObject = [];
         if (isset($content->sectionsByName) && is_array($content->sectionsByName)) {
             foreach ($content->sectionsByName as $sectionName => $sectionObj) {
@@ -345,8 +351,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             if (isset($section->fields) && is_array($section->fields)) {
                 foreach ($section->fields as $fname => $f) {
                     if (isset($f->html) && $f->html !== '') {
-                        $fieldKind = $this->resolveFieldKind($f);
-                        if (!$allow($fieldKind)) continue;
                         $fieldType = $this->resolveFieldType($f);
                         $html = $f->html;
                         // Trust MarkdownToFields API for field extraction and boundaries
@@ -368,8 +372,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                     if (isset($subsection->fields) && is_array($subsection->fields)) {
                         foreach ($subsection->fields as $fname => $f) {
                             if (isset($f->html) && $f->html !== '') {
-                                $fieldKind = $this->resolveFieldKind($f);
-                                if (!$allow($fieldKind)) continue;
                                 $fieldType = $this->resolveFieldType($f);
                                 $html = $f->html;
                                 // Trust MarkdownToFields API for field extraction and boundaries
@@ -513,20 +515,17 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
         
         $fieldType = null;
-        $fieldKind = null;
         
         if (isset($content->sections) && is_array($content->sections)) {
             foreach ($content->sections as $section) {
                 if (isset($section->fields[$fieldName])) {
                     $fieldType = $this->resolveFieldType($section->fields[$fieldName]);
-                    $fieldKind = $this->resolveFieldKind($section->fields[$fieldName]);
                     break;
                 }
                 if (isset($section->subsections) && is_array($section->subsections)) {
                     foreach ($section->subsections as $subsection) {
                         if (isset($subsection->fields[$fieldName])) {
                             $fieldType = $this->resolveFieldType($subsection->fields[$fieldName]);
-                            $fieldKind = $this->resolveFieldKind($subsection->fields[$fieldName]);
                             break 2;
                         }
                     }
@@ -535,11 +534,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
 
         if ($fieldType === null) {
-            $event->return = $html;
-            return;
-        }
-        $targets = $this->getEditableTargets();
-        if ($fieldKind && !in_array($fieldKind, $targets, true)) {
             $event->return = $html;
             return;
         }
@@ -1404,18 +1398,6 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             return 'bind';
         }
         return 'tag';
-    }
-
-    protected function getEditableTargets(): array {
-        $defaults = self::getDefaultData();
-        $targets = $this->editableTargets ?? $defaults['editableTargets'];
-        if (is_string($targets)) {
-            $targets = array_filter(array_map('trim', explode(',', $targets)));
-        }
-        if (!is_array($targets)) {
-            $targets = $defaults['editableTargets'];
-        }
-        return array_values($targets);
     }
 
     protected function buildSectionsIndex(?\ProcessWire\Page $page): array {

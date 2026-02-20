@@ -109,10 +109,11 @@ And thats it. You can now edit the content directly on the page by double-clicki
 
 
 
-
 ### Live preview behavior with nested sections and fields
 
-When you create an editable zone that also contains other editable zones:
+If one editable area contains other editable areas, preview tries hard to not break your page.
+
+Example:
 
 ```html
 <div data-mfe="columns">
@@ -122,33 +123,26 @@ When you create an editable zone that also contains other editable zones:
 </div>
 ```
 
-If you edit the section in the editor, live preview may skip replacing the whole section and only update nested child zones. This prevents destroying nested editable mounts during preview.
+When you save the parent (section/subsection), the editor checks if replacing that whole block could remove inner editable zones.
 
-Full section rerender now uses strict mode by default.
+- If parent replacement is safe, it can replace the full parent block.
+- If parent replacement is risky, it skips parent replace and updates children only.
 
-You can still configure it explicitly:
 
-```js
-window.MarkdownFrontEditorConfig = {
-  strictSectionReplace: true,
-};
-```
+You can change this in module settings:
 
-To disable and return to legacy safe-skip behavior:
+- **Modules → MarkdownToFieldsFrontEditor → Enable Safe Parent Live Preview Replacement**
 
-```js
-window.MarkdownFrontEditorConfig = {
-  strictSectionReplace: false,
-};
-```
+If you turn it off, risky parent replacement is always skipped.
+That is safer for nested zones, but parent-level visual changes may appear only after refresh.
 
-In strict mode, whole-section replace runs only when all are true:
+When enable full parent replace only runs when all are true:
 
 - No inline editor is open
 - No fullscreen unsaved changes exist
-- No descendant scoped drafts exist under that section
+- No unsaved child drafts exist inside that parent
 
-If any check fails, it deterministically falls back to the safe behavior (skip whole-section replacement).
+If any of those checks fails, it falls back to safe mode: keep the parent as-is and patch children only.
 
 
 ### Rendering the same content twice

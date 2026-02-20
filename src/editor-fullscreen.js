@@ -659,6 +659,9 @@ async function requestRenderedFragmentsDatastar({
 
   queued.sort((a, b) => keyDepth(a.key) - keyDepth(b.key));
   const appliedParents = new Set();
+  const queuedScopedKeys = queued
+    .map((entry) => String(entry.key || "").trim())
+    .filter(Boolean);
   const strictSectionReplace =
     window.MarkdownFrontEditorConfig?.strictSectionReplace !== false;
   queued.forEach((patch) => {
@@ -676,8 +679,16 @@ async function requestRenderedFragmentsDatastar({
     const candidateNodes = Array.from(
       document.querySelectorAll(patch.selector || ""),
     );
-    const isNestedSectionReplaceRisk =
-      patch.key?.startsWith("section:") &&
+    const keyParts = String(patch.key || "").split(":");
+    const isSectionParentKey =
+      patch.key?.startsWith("section:") && keyParts.length === 2;
+    const isSubsectionParentKey =
+      patch.key?.startsWith("subsection:") && keyParts.length === 3;
+    const hasQueuedDescendantKey = queuedScopedKeys.some((queuedKey) =>
+      isDescendantKey(queuedKey, patch.key),
+    );
+    const isNestedScopeReplaceRisk =
+      (isSectionParentKey || isSubsectionParentKey) &&
       candidateNodes.some(
         (n) =>
           n &&
@@ -685,7 +696,24 @@ async function requestRenderedFragmentsDatastar({
             n.querySelector?.(".fe-editable")),
       ) &&
       !patchHtml.includes("fe-editable");
-    if (isNestedSectionReplaceRisk) {
+    const isParentWithoutEditablePayload =
+      (isSectionParentKey || isSubsectionParentKey) &&
+      hasQueuedDescendantKey &&
+      !patchHtml.includes("fe-editable");
+    if (isParentWithoutEditablePayload) {
+      if (!skippedSectionKeys.includes(patch.key)) {
+        skippedSectionKeys.push(patch.key);
+      }
+      debugWarn("[mfe:fragment-api] scope patch skipped", {
+        cycleId,
+        key: patch.key,
+        selector: patch.selector,
+        reason: "descendant-keys-present",
+        hasQueuedDescendantKey,
+      });
+      return;
+    }
+    if (isNestedScopeReplaceRisk) {
       if (strictSectionReplace) {
         const hasInlineOpen = window.mfeInlineEditorActive === true;
         const hasFullscreenUnsaved = hasPendingUnsavedChanges();
@@ -696,7 +724,7 @@ async function requestRenderedFragmentsDatastar({
           if (!skippedSectionKeys.includes(patch.key)) {
             skippedSectionKeys.push(patch.key);
           }
-          debugWarn("[mfe:fragment-api] section patch skipped", {
+          debugWarn("[mfe:fragment-api] scope patch skipped", {
             cycleId,
             key: patch.key,
             selector: patch.selector,
@@ -711,7 +739,7 @@ async function requestRenderedFragmentsDatastar({
         if (!skippedSectionKeys.includes(patch.key)) {
           skippedSectionKeys.push(patch.key);
         }
-        debugWarn("[mfe:fragment-api] section patch skipped", {
+        debugWarn("[mfe:fragment-api] scope patch skipped", {
           cycleId,
           key: patch.key,
           selector: patch.selector,
@@ -745,8 +773,8 @@ async function requestRenderedFragmentsDatastar({
       htmlLen: (patch.elements || "").length,
       updated: appliedCount,
     });
-    if (isNestedSectionReplaceRisk && appliedCount > 0) {
-      debugInfo("[mfe:fragment-api] section patch applied", {
+    if (isNestedScopeReplaceRisk && appliedCount > 0) {
+      debugInfo("[mfe:fragment-api] scope patch applied", {
         cycleId,
         key: patch.key,
         selector: patch.selector,
