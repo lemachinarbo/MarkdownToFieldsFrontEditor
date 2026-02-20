@@ -1,5 +1,8 @@
 # Changelog
 
+## V0.5.1
+- Fixed the inline editor staying open when the user jumped to open another editor.
+
 ## V0.5.0
 
 Major change: preview system rewritten.

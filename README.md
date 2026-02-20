@@ -34,6 +34,9 @@ Click breadcrumbs to edit parent sections, subsections oor container fields.
 
 The editor respects your markdown text and formatting. For example, if you markdown has a `<br>` we never transform it into a new line, we keep it as is. 
 
+### Image picker
+
+Double click images to open the image picker and select a new one from your MarkdownToFields image folder. The markdown will be updated with the new image path.
 
 ## Install
 
@@ -45,15 +48,20 @@ The editor respects your markdown text and formatting. For example, if you markd
 
 ## Define editable zones in your template
 
-Once installed, all you need to do is to define in your templates the editable zones using the same tags you have in your markdown content. For example, if you have a tag field `<!-- title -->` in your markdown, you can render it in your template like this:
+When you render a field using html (e.g. `{$content->title->html}`), the editor can automatically detect it and make it editable.
+
+But if you render it using `->text` or changing the HTML, rollovers won't appear. In that case, you need to define the editable zones manually in your templates.
+
+The same happens with sections, subsections and containers. You need to define the editable zones manually using `data-mfe` attributes:
+
 
 ```html
-<div data-mfe="title">
-  <?= $content->title->html ?>
+<div data-mfe="mysection">
+  <?= $content->mysection->html ?>
 </div>
 ```
 
-## Define section/subsection/fields
+## Nesting section/subsection/fields
 
 When nesting, its recommended to add the whole path in the `data-mfe` attribute, so the editor can properly resolve the identity of each field. 
 
@@ -98,6 +106,25 @@ Template:
 > Note: Its possible to use shorthand like `data-mfe="right"` instead of the whole path `data-mfe="columns/right"`, but it can lead to identity resolution issues if there are multiple fields with the same name.
 
 And thats it. You can now edit the content directly on the page by double-clicking the defined zones. The changes will be saved to your markdown file and reflected on the page immediately.
+
+
+
+
+### Live preview behavior with nested sections and fields
+
+When you create an editable zone that also contains other editable zones:
+
+```html
+<div data-mfe="columns">
+  <div>
+    <?= $content->columns->title->html ?>
+  </div>
+</div>
+```
+
+If you edit the section in teh editor the live preview, will skips replacing the entire section, and will only updated the nested child zones. This does not mean that the section content isn't saved to the markdown—it is—but the preview skips it to avoid breaking the nested zones.
+
+> Note: We plan to improve the preview so it works seamlessly with nested sections in the future. For now, just hit the refresh button after editing a section with nested zones to see the changes.
 
 
 ### Rendering the same content twice

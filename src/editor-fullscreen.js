@@ -2556,6 +2556,35 @@ export function openFullscreenEditorForElement(target) {
   const payload = getPayloadFromElement(target);
   if (!payload) return;
   updateBreadcrumbAnchorFromPayload(payload);
+
+  // Check if this target is already being edited inline
+  // If so, user is just trying to refocus inline editor, not switch to fullscreen
+  if (target.classList.contains("mfe-inline-active")) {
+    return;
+  }
+
+  // Check if inline editor is open on a DIFFERENT element
+  const inlineEditorElement = document.querySelector(".mfe-inline-editor");
+  const inlineActive = window.mfeInlineEditorActive;
+  if (inlineEditorElement && inlineActive) {
+    // Close inline editor - its close handler will prompt about unsaved changes if needed
+    const closeBtn = document
+      .querySelector(".mfe-inline-toolbar")
+      ?.querySelector(".mfe-inline-close");
+    if (closeBtn) closeBtn.click();
+    // Wait for close to complete, then verify it actually closed
+    setTimeout(() => {
+      const stillOpen =
+        document.querySelector(".mfe-inline-editor") &&
+        window.mfeInlineEditorActive;
+      if (stillOpen) {
+        return; // User canceled unsaved changes dialog, respect their choice
+      }
+      openFullscreenEditorForElement(target);
+    }, 100);
+    return;
+  }
+
   const forceNewWindow =
     payload.fieldScope === "section" || payload.fieldScope === "subsection";
   if (forceNewWindow) {

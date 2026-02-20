@@ -9,6 +9,7 @@
 Rule: never trade determinism for convenience, even for “temporary” fixes.
 
 # Todo
+- How to make nested fields live preview available? 
 - Image picker:
   - How it sort the images?
   - It loads them full resolution? we need a prebatch thumb.

@@ -43,6 +43,7 @@ let activeFieldName = null;
 let activeFieldType = null;
 let activeFieldScope = "field";
 let activeFieldSection = "";
+let isClosingInlineEditor = false;
 let toolbarEl = null;
 let toolbarStatusEl = null;
 let toolbarCloseBtn = null;
@@ -1281,10 +1282,26 @@ async function openInlineEditorFromPayload(payload) {
   const el = payload.element;
   if (activeTarget === el && activeEditor) return;
 
+  // Check if fullscreen editor is open
+  const fullscreenOpen = document.body.classList.contains(
+    "mfe-view-fullscreen",
+  );
+  if (fullscreenOpen) {
+    // Close fullscreen editor - its close handler will prompt about unsaved changes if needed
+    const closeBtn = document.querySelector(".mfe-window-close-btn");
+    if (closeBtn) closeBtn.click();
+    // Wait for close to complete, then verify it actually closed
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const stillOpen = document.body.classList.contains("mfe-view-fullscreen");
+    if (stillOpen) {
+      return; // User canceled unsaved changes dialog, respect their choice
+    }
+  }
+
   if (activeEditor) {
     const closed = await closeInlineEditor({
       saveOnClose: false,
-      promptOnClose: false,
+      promptOnClose: true, // Show unsaved changes prompt
       keepToolbar: true,
       persistDraft: true,
     });
@@ -1350,6 +1367,8 @@ async function openInlineEditorFromPayload(payload) {
 
   createInlineToolbar();
 
+  window.mfeInlineEditorActive = true;
+
   const editor = activeEditor;
   setTimeout(() => editor?.view?.focus(), 0);
 }
@@ -1376,7 +1395,16 @@ function closeInlineEditor({
   keepToolbar = false,
   persistDraft = false,
 } = {}) {
-  if (!activeEditor || !activeTarget) return Promise.resolve(true);
+  if (!activeEditor || !activeTarget) {
+    return Promise.resolve(true);
+  }
+
+  if (isClosingInlineEditor) {
+    return Promise.resolve(false);
+  }
+
+  isClosingInlineEditor = true;
+  window.mfeInlineEditorActive = false;
 
   const target = activeTarget;
   const fieldId = activeFieldId;
@@ -1395,6 +1423,7 @@ function closeInlineEditor({
     activeFieldSection = "";
     activeFieldId = null;
     dirty = false;
+    isClosingInlineEditor = false;
 
     if (!keepToolbar) {
       if (toolbarEl) {
@@ -1416,6 +1445,9 @@ function closeInlineEditor({
   };
 
   if (promptOnClose && !confirmDiscardChanges()) {
+    // User canceled, restore state
+    isClosingInlineEditor = false;
+    window.mfeInlineEditorActive = true;
     return Promise.resolve(false);
   }
 
