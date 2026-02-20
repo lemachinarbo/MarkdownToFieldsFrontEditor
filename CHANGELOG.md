@@ -1,5 +1,9 @@
 # Changelog
 
+## V0.5.3
+- Fixed multilingual fragment preview drift by switching to localized URL resolution: `page.url(language,http)` → `page.localHttpUrl(language)` → `pages.getPath(language)+host` → request `renderPath` fallback.
+- Removed forced query-language override.
+
 ## V0.5.2
 - Fixed marker persistence regression after save: active editor now rehydrates from canonical markdown, not fragment HTML.
 - Field saves keep stripping field markers deterministically; section/subsection saves keep markers intact.

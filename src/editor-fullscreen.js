@@ -578,6 +578,11 @@ async function requestRenderedFragmentsDatastar({
   const formData = new FormData();
   formData.append("pageId", String(pageId || "0"));
   if (lang) formData.append("lang", String(lang));
+  const renderPath =
+    typeof window !== "undefined" && window.location
+      ? `${window.location.pathname || ""}${window.location.search || ""}`
+      : "";
+  if (renderPath) formData.append("renderPath", renderPath);
   formData.append("transport", "datastar");
   formData.append("keys", JSON.stringify(keys || []));
   formData.append("mountTargets", JSON.stringify(mountTargets || {}));
