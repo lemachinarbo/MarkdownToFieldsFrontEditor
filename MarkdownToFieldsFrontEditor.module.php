@@ -428,11 +428,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         $displayHtml = $f->html;
                         $wrapper = '<div class="fe-editable md-edit" data-md-scope="field" data-mfe-scope="field" data-md-name="' . $safeAttr . '" data-mfe-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-mfe-section="' . $safeSection . '" data-mfe-source="' . $safeSourceKey . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
                         
-                        // Find original HTML in output and replace with wrapped version
-                        $pos = stripos($rebuilt, $originalHtml);
-                        if ($pos !== false) {
-                            $rebuilt = substr_replace($rebuilt, $wrapper, $pos, strlen($originalHtml));
-                        }
+                        $scopeKey = $sectionName !== '' ? (string)$sectionName : '';
+                        $rebuilt = $this->replaceFirstScopedHtmlMatch(
+                            $rebuilt,
+                            $originalHtml,
+                            $wrapper,
+                            $scopeKey
+                        );
                     }
                 }
             }
@@ -463,10 +465,15 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                                 $displayHtml = $f->html;
                                 $wrapper = '<div class="fe-editable md-edit" data-md-scope="field" data-mfe-scope="field" data-md-name="' . $safeAttr . '" data-mfe-name="' . $safeAttr . '" data-md-section="' . $safeSection . '" data-mfe-section="' . $safeSection . '" data-md-subsection="' . $safeSubsection . '" data-mfe-subsection="' . $safeSubsection . '" data-mfe-source="' . $safeSourceKey . '" data-field-type="' . $safeType . '" data-page="' . $page->id . '" data-markdown="' . $safeMarkdown . '" data-markdown-b64="' . $safeMarkdownB64 . '">' . $displayHtml . '</div>';
                                 
-                                $pos = stripos($rebuilt, $originalHtml);
-                                if ($pos !== false) {
-                                    $rebuilt = substr_replace($rebuilt, $wrapper, $pos, strlen($originalHtml));
-                                }
+                                $scopeKey = $sectionName !== ''
+                                    ? (string)$sectionName . '/' . (string)$subsectionName
+                                    : '';
+                                $rebuilt = $this->replaceFirstScopedHtmlMatch(
+                                    $rebuilt,
+                                    $originalHtml,
+                                    $wrapper,
+                                    $scopeKey
+                                );
                             }
                         }
                     }
@@ -1398,6 +1405,98 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             return 'bind';
         }
         return 'tag';
+    }
+
+    protected function replaceFirstScopedHtmlMatch(
+        string $html,
+        string $needle,
+        string $replacement,
+        string $scopeKey
+    ): string {
+        if ($needle === '') return $html;
+
+        $range = $this->findDataMfeHostRange($html, $scopeKey);
+        if ($range) {
+            $replaced = $this->replaceFirstMatchInRange(
+                $html,
+                $needle,
+                $replacement,
+                $range['start'],
+                $range['end']
+            );
+            if ($replaced !== null) return $replaced;
+        }
+
+        $count = substr_count($html, $needle);
+        if ($count === 1) {
+            $pos = strpos($html, $needle);
+            if ($pos !== false) {
+                return substr_replace($html, $replacement, $pos, strlen($needle));
+            }
+        } elseif ($count > 1) {
+            $this->logDebug("WRAP_AMBIGUOUS reason=multiple_matches scope='{$scopeKey}' count={$count}");
+        }
+
+        return $html;
+    }
+
+    protected function replaceFirstMatchInRange(
+        string $html,
+        string $needle,
+        string $replacement,
+        int $start,
+        int $end
+    ): ?string {
+        if ($end <= $start) return null;
+        $segment = substr($html, $start, $end - $start);
+        $count = substr_count($segment, $needle);
+        if ($count !== 1) {
+            if ($count > 1) {
+                $this->logDebug("WRAP_AMBIGUOUS reason=multiple_matches_in_scope count={$count}");
+            }
+            return null;
+        }
+        $pos = strpos($segment, $needle);
+        if ($pos === false) return null;
+        $absolute = $start + $pos;
+        return substr_replace($html, $replacement, $absolute, strlen($needle));
+    }
+
+    protected function findDataMfeHostRange(string $html, string $dataMfeValue): ?array {
+        $value = trim($dataMfeValue);
+        if ($value === '') return null;
+        $pattern = '/<([a-z0-9]+)\b[^>]*\bdata-mfe="' . preg_quote($value, '/') . '"[^>]*>/i';
+        if (!preg_match($pattern, $html, $match, PREG_OFFSET_CAPTURE)) {
+            return null;
+        }
+        $tag = strtolower((string)$match[1][0]);
+        $start = (int)$match[0][1];
+        $openEnd = $start + strlen((string)$match[0][0]);
+        $closeStart = $this->findMatchingClosingTag($html, $openEnd, $tag);
+        if ($closeStart === null) return null;
+        return ['start' => $openEnd, 'end' => $closeStart];
+    }
+
+    protected function findMatchingClosingTag(string $html, int $offset, string $tag): ?int {
+        $pattern = '/<\s*\/?\s*' . preg_quote($tag, '/') . '\b[^>]*>/i';
+        $depth = 1;
+        $pos = $offset;
+        while (preg_match($pattern, $html, $match, PREG_OFFSET_CAPTURE, $pos)) {
+            $token = (string)$match[0][0];
+            $tokenPos = (int)$match[0][1];
+            $pos = $tokenPos + strlen($token);
+            $isClosing = preg_match('/^<\s*\//', $token) === 1;
+            $isSelfClosing = preg_match('/\/\s*>$/', $token) === 1;
+            if ($isClosing) {
+                $depth -= 1;
+                if ($depth === 0) return $tokenPos;
+                continue;
+            }
+            if (!$isSelfClosing) {
+                $depth += 1;
+            }
+        }
+        return null;
     }
 
     protected function buildSectionsIndex(?\ProcessWire\Page $page): array {

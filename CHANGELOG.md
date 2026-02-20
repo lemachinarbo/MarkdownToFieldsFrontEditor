@@ -5,6 +5,7 @@
 - Section preview now defaults to strict full-section replace rather than skipping (with deterministic safety checks).
 - Fixed fragment graph parity by excluding `.fe-editable[data-mfe-source]` wrappers from mirror graph-key collection.
 - Settings got simpler, and new safe parent replace toggle is now in the module UI.
+- Fixed auto-wrap. Now scopes to the correct section/subsection host to avoid mis-wrapping repeated content.
 
 ## V0.5.0
 

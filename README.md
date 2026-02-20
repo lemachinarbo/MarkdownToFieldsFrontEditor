@@ -111,38 +111,40 @@ And thats it. You can now edit the content directly on the page by double-clicki
 
 ### Live preview behavior with nested sections and fields
 
-If one editable area contains other editable areas, preview tries hard to not break your page.
+## Live preview behavior with nested sections and fields
 
-Example:
+When you use the editor to edit an area that contains other editable areas:
 
 ```html
-<div data-mfe="columns">
+<!-- section columns is editable -->
+<div data-mfe="columns"> 
   <div>
+    <!-- But also the title is set as a editable zone -->
     <?= $content->columns->title->html ?>
   </div>
 </div>
 ```
 
-When you save the parent (section/subsection), the editor checks if replacing that whole block could remove inner editable zones.
+Live preview tries hard to keep your layout intact with the new content. But when nesting them, you create a situation where replacing the whole parent block raises a question: what should happen with the inner editable content?
 
-- If parent replacement is safe, it can replace the full parent block.
-- If parent replacement is risky, it skips parent replace and updates children only.
+So in those cases, when you save a parent (section/subsection), the editor checks if replacing the whole block is safe:
 
+* **If safe →** full parent block gets replaced. Content and HTML update, **but inner editable zones won’t be clickable** until refresh.
+* **If risky →** parent replace is skipped and only children are updated, which means the user won’t see their changes live. Content is saved, but this temporary preview doesn’t reflect final output.
 
-You can change this in module settings:
+You can control this in module settings:
 
-- **Modules → MarkdownToFieldsFrontEditor → Enable Safe Parent Live Preview Replacement**
+**Modules → MarkdownToFieldsFrontEditor → Enable Safe Parent Live Preview Replacement**
 
 If you turn it off, risky parent replacement is always skipped.
-That is safer for nested zones, but parent-level visual changes may appear only after refresh.
 
-When enable full parent replace only runs when all are true:
+Full parent replacement only runs when all of these are true:
 
-- No inline editor is open
-- No fullscreen unsaved changes exist
-- No unsaved child drafts exist inside that parent
+* no inline editor open
+* no fullscreen unsaved changes
+* no unsaved child drafts inside that parent
 
-If any of those checks fails, it falls back to safe mode: keep the parent as-is and patch children only.
+If any check fails, it falls back to safe mode: keep parent as-is and patch children only.
 
 
 ### Rendering the same content twice
