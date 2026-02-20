@@ -94,6 +94,11 @@ function debugWarn(...args) {
   console.warn(...args);
 }
 
+function debugInfo(...args) {
+  if (!isDevMode()) return;
+  console.info(...args);
+}
+
 function debugTable(rows) {
   if (!isDevMode()) return;
   if (!console.table) return;
@@ -534,6 +539,16 @@ function isDescendantKey(child, parent) {
   return false;
 }
 
+function hasDescendantScopedDrafts(sectionKey) {
+  if (!sectionKey || !sectionKey.startsWith("section:")) return false;
+  for (const scopedKey of draftMarkdownByScopedKey.keys()) {
+    if (isDescendantKey(scopedKey, sectionKey)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function requestRenderedFragmentsDatastar({
   pageId,
   lang,
@@ -637,6 +652,8 @@ async function requestRenderedFragmentsDatastar({
 
   queued.sort((a, b) => keyDepth(a.key) - keyDepth(b.key));
   const appliedParents = new Set();
+  const strictSectionReplace =
+    window.MarkdownFrontEditorConfig?.strictSectionReplace !== false;
   queued.forEach((patch) => {
     for (const parent of appliedParents) {
       if (isDescendantKey(patch.key, parent)) {
@@ -652,7 +669,7 @@ async function requestRenderedFragmentsDatastar({
     const candidateNodes = Array.from(
       document.querySelectorAll(patch.selector || ""),
     );
-    if (
+    const isNestedSectionReplaceRisk =
       patch.key?.startsWith("section:") &&
       candidateNodes.some(
         (n) =>
@@ -660,19 +677,41 @@ async function requestRenderedFragmentsDatastar({
           (n.classList?.contains("fe-editable") ||
             n.querySelector?.(".fe-editable")),
       ) &&
-      !patchHtml.includes("fe-editable")
-    ) {
-      if (!skippedSectionKeys.includes(patch.key)) {
-        skippedSectionKeys.push(patch.key);
-      }
-      debugWarn(
-        "[mfe:fragment-api] section patch skipped (would drop editable wrappers)",
-        {
+      !patchHtml.includes("fe-editable");
+    if (isNestedSectionReplaceRisk) {
+      if (strictSectionReplace) {
+        const hasInlineOpen = window.mfeInlineEditorActive === true;
+        const hasFullscreenUnsaved = hasPendingUnsavedChanges();
+        const hasDescendantDrafts = hasDescendantScopedDrafts(patch.key);
+        const canStrictReplace =
+          !hasInlineOpen && !hasFullscreenUnsaved && !hasDescendantDrafts;
+        if (!canStrictReplace) {
+          if (!skippedSectionKeys.includes(patch.key)) {
+            skippedSectionKeys.push(patch.key);
+          }
+          debugWarn("[mfe:fragment-api] section patch skipped", {
+            cycleId,
+            key: patch.key,
+            selector: patch.selector,
+            reason: "unsafe-state",
+            hasInlineOpen,
+            hasFullscreenUnsaved,
+            hasDescendantDrafts,
+          });
+          return;
+        }
+      } else {
+        if (!skippedSectionKeys.includes(patch.key)) {
+          skippedSectionKeys.push(patch.key);
+        }
+        debugWarn("[mfe:fragment-api] section patch skipped", {
+          cycleId,
           key: patch.key,
           selector: patch.selector,
-        },
-      );
-      return;
+          reason: "strict-disabled",
+        });
+        return;
+      }
     }
     const appliedCount = applyDatastarPatchElement({
       selector: patch.selector || "",
@@ -699,6 +738,15 @@ async function requestRenderedFragmentsDatastar({
       htmlLen: (patch.elements || "").length,
       updated: appliedCount,
     });
+    if (isNestedSectionReplaceRisk && appliedCount > 0) {
+      debugInfo("[mfe:fragment-api] section patch applied", {
+        cycleId,
+        key: patch.key,
+        selector: patch.selector,
+        updated: appliedCount,
+        strictSectionReplace,
+      });
+    }
   });
 
   const result = {

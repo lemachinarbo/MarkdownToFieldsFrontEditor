@@ -9,6 +9,9 @@
 Rule: never trade determinism for convenience, even for “temporary” fixes.
 
 # Todo
+
+- Inline editor and fullscreen editor have logic duplicated?
+- Add Draft feature
 - How to make nested fields live preview available? 
 - Image picker:
   - How it sort the images?

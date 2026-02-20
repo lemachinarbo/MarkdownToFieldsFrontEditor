@@ -122,9 +122,33 @@ When you create an editable zone that also contains other editable zones:
 </div>
 ```
 
-If you edit the section in teh editor the live preview, will skips replacing the entire section, and will only updated the nested child zones. This does not mean that the section content isn't saved to the markdown—it is—but the preview skips it to avoid breaking the nested zones.
+If you edit the section in the editor, live preview may skip replacing the whole section and only update nested child zones. This prevents destroying nested editable mounts during preview.
 
-> Note: We plan to improve the preview so it works seamlessly with nested sections in the future. For now, just hit the refresh button after editing a section with nested zones to see the changes.
+Full section rerender now uses strict mode by default.
+
+You can still configure it explicitly:
+
+```js
+window.MarkdownFrontEditorConfig = {
+  strictSectionReplace: true,
+};
+```
+
+To disable and return to legacy safe-skip behavior:
+
+```js
+window.MarkdownFrontEditorConfig = {
+  strictSectionReplace: false,
+};
+```
+
+In strict mode, whole-section replace runs only when all are true:
+
+- No inline editor is open
+- No fullscreen unsaved changes exist
+- No descendant scoped drafts exist under that section
+
+If any check fails, it deterministically falls back to the safe behavior (skip whole-section replacement).
 
 
 ### Rendering the same content twice
