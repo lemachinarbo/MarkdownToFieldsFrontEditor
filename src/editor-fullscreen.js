@@ -262,6 +262,9 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
         mountTargets,
         graphChecksum: lastCompileReport?.graphChecksum || "",
         graphNodeCount: Number(lastCompileReport?.graphNodeCount || 0),
+        graphKeys: Array.isArray(lastCompileReport?.graphKeys)
+          ? lastCompileReport.graphKeys
+          : [],
       });
       if (isDevMode()) {
         const appliedKeys = Array.from(
@@ -556,6 +559,7 @@ async function requestRenderedFragmentsDatastar({
   mountTargets,
   graphChecksum,
   graphNodeCount,
+  graphKeys,
 }) {
   const cycleId = ++patchCycleCounter;
   debugWarn("[mfe:fragment-api] request", {
@@ -575,6 +579,9 @@ async function requestRenderedFragmentsDatastar({
   if (graphChecksum) formData.append("graphChecksum", String(graphChecksum));
   if (Number.isFinite(graphNodeCount) && graphNodeCount > 0) {
     formData.append("graphNodeCount", String(graphNodeCount));
+  }
+  if (Array.isArray(graphKeys) && graphKeys.length > 0) {
+    formData.append("graphKeys", JSON.stringify(graphKeys));
   }
   if (csrf) formData.append(csrf.name, csrf.value);
 

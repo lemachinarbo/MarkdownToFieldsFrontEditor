@@ -1053,6 +1053,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         (string)$mdName,
                         (string)$sectionName,
                         (string)($entry['subsection'] ?? ''),
+                        (string)$oldFieldMarkdown,
                         [
                             'mode' => 'batch',
                             'key' => (string)$key,
@@ -1249,6 +1250,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                     (string)$mdName,
                     (string)($mdSection ?? ''),
                     (string)($mdSubsection ?? ''),
+                    (string)$oldFieldMarkdown,
                     [
                         'mode' => 'single',
                         'scope' => (string)$mdScope,
@@ -1734,6 +1736,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         string $name,
         string $sectionName = '',
         string $subsectionName = '',
+        ?string $expectedCurrentMarkdown = null,
         array $ctx = []
     ): array {
         $docLen = strlen($document);
@@ -1756,7 +1759,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $scopeNorm,
             $nameNorm,
             $sectionNorm,
-            $subsectionNorm
+            $subsectionNorm,
+            $expectedCurrentMarkdown
         );
         if (($range['status'] ?? '') !== 'ok') {
             $status = ($range['status'] ?? '') === 'ambiguous' ? 'ambiguous' : 'missing';
@@ -1797,7 +1801,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         string $scope,
         string $name,
         string $sectionName,
-        string $subsectionName
+        string $subsectionName,
+        ?string $expectedCurrentMarkdown = null
     ): array {
         $docLen = strlen($document);
 
@@ -1876,7 +1881,73 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             }
         }
 
+        if ($expectedCurrentMarkdown !== null && $expectedCurrentMarkdown !== '') {
+            $anchored = $this->resolveAnchoredFieldRangeByExpectedMarkdown(
+                $document,
+                $start,
+                $end,
+                $expectedCurrentMarkdown
+            );
+            if (($anchored['status'] ?? '') !== 'ok') {
+                return $anchored;
+            }
+            $start = (int)$anchored['start'];
+            $end = (int)$anchored['end'];
+        }
+
         return ['status' => 'ok', 'start' => $start, 'end' => $end];
+    }
+
+    protected function resolveAnchoredFieldRangeByExpectedMarkdown(
+        string $document,
+        int $start,
+        int $end,
+        string $expectedMarkdown
+    ): array {
+        if ($end <= $start) {
+            return ['status' => 'missing', 'reason' => 'field_expected_invalid_parent_range'];
+        }
+
+        $scanStart = $start;
+        while ($scanStart < $end) {
+            $ch = $document[$scanStart] ?? '';
+            if ($ch === " " || $ch === "\t" || $ch === "\r" || $ch === "\n") {
+                $scanStart += 1;
+                continue;
+            }
+            break;
+        }
+
+        $normalizedExpected = str_replace(["\r\n", "\r"], "\n", $expectedMarkdown);
+        $window = substr($document, $scanStart, max(0, $end - $scanStart));
+        $windowNl = $this->detectMarkdownLineEnding($window);
+
+        $variants = [$expectedMarkdown, $normalizedExpected];
+        if ($windowNl !== "\n") {
+            $variants[] = str_replace("\n", $windowNl, $normalizedExpected);
+        }
+        $variants = array_values(array_unique(array_filter($variants, static function ($v) {
+            return is_string($v) && $v !== '';
+        })));
+
+        $matches = [];
+        foreach ($variants as $variant) {
+            $len = strlen($variant);
+            if ($len === 0) continue;
+            if ($scanStart + $len > $end) continue;
+            if (substr($document, $scanStart, $len) === $variant) {
+                $matches[] = ['start' => $scanStart, 'end' => $scanStart + $len, 'len' => $len];
+            }
+        }
+
+        if (count($matches) === 1) {
+            return ['status' => 'ok', 'start' => $matches[0]['start'], 'end' => $matches[0]['end']];
+        }
+        if (count($matches) > 1) {
+            return ['status' => 'ambiguous', 'reason' => 'field_expected_anchored_ambiguous', 'markers' => count($matches)];
+        }
+
+        return ['status' => 'missing', 'reason' => 'field_expected_not_anchored'];
     }
 
     protected function resolveSectionBlockRange(string $document, string $sectionName): array {
@@ -2237,6 +2308,22 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             }
         }
 
+        $oldMarkers = [];
+        foreach ($oldLines as $line) {
+            if (preg_match('/^([ \t]{0,3})([*+-])(\s+)(.*)$/', $line, $match)) {
+                $oldMarkers[] = $match[2];
+            }
+        }
+        $uniqueOldMarkers = array_values(array_unique($oldMarkers));
+        if (count($uniqueOldMarkers) === 1) {
+            $preferredMarker = $uniqueOldMarkers[0];
+            foreach ($newLines as $index => $line) {
+                if (preg_match('/^([ \t]{0,3})([*+-])(\s+)(.*)$/', $line, $match)) {
+                    $newLines[$index] = $match[1] . $preferredMarker . $match[3] . $match[4];
+                }
+            }
+        }
+
         $joined = implode("\n", $newLines);
         if ($oldNl !== "\n") {
             $joined = str_replace("\n", $oldNl, $joined);
@@ -2402,15 +2489,15 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             if (!$node instanceof \DOMElement) continue;
             $raw = (string)$node->getAttribute('data-mfe');
             $stampedKey = trim((string)$node->getAttribute('data-mfe-key'));
-            if ($this->isCanonicalScopedKey($stampedKey)) {
-                $recomputed = $this->resolveRenderedMountKeyWithContext($raw, $node, $lookup);
+            $recomputed = $this->resolveRenderedMountKeyWithContext($raw, $node, $lookup);
+            if ($this->isCanonicalScopedKey($stampedKey) && $recomputed !== $stampedKey) {
                 if ($recomputed === '') {
                     $this->logInfo(sprintf(
                         "FRAGMENTS_STAMP_ERROR reason=non_recomputable key='%s' attr='data-mfe' value='%s'",
                         $stampedKey,
                         str_replace(["\n", "\r"], ' ', trim($raw))
                     ));
-                } elseif ($recomputed !== $stampedKey) {
+                } else {
                     $this->logInfo(sprintf(
                         "FRAGMENTS_STAMP_WARN reason=mismatch key='%s' recomputed='%s' attr='data-mfe' value='%s'",
                         $stampedKey,
@@ -2418,10 +2505,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         str_replace(["\n", "\r"], ' ', trim($raw))
                     ));
                 }
-                $key = $stampedKey;
-            } else {
-                $key = $this->resolveRenderedMountKeyWithContext($raw, $node, $lookup);
             }
+            $key = $recomputed;
             if ($key !== '' && !isset($nodeByKey[$key])) {
                 $nodeByKey[$key] = $node;
             }
@@ -2432,17 +2517,19 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         foreach ($xpath->query('//*[@data-mfe-source]') as $node) {
             if (!$node instanceof \DOMElement) continue;
+            $classAttr = ' ' . preg_replace('/\s+/', ' ', trim((string)$node->getAttribute('class'))) . ' ';
+            if (strpos($classAttr, ' fe-editable ') !== false) continue;
             $raw = (string)$node->getAttribute('data-mfe-source');
             $stampedKey = trim((string)$node->getAttribute('data-mfe-key'));
-            if ($this->isCanonicalScopedKey($stampedKey)) {
-                $recomputed = $this->resolveRenderedMountKeyWithContext($raw, $node, $lookup);
+            $recomputed = $this->resolveRenderedMountKeyWithContext($raw, $node, $lookup);
+            if ($this->isCanonicalScopedKey($stampedKey) && $recomputed !== $stampedKey) {
                 if ($recomputed === '') {
                     $this->logInfo(sprintf(
                         "FRAGMENTS_STAMP_ERROR reason=non_recomputable key='%s' attr='data-mfe-source' value='%s'",
                         $stampedKey,
                         str_replace(["\n", "\r"], ' ', trim($raw))
                     ));
-                } elseif ($recomputed !== $stampedKey) {
+                } else {
                     $this->logInfo(sprintf(
                         "FRAGMENTS_STAMP_WARN reason=mismatch key='%s' recomputed='%s' attr='data-mfe-source' value='%s'",
                         $stampedKey,
@@ -2450,13 +2537,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         str_replace(["\n", "\r"], ' ', trim($raw))
                     ));
                 }
-                $key = $stampedKey;
-            } else {
-                $key = $this->resolveRenderedMountKeyWithContext($raw, $node, $lookup);
-                if ($key === '') {
-                    $key = trim($raw);
-                }
             }
+            $key = $recomputed;
             if ($key !== '' && !$this->isCanonicalScopedKey($key)) {
                 $key = '';
             }
@@ -2699,6 +2781,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'graphChecksum' => $checksum,
             'graphNodeCount' => count($normalized),
+            'graphKeys' => $normalized,
         ];
     }
 

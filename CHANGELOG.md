@@ -3,6 +3,7 @@
 ## V0.5.1
 - Fixed the inline editor staying open when the user jumped to open another editor.
 - Section preview now defaults to strict full-section replace rather than skipping (with deterministic safety checks).
+- Fixed fragment graph parity by excluding `.fe-editable[data-mfe-source]` wrappers from mirror graph-key collection.
 
 ## V0.5.0
 

@@ -92,12 +92,18 @@ function resolveDataMfeCandidates(rawValue, lookup) {
     const parts = splitPath(path.replace(/:/g, "/"));
     if (parts.length < 2) return [];
     if (parts.length === 2) out.add(`subsection:${parts[0]}:${parts[1]}`);
-    if (parts.length >= 3) out.add(`subsection:${parts[0]}:${parts[1]}:${parts[2]}`);
+    if (parts.length >= 3)
+      out.add(`subsection:${parts[0]}:${parts[1]}:${parts[2]}`);
     return Array.from(out);
   }
 
-  const { sectionNames, subsectionKeys, fieldSectionKeys, fieldSubsectionKeys, fieldTopLevelNames } =
-    lookup || buildSemanticLookup();
+  const {
+    sectionNames,
+    subsectionKeys,
+    fieldSectionKeys,
+    fieldSubsectionKeys,
+    fieldTopLevelNames,
+  } = lookup || buildSemanticLookup();
 
   if (pathParts.length === 1) {
     const a = pathParts[0];
@@ -116,7 +122,8 @@ function resolveDataMfeCandidates(rawValue, lookup) {
   if (pathParts.length >= 3) {
     const [a, b, c] = pathParts;
     const fieldSubKey = `${a}/${b}/${c}`;
-    if (fieldSubsectionKeys.has(fieldSubKey)) out.add(`subsection:${a}:${b}:${c}`);
+    if (fieldSubsectionKeys.has(fieldSubKey))
+      out.add(`subsection:${a}:${b}:${c}`);
     return Array.from(out);
   }
   return Array.from(out);
@@ -151,7 +158,11 @@ function inferContextFromAncestors(host, lookup) {
 }
 
 function resolveDataMfeKeyWithContext(rawValue, host, lookup) {
-  const candidates = resolveDataMfeCandidatesWithContext(rawValue, host, lookup);
+  const candidates = resolveDataMfeCandidatesWithContext(
+    rawValue,
+    host,
+    lookup,
+  );
   return candidates.length === 1 ? candidates[0] : "";
 }
 
@@ -167,10 +178,8 @@ function resolveDataMfeCandidatesWithContext(rawValue, host, lookup) {
   const ctx = inferContextFromAncestors(host, lookup);
   if (!ctx?.section) return [];
 
-  const {
-    fieldSectionKeys,
-    fieldSubsectionKeys,
-  } = lookup || buildSemanticLookup();
+  const { fieldSectionKeys, fieldSubsectionKeys } =
+    lookup || buildSemanticLookup();
   const out = new Set();
 
   if (parts.length === 1) {
@@ -359,7 +368,8 @@ function collectReadOnlyHostMounts(root, mounts, semanticLookup) {
     if (!key.startsWith("section:")) return;
 
     // Avoid replacing structural/mixed hosts that contain nested editable scopes.
-    if (host.querySelector("[data-mfe]") || host.querySelector(".fe-editable")) return;
+    if (host.querySelector("[data-mfe]") || host.querySelector(".fe-editable"))
+      return;
 
     if (!mounts.has(key)) {
       mounts.set(key, host);
@@ -468,31 +478,45 @@ export function compileMountTargetsByKey({
     fingerprint: "",
     graphChecksum: "",
     graphNodeCount: 0,
+    graphKeys: [],
   };
   const ambiguousSet = new Set();
   const unresolvedSet = new Set();
   const graphKeySet = new Set();
-  const keyToSigSet = new Map();
+  const keyToCanonicalSigSet = new Map();
+  const keyToMirrorSigSet = new Map();
   const keyIdToSig = new Map();
+  const keyToSelectorSet = new Map();
   const devDiagnostics = isDevDiagnosticsEnabled();
 
-  const addTarget = (key, el, mode = "inner") => {
+  const addTarget = (key, el, mode = "inner", origin = "canonical") => {
     if (!el) return;
     if (!key) {
       clearCanonicalIdentityIfPresent(el);
       return;
     }
     report.nodes += 1;
-    graphKeySet.add(key);
+    if (origin !== "editable") {
+      graphKeySet.add(key);
+    }
     const sig = buildMountSignature(el, key);
     stampCanonicalIdentity(el, key, sig);
     if (devDiagnostics) {
-      const currentByKey = keyToSigSet.get(key) || new Map();
+      const sigMap =
+        origin === "mirror" ? keyToMirrorSigSet : keyToCanonicalSigSet;
+      const currentByKey = sigMap.get(key) || new Map();
       currentByKey.set(sig, el);
-      keyToSigSet.set(key, currentByKey);
+      sigMap.set(key, currentByKey);
     }
     if (!keySet.has(key)) return;
     const keyId = ensureMountKeyId(el, key, sig);
+    const selector = `[data-mfe-key-id="${keyId}"]`;
+    const selectorSet = keyToSelectorSet.get(key) || new Set();
+    if (selectorSet.has(selector)) {
+      return;
+    }
+    selectorSet.add(selector);
+    keyToSelectorSet.set(key, selectorSet);
     if (devDiagnostics) {
       const seenSig = keyIdToSig.get(keyId);
       if (seenSig && seenSig.sig !== sig) {
@@ -509,7 +533,7 @@ export function compileMountTargetsByKey({
     }
     if (!byKey[key]) byKey[key] = [];
     byKey[key].push({
-      selector: `[data-mfe-key-id="${keyId}"]`,
+      selector,
       mode,
     });
   };
@@ -522,7 +546,7 @@ export function compileMountTargetsByKey({
       getMetaAttr(el, "subsection") || "",
       getMetaAttr(el, "name") || "",
     );
-    addTarget(key, el, "inner");
+    addTarget(key, el, "inner", "editable");
   });
 
   root.querySelectorAll("[data-mfe]").forEach((el) => {
@@ -530,14 +554,17 @@ export function compileMountTargetsByKey({
     const raw = el.getAttribute("data-mfe") || "";
     const stamped = (el.getAttribute("data-mfe-key") || "").trim();
     let candidates = [];
-    if (isCanonicalScopedKey(stamped)) {
-      candidates = [stamped];
-    } else if (stamped && devDiagnostics) {
+    if (stamped && !isCanonicalScopedKey(stamped) && devDiagnostics) {
       throw new Error(
         `[mfe:bind] invalid stamped key on data-mfe node: ${stamped}`,
       );
-    } else {
-      candidates = resolveDataMfeCandidatesWithContext(raw, el, semanticLookup);
+    }
+    candidates = resolveDataMfeCandidatesWithContext(raw, el, semanticLookup);
+    if (
+      isCanonicalScopedKey(stamped) &&
+      !(candidates.length === 1 && candidates[0] === stamped)
+    ) {
+      clearCanonicalIdentityIfPresent(el);
     }
     if (candidates.length !== 1) {
       if (candidates.length > 1) {
@@ -571,18 +598,22 @@ export function compileMountTargetsByKey({
 
   root.querySelectorAll("[data-mfe-source]").forEach((el) => {
     if (el.closest('[data-mfe-window="true"]')) return;
+    if (el.classList?.contains("fe-editable")) return;
     const raw = (el.getAttribute("data-mfe-source") || "").trim();
     if (!raw) return;
     const stamped = (el.getAttribute("data-mfe-key") || "").trim();
     let candidates = [];
-    if (isCanonicalScopedKey(stamped)) {
-      candidates = [stamped];
-    } else if (stamped && devDiagnostics) {
+    if (stamped && !isCanonicalScopedKey(stamped) && devDiagnostics) {
       throw new Error(
         `[mfe:bind] invalid stamped key on data-mfe-source node: ${stamped}`,
       );
-    } else {
-      candidates = resolveDataMfeCandidatesWithContext(raw, el, semanticLookup);
+    }
+    candidates = resolveDataMfeCandidatesWithContext(raw, el, semanticLookup);
+    if (
+      isCanonicalScopedKey(stamped) &&
+      !(candidates.length === 1 && candidates[0] === stamped)
+    ) {
+      clearCanonicalIdentityIfPresent(el);
     }
     if (candidates.length !== 1) {
       if (candidates.length > 1) {
@@ -605,7 +636,7 @@ export function compileMountTargetsByKey({
       return;
     }
     el.removeAttribute("data-mfe-ambiguous");
-    addTarget(candidates[0], el, "inner");
+    addTarget(candidates[0], el, "inner", "mirror");
   });
 
   const fpSource = JSON.stringify({
@@ -615,20 +646,24 @@ export function compileMountTargetsByKey({
   });
   report.fingerprint = `mfe-r-${hashMountKey(fpSource)}`;
   const graphParts = Array.from(graphKeySet).sort();
+  report.graphKeys = graphParts;
   report.graphNodeCount = graphParts.length;
   report.graphChecksum = `mfe-g-${hashMountKey(JSON.stringify(graphParts))}`;
 
   if (devDiagnostics) {
-    keyToSigSet.forEach((sigMap, key) => {
-      if (sigMap.size > 1) {
-        const entries = Array.from(sigMap.entries()).map(([sig, node]) => ({
-          key,
-          sig,
-          node,
-        }));
+    keyToCanonicalSigSet.forEach((canonicalSigMap, key) => {
+      if (canonicalSigMap.size > 1) {
+        const entries = Array.from(canonicalSigMap.entries()).map(
+          ([sig, node]) => ({
+            key,
+            sig,
+            node,
+          }),
+        );
         debugWarn("[mfe:bind] invariant warning key->multiple-sig", {
           key,
-          sigCount: sigMap.size,
+          sigCount: canonicalSigMap.size,
+          mirrorSigCount: (keyToMirrorSigSet.get(key) || new Map()).size,
           entries,
         });
       }
