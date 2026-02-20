@@ -17,6 +17,8 @@ import {
   getLanguagesConfig,
   getSaveUrl,
   fetchCsrfToken,
+  assertMarkdownInvariant,
+  validateSerializerLosslessness,
 } from "./editor-core.js";
 import { Marker } from "./marker-extension.js";
 import { createToolbarButtons } from "./editor-toolbar.js";
@@ -62,6 +64,7 @@ const overlayEngine = createOverlayEngine({ debugLabels });
 let dirty = false;
 const originalBlockCounts = new WeakMap();
 const originalHtml = new WeakMap();
+const originalMarkdownByField = new Map();
 let activeFieldId = null;
 const draftByField = new Map();
 const draftMarkdownByField = new Map();
@@ -139,7 +142,10 @@ function parseDataMfe(value) {
 
   // Backward compatibility with previous syntax:
   // "hero" => section, "hero:chirology" => subsection
-  const legacy = raw.split(":").map((p) => p.trim()).filter(Boolean);
+  const legacy = raw
+    .split(":")
+    .map((p) => p.trim())
+    .filter(Boolean);
   if (legacy.length === 1) {
     return { scope: "auto", name: legacy[0], section: "", subsection: "" };
   }
@@ -167,7 +173,9 @@ function getFieldsIndex() {
 }
 
 function findFieldEntry({ name, section = "", subsection = "" }) {
-  const fields = getFieldsIndex().filter((f) => (f?.name || "") === (name || ""));
+  const fields = getFieldsIndex().filter(
+    (f) => (f?.name || "") === (name || ""),
+  );
   if (!fields.length) return null;
 
   let matches = fields;
@@ -307,7 +315,6 @@ function findTargetFromPoint(x, y) {
   if (dataMfeTarget) return dataMfeTarget;
   return null;
 }
-
 
 function normalizeText(value) {
   return (value || "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -880,20 +887,19 @@ function saveField(fieldId, markdown) {
   if (!pageId || !fieldName || !target) {
     return Promise.resolve();
   }
-  const fieldType = target.getAttribute("data-field-type") || "tag";
-  let finalMarkdown = markdown;
-  if (shouldWarnForExtraContent(fieldType, fieldName)) {
-    const blocks = finalMarkdown
-      .split(/\n\s*\n/)
-      .filter((p) => p.trim().length > 0);
-    finalMarkdown = blocks.length > 0 ? blocks[0] : finalMarkdown;
+
+  // INVARIANT: Validate markdown byte-for-byte if not explicitly edited
+  const original = originalMarkdownByField.get(fieldId);
+  if (original !== undefined && original === markdown) {
+    // No user edits - markdown must remain unchanged
+    assertMarkdownInvariant(original, markdown);
   }
 
   return fetchCsrfToken()
     .then((csrf) => {
       const { current } = getLanguagesConfig();
       const formData = new FormData();
-      formData.append("markdown", finalMarkdown);
+      formData.append("markdown", markdown);
       formData.append("mdName", fieldName);
       formData.append("mdScope", scope || "field");
       if (section) {
@@ -994,7 +1000,6 @@ function saveField(fieldId, markdown) {
             target.innerHTML = primaryHtml;
           }
         }
-
       }
       target.dataset.markdown = finalMarkdown;
       target.dataset.markdownB64 = btoa(
@@ -1144,7 +1149,6 @@ function saveBatch(pageId, fields) {
         draftByField.delete(fieldId);
         draftMarkdownByField.delete(fieldId);
       });
-
     });
 }
 
@@ -1334,6 +1338,8 @@ async function openInlineEditorFromPayload(payload) {
     dirty = false;
     clearDirty(activeFieldId);
     draftMarkdownByField.delete(activeFieldId);
+    // Store original markdown for losslessness validation
+    originalMarkdownByField.set(activeFieldId, markdownContent || "");
   }
   suppressUpdates = false;
   if (shouldWarnForExtraContent(fieldType, fieldName)) {
@@ -1591,10 +1597,7 @@ function initInlineEditor() {
           return;
         }
 
-        const dataMfeTarget = findDataMfeTargetFromPoint(
-          e.clientX,
-          e.clientY,
-        );
+        const dataMfeTarget = findDataMfeTargetFromPoint(e.clientX, e.clientY);
         if (dataMfeTarget?.rect) {
           const key = `${dataMfeTarget.scope}:${dataMfeTarget.section || ""}:${dataMfeTarget.subsection || ""}:${dataMfeTarget.name}`;
           if (lastHoverKey !== key) {

@@ -30,6 +30,8 @@ import {
   getSaveUrl,
   getFragmentsUrl,
   fetchCsrfToken,
+  assertMarkdownInvariant,
+  validateSerializerLosslessness,
 } from "./editor-core.js";
 import { Marker } from "./marker-extension.js";
 import {
@@ -50,11 +52,7 @@ import {
   compileMountTargetsByKey,
   syncEditableMarkdownAttributesFromFieldsIndex as syncFieldsIndexToEditableAttrs,
 } from "./sync-by-key.js";
-import {
-  openWindow,
-  closeWindow,
-  updateWindowById,
-} from "./window-manager.js";
+import { openWindow, closeWindow, updateWindowById } from "./window-manager.js";
 
 let activeEditor = null;
 let primaryEditor = null;
@@ -81,6 +79,7 @@ let activeRawMarkdown = null;
 let activeDisplayMarkdown = null;
 let suppressNextCloseConfirm = false;
 const primaryDraftsByFieldId = new Map();
+const originalMarkdownByFieldId = new Map();
 const draftMarkdownByScopedKey = new Map();
 let suppressDirtyTracking = 0;
 let breadcrumbAnchor = null;
@@ -167,22 +166,23 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
   syncDirtyStatusForActiveField();
 
   const primaryHtmlRaw =
-    (activeScopedKey && typeof htmlMap[activeScopedKey] === "string")
+    activeScopedKey && typeof htmlMap[activeScopedKey] === "string"
       ? htmlMap[activeScopedKey]
-      : (typeof data.html === "string" ? data.html : "");
+      : typeof data.html === "string"
+        ? data.html
+        : "";
   const primaryHtml = normalizeHtmlImageSources(primaryHtmlRaw || "");
   if (data.sectionsIndex) {
-    window.MarkdownFrontEditorConfig =
-      window.MarkdownFrontEditorConfig || {};
-    window.MarkdownFrontEditorConfig.sectionsIndex =
-      data.sectionsIndex;
+    window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
+    window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;
   }
   if (data.fieldsIndex) {
-    window.MarkdownFrontEditorConfig =
-      window.MarkdownFrontEditorConfig || {};
+    window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
     window.MarkdownFrontEditorConfig.fieldsIndex = data.fieldsIndex;
   }
-  const sections = Array.isArray(window.MarkdownFrontEditorConfig?.sectionsIndex)
+  const sections = Array.isArray(
+    window.MarkdownFrontEditorConfig?.sectionsIndex,
+  )
     ? window.MarkdownFrontEditorConfig.sectionsIndex
     : [];
   const fields = Array.isArray(window.MarkdownFrontEditorConfig?.fieldsIndex)
@@ -196,12 +196,14 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
     getMetaAttr,
     semanticLookup,
   });
-  const mountTargets = compiled.targetsByKey || collectMountTargetsByKey({
-    changedKeys: requestedKeysFromServer,
-    root: document,
-    getMetaAttr,
-    semanticLookup,
-  });
+  const mountTargets =
+    compiled.targetsByKey ||
+    collectMountTargetsByKey({
+      changedKeys: requestedKeysFromServer,
+      root: document,
+      getMetaAttr,
+      semanticLookup,
+    });
   const requestedKeys = Object.keys(mountTargets || {});
   const nonMountedRequestedKeys = requestedKeysFromServer.filter(
     (k) => !requestedKeys.includes(k),
@@ -216,11 +218,20 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
   if (lastCompileReport?.graphChecksum) {
     window.__MFE_GRAPH = lastCompileReport.graphChecksum;
   }
-  if (lastCompileReport?.ambiguous?.length || lastCompileReport?.unresolved?.length) {
+  if (
+    lastCompileReport?.ambiguous?.length ||
+    lastCompileReport?.unresolved?.length
+  ) {
     debugWarn("[mfe:bind] compile report", lastCompileReport);
     const rows = [
-      ...((lastCompileReport.ambiguous || []).map((v) => ({ type: "ambiguous", value: v }))),
-      ...((lastCompileReport.unresolved || []).map((v) => ({ type: "unresolved", value: v }))),
+      ...(lastCompileReport.ambiguous || []).map((v) => ({
+        type: "ambiguous",
+        value: v,
+      })),
+      ...(lastCompileReport.unresolved || []).map((v) => ({
+        type: "unresolved",
+        value: v,
+      })),
     ];
     debugTable(rows);
   }
@@ -231,9 +242,12 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
     activeFieldId?.split(":")?.[0] ||
     "0";
   if (!requestedKeys.length) {
-    debugWarn("[mfe:fragment-sync] no canonical mount keys, preview patch skipped", {
-      changedKeys: requestedKeysFromServer,
-    });
+    debugWarn(
+      "[mfe:fragment-sync] no canonical mount keys, preview patch skipped",
+      {
+        changedKeys: requestedKeysFromServer,
+      },
+    );
   } else {
     try {
       const patchResult = await requestRenderedFragmentsDatastar({
@@ -266,7 +280,10 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
           skippedKeys,
         });
       }
-      if (Array.isArray(patchResult?.missingKeys) && patchResult.missingKeys.length) {
+      if (
+        Array.isArray(patchResult?.missingKeys) &&
+        patchResult.missingKeys.length
+      ) {
         const editableFallbackUpdated = applyChangedHtmlEditableOnly({
           changedKeys: patchResult.missingKeys,
           htmlMap,
@@ -276,7 +293,10 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
           editableFallbackUpdated,
         });
       }
-      if (Array.isArray(patchResult?.skippedSectionKeys) && patchResult.skippedSectionKeys.length) {
+      if (
+        Array.isArray(patchResult?.skippedSectionKeys) &&
+        patchResult.skippedSectionKeys.length
+      ) {
         const sectionEditableUpdated = applyEditableFallbackInSectionHosts({
           sectionKeys: patchResult.skippedSectionKeys,
           mountTargets,
@@ -308,7 +328,10 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
   if (updateActiveEditor && activeTarget && primaryHtml) {
     activeTarget.dataset.markdown = finalMarkdown;
     if (activeTarget.classList?.contains("fe-editable")) {
-      activeTarget.setAttribute("data-markdown-b64", encodeMarkdownBase64(finalMarkdown));
+      activeTarget.setAttribute(
+        "data-markdown-b64",
+        encodeMarkdownBase64(finalMarkdown),
+      );
     }
     if (primaryEditor) {
       const selection = primaryEditor.state.selection;
@@ -329,6 +352,12 @@ async function savePendingDrafts() {
   const { current } = getLanguagesConfig();
 
   for (const [fieldId, markdown] of entries) {
+    // INVARIANT: Validate markdown byte-for-byte if not explicitly edited
+    const original = originalMarkdownByFieldId.get(fieldId);
+    if (original !== undefined && original === markdown) {
+      assertMarkdownInvariant(original, markdown);
+    }
+
     const parsed = parseFieldId(fieldId);
     if (!parsed) continue;
     const formData = new FormData();
@@ -352,7 +381,9 @@ async function savePendingDrafts() {
     if (!data.status) {
       throw new Error(data.message || "Save failed");
     }
-    await handlePrimarySaveResponse(data, markdown, { updateActiveEditor: false });
+    await handlePrimarySaveResponse(data, markdown, {
+      updateActiveEditor: false,
+    });
   }
 }
 
@@ -387,12 +418,18 @@ function applyChangedHtmlEditableOnly({ changedKeys, htmlMap }) {
   return updated;
 }
 
-function applyEditableFallbackInSectionHosts({ sectionKeys, mountTargets, htmlMap }) {
+function applyEditableFallbackInSectionHosts({
+  sectionKeys,
+  mountTargets,
+  htmlMap,
+}) {
   const keys = Array.isArray(sectionKeys) ? sectionKeys.filter(Boolean) : [];
   if (!keys.length) return 0;
   let updated = 0;
   keys.forEach((sectionKey) => {
-    const targets = Array.isArray(mountTargets?.[sectionKey]) ? mountTargets[sectionKey] : [];
+    const targets = Array.isArray(mountTargets?.[sectionKey])
+      ? mountTargets[sectionKey]
+      : [];
     targets.forEach((target) => {
       const selector = target?.selector || "";
       if (!selector) return;
@@ -401,7 +438,9 @@ function applyEditableFallbackInSectionHosts({ sectionKeys, mountTargets, htmlMa
         if (!host || !host.isConnected) return;
         const editables = [];
         if (host.classList?.contains("fe-editable")) editables.push(host);
-        host.querySelectorAll?.(".fe-editable")?.forEach((el) => editables.push(el));
+        host
+          .querySelectorAll?.(".fe-editable")
+          ?.forEach((el) => editables.push(el));
         editables.forEach((el) => {
           const key = scopedHtmlKeyFromMeta(
             getMetaAttr(el, "scope") || "field",
@@ -483,7 +522,10 @@ function isDescendantKey(child, parent) {
   if (!child || !parent || child === parent) return false;
   if (parent.startsWith("section:")) {
     const sec = parent.slice("section:".length);
-    return child.startsWith(`field:${sec}:`) || child.startsWith(`subsection:${sec}:`);
+    return (
+      child.startsWith(`field:${sec}:`) ||
+      child.startsWith(`subsection:${sec}:`)
+    );
   }
   if (parent.startsWith("subsection:")) {
     const parts = parent.split(":");
@@ -623,10 +665,13 @@ async function requestRenderedFragmentsDatastar({
       if (!skippedSectionKeys.includes(patch.key)) {
         skippedSectionKeys.push(patch.key);
       }
-      debugWarn("[mfe:fragment-api] section patch skipped (would drop editable wrappers)", {
-        key: patch.key,
-        selector: patch.selector,
-      });
+      debugWarn(
+        "[mfe:fragment-api] section patch skipped (would drop editable wrappers)",
+        {
+          key: patch.key,
+          selector: patch.selector,
+        },
+      );
       return;
     }
     const appliedCount = applyDatastarPatchElement({
@@ -656,7 +701,16 @@ async function requestRenderedFragmentsDatastar({
     });
   });
 
-  const result = { cycleId, updated, events, patches, signals, missingKeys, skippedSectionKeys, applied };
+  const result = {
+    cycleId,
+    updated,
+    events,
+    patches,
+    signals,
+    missingKeys,
+    skippedSectionKeys,
+    applied,
+  };
   debugWarn("[mfe:fragment-api] result", result);
   return result;
 }
@@ -721,7 +775,9 @@ function confirmDiscardUnsavedChanges() {
   }
   if (!hasPendingUnsavedChanges()) return true;
   if (!shouldConfirmUnsavedClose()) return true;
-  const ok = window.confirm("You have unsaved changes. Discard them and close?");
+  const ok = window.confirm(
+    "You have unsaved changes. Discard them and close?",
+  );
   if (ok) {
     primaryDraftsByFieldId.clear();
     draftMarkdownByScopedKey.clear();
@@ -1017,7 +1073,10 @@ function createEditorInstance(element, fieldType, fieldName) {
     if (editor === primaryEditor) {
       primaryDirty = true;
       if (activeFieldId) {
-        primaryDraftsByFieldId.set(activeFieldId, getMarkdownFromEditor(editor));
+        primaryDraftsByFieldId.set(
+          activeFieldId,
+          getMarkdownFromEditor(editor),
+        );
       }
       if (activeFieldId) {
         statusManager.markDirty(activeFieldId);
@@ -1412,15 +1471,18 @@ function openImagePicker(initialData = null, imagePos = null) {
       }
 
       // Mark as dirty
-    if (editor === primaryEditor) {
-      primaryDirty = true;
-      const scopedKey = getActiveScopedHtmlKey();
-      if (scopedKey) {
-        draftMarkdownByScopedKey.set(scopedKey, getMarkdownFromEditor(editor));
-      }
-      if (activeFieldId) {
-        statusManager.markDirty(activeFieldId);
-      }
+      if (editor === primaryEditor) {
+        primaryDirty = true;
+        const scopedKey = getActiveScopedHtmlKey();
+        if (scopedKey) {
+          draftMarkdownByScopedKey.set(
+            scopedKey,
+            getMarkdownFromEditor(editor),
+          );
+        }
+        if (activeFieldId) {
+          statusManager.markDirty(activeFieldId);
+        }
       }
       if (editor === secondaryEditor && secondaryLang) {
         dirtyTranslations.set(secondaryLang, true);
@@ -1564,7 +1626,8 @@ function getActiveHierarchy() {
   const name = activeFieldName || "";
   const type = activeFieldType || "";
   const isContainer = type === "container";
-  const explicitSection = activeFieldSection || getMetaAttr(activeTarget, "section") || "";
+  const explicitSection =
+    activeFieldSection || getMetaAttr(activeTarget, "section") || "";
   const explicitSubsection =
     activeFieldSubsection || getMetaAttr(activeTarget, "subsection") || "";
   const inferredSectionFromSub =
@@ -1647,7 +1710,12 @@ function buildBreadcrumbParts() {
       section,
       subsection,
       name,
-      contentId: getBreadcrumbContentId("subsection", section, subsection, name),
+      contentId: getBreadcrumbContentId(
+        "subsection",
+        section,
+        subsection,
+        name,
+      ),
     });
   }
   if (scope === "field" && isContainer && name) {
@@ -1772,14 +1840,7 @@ function renderBreadcrumbs() {
 function saveEditorContent(editor = activeEditor) {
   if (!editor) return;
 
-  let markdown = decodeHtmlEntitiesInFences(getMarkdownFromEditor(editor));
-
-  // For single-line fields, strip any extra paragraphs - only save the first block
-  if (shouldWarnForExtraContent(activeFieldType, activeFieldName)) {
-    const blocks = markdown.split(/\n\s*\n/).filter((p) => p.trim().length > 0);
-    markdown = blocks.length > 0 ? blocks[0] : markdown;
-    // single-line fields save only first block
-  }
+  let markdown = getMarkdownFromEditor(editor);
 
   // Clear highlights when saving
   clearExtraContentHighlights();
@@ -1922,7 +1983,11 @@ function propagateDraftToAncestors(oldMarkdown, newMarkdown) {
     if (subsection) {
       const subKey = `subsection:${section}:${subsection}`;
       const subDoc = getDraftMarkdownForScopedKey(subKey);
-      const updatedSub = replaceUniqueBlockInText(subDoc, oldMarkdown, newMarkdown);
+      const updatedSub = replaceUniqueBlockInText(
+        subDoc,
+        oldMarkdown,
+        newMarkdown,
+      );
       if (updatedSub !== null) {
         draftMarkdownByScopedKey.set(subKey, updatedSub);
       }
@@ -2015,7 +2080,9 @@ function annotateInferredImages(root = document) {
 
   const imageFields = fields
     .map((f) => {
-      const markdown = f?.markdownB64 ? decodeMarkdownBase64(f.markdownB64) : "";
+      const markdown = f?.markdownB64
+        ? decodeMarkdownBase64(f.markdownB64)
+        : "";
       const src = extractMarkdownImageSrc(markdown);
       const key = getImageMatchKey(src);
       if (!src || !key) return null;
@@ -2235,7 +2302,8 @@ function openFullscreenEditorFromPayload(payload) {
   const scopedDraftMarkdown = nextScopedKey
     ? draftMarkdownByScopedKey.get(nextScopedKey) || null
     : null;
-  const effectiveMarkdown = scopedDraftMarkdown ?? draftMarkdown ?? markdownContent;
+  const effectiveMarkdown =
+    scopedDraftMarkdown ?? draftMarkdown ?? markdownContent;
   activeRawMarkdown = effectiveMarkdown;
   activeDisplayMarkdown = effectiveMarkdown;
 
@@ -2257,6 +2325,14 @@ function openFullscreenEditorFromPayload(payload) {
 
   const saveCallback = (markdown, resolve, reject) => {
     const finalMarkdown = markdown;
+
+    // INVARIANT: Validate markdown byte-for-byte if not explicitly edited
+    const original = originalMarkdownByFieldId.get(activeFieldId);
+    if (original !== undefined && original === finalMarkdown) {
+      // No user edits - markdown must remain unchanged
+      assertMarkdownInvariant(original, finalMarkdown);
+    }
+
     const currentFieldName = activeFieldName || fieldName;
     const currentFieldScope = activeFieldScope || fieldScope || "field";
     const currentFieldSection = activeFieldSection || fieldSection || "";
@@ -2383,7 +2459,8 @@ function replaceActiveEditor(payload) {
   const scopedDraftMarkdown = nextScopedKey
     ? draftMarkdownByScopedKey.get(nextScopedKey) || null
     : null;
-  const effectiveMarkdown = scopedDraftMarkdown ?? draftMarkdown ?? markdownContent;
+  const effectiveMarkdown =
+    scopedDraftMarkdown ?? draftMarkdown ?? markdownContent;
   activeEditor = primaryEditor;
   activeTarget = payload.element;
   activeFieldName = fieldName;
@@ -2402,6 +2479,11 @@ function replaceActiveEditor(payload) {
   activeDisplayMarkdown = effectiveMarkdown;
   translationsCache = translationsCacheByFieldId.get(activeFieldId) || null;
   secondaryLang = "";
+
+  // Store original markdown for losslessness validation (only if no draft was loaded)
+  if (!scopedDraftMarkdown && !draftMarkdown) {
+    originalMarkdownByFieldId.set(activeFieldId, markdownContent);
+  }
 
   const html = renderMarkdownToHtml(effectiveMarkdown || "");
   runWithoutDirtyTracking(() => {
@@ -2449,19 +2531,23 @@ function resolveHostImageSrc(host, src) {
     }
   }
 
-  const filesBaseFromConfig = window.MarkdownFrontEditorConfig?.pageFilesBaseUrl;
+  const filesBaseFromConfig =
+    window.MarkdownFrontEditorConfig?.pageFilesBaseUrl;
   const filesBase =
     typeof filesBaseFromConfig === "string" && filesBaseFromConfig.trim() !== ""
-      ? (filesBaseFromConfig.endsWith("/") ? filesBaseFromConfig : `${filesBaseFromConfig}/`)
+      ? filesBaseFromConfig.endsWith("/")
+        ? filesBaseFromConfig
+        : `${filesBaseFromConfig}/`
       : "";
   if (filesBase) {
     return `${filesBase}${cleanName}`;
   }
 
   const fromConfig = window.MarkdownFrontEditorConfig?.imageBaseUrl;
-  const base = typeof fromConfig === "string" && fromConfig.trim() !== ""
-    ? fromConfig
-    : "/";
+  const base =
+    typeof fromConfig === "string" && fromConfig.trim() !== ""
+      ? fromConfig
+      : "/";
   const normalizedBase = base.endsWith("/") ? base : `${base}/`;
   return `${normalizedBase}${value.replace(/^\/+/, "")}`;
 }
@@ -2488,7 +2574,9 @@ export function openFullscreenEditorForElement(target) {
 }
 
 function recompileMountGraph() {
-  const sections = Array.isArray(window.MarkdownFrontEditorConfig?.sectionsIndex)
+  const sections = Array.isArray(
+    window.MarkdownFrontEditorConfig?.sectionsIndex,
+  )
     ? window.MarkdownFrontEditorConfig.sectionsIndex
     : [];
   const fields = Array.isArray(window.MarkdownFrontEditorConfig?.fieldsIndex)
@@ -2508,8 +2596,14 @@ function recompileMountGraph() {
   debugWarn("[mfe:bind] recompileMountGraph", lastCompileReport || {});
   if (lastCompileReport) {
     const rows = [
-      ...((lastCompileReport.ambiguous || []).map((v) => ({ type: "ambiguous", value: v }))),
-      ...((lastCompileReport.unresolved || []).map((v) => ({ type: "unresolved", value: v }))),
+      ...(lastCompileReport.ambiguous || []).map((v) => ({
+        type: "ambiguous",
+        value: v,
+      })),
+      ...(lastCompileReport.unresolved || []).map((v) => ({
+        type: "unresolved",
+        value: v,
+      })),
     ];
     debugTable(rows);
   }

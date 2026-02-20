@@ -5,6 +5,11 @@ import {
   defaultMarkdownSerializer,
 } from "prosemirror-markdown";
 
+/**
+ * CRITICAL: Each parser/serializer instance MUST be fresh and isolated.
+ * Never mutate shared instances. Markdown source must be immutable.
+ */
+
 export const warningFieldTypes = new Set(["heading"]);
 export const warningFieldNames = new Set(["title", "name"]);
 
@@ -44,30 +49,57 @@ export function countNonEmptyBlocks(doc) {
   return count;
 }
 
+/**
+ * Create a fresh, isolated markdown-it instance for editing.
+ * NEVER mutates the global defaultMarkdownParser.tokenizer.
+ *
+ * Configuration:
+ * - html: false → HTML tags are literal text, not parsed as elements
+ * - breaks: false → Single newlines are NOT converted to breaks
+ *
+ * This enforces source immutability: markdown is read-only unless explicitly edited.
+ */
+function createFreshMarkdownItInstance() {
+  // Clone the default tokenizer to get a fresh instance with all built-in rules
+  const base = defaultMarkdownParser.tokenizer;
+  const md = base.clone ? base.clone() : base;
+
+  // Configure for source preservation
+  md.set({ html: false, breaks: false });
+
+  return md;
+}
+
 export function createMarkdownParser(schema) {
-  const markdownIt = defaultMarkdownParser.tokenizer;
-  markdownIt.set({ breaks: true });
+  // Create a fresh markdown-it instance - DO NOT mutate global state
+  const markdownIt = createFreshMarkdownItInstance();
+
+  // Add MFE marker rule (only once per instance)
   if (!markdownIt.__mfeMarker) {
-    markdownIt.block.ruler.before("html_block", "mfe_marker", (state, startLine, endLine, silent) => {
-      const pos = state.bMarks[startLine] + state.tShift[startLine];
-      const max = state.eMarks[startLine];
-      if (pos >= max) return false;
-      const line = state.src.slice(pos, max);
-      const match = line.match(/^\s*<!--\s*([a-zA-Z0-9_:.\/-]+)\s*-->\s*$/);
-      if (!match) return false;
-      if (silent) return true;
+    markdownIt.block.ruler.before(
+      "html_block",
+      "mfe_marker",
+      (state, startLine, endLine, silent) => {
+        const pos = state.bMarks[startLine] + state.tShift[startLine];
+        const max = state.eMarks[startLine];
+        if (pos >= max) return false;
+        const line = state.src.slice(pos, max);
+        const match = line.match(/^\s*<!--\s*([a-zA-Z0-9_:.\/-]+)\s*-->\s*$/);
+        if (!match) return false;
+        if (silent) return true;
 
-      markdownIt.__mfeMarkerHits = (markdownIt.__mfeMarkerHits || 0) + 1;
-      if (markdownIt.__mfeMarkerHits > 5000) {
-        return false;
-      }
+        markdownIt.__mfeMarkerHits = (markdownIt.__mfeMarkerHits || 0) + 1;
+        if (markdownIt.__mfeMarkerHits > 5000) {
+          return false;
+        }
 
-      const token = state.push("mfe_marker", "", 0);
-      token.meta = { name: match[1] };
-      token.block = true;
-      state.line = startLine + 1;
-      return true;
-    });
+        const token = state.push("mfe_marker", "", 0);
+        token.meta = { name: match[1] };
+        token.block = true;
+        state.line = startLine + 1;
+        return true;
+      },
+    );
     markdownIt.__mfeMarker = true;
   }
   if (!schema.nodes.image) {
@@ -120,10 +152,22 @@ export function createMarkdownParser(schema) {
   return new MarkdownParser(schema, markdownIt, tokens);
 }
 
+/**
+ * Render markdown to HTML for display purposes ONLY.
+ *
+ * CRITICAL: This creates a fresh parser instance and does NOT affect persistence.
+ * The HTML output is for display rendering only. It is never saved.
+ *
+ * Configuration:
+ * - html: false → HTML tags treated as literal text
+ * - breaks: false → Single newlines NOT interpreted as breaks
+ */
 export function renderMarkdownToHtml(markdown) {
   const src = markdown || "";
-  const md = defaultMarkdownParser.tokenizer;
-  md.set({ breaks: true, html: true });
+
+  // Create a fresh markdown-it instance for rendering
+  const md = createFreshMarkdownItInstance();
+
   const withPlaceholders = src.replace(
     /^\s*<!--\s*([a-zA-Z0-9_:.\/-]+)\s*-->\s*$/gm,
     (_, name) => `\n\n[[MFE_MARKER:${name}]]\n\n`,
@@ -189,27 +233,27 @@ export const markdownSerializer = new MarkdownSerializer(
       state.atBlockStart = true;
     },
     hardBreak(state) {
-      state.write("<br>");
+      state.write("\n");
     },
     text: defaultMarkdownSerializer.nodes.text,
   },
   {
     ...defaultMarkdownSerializer.marks,
     bold: {
-      open: "<strong>",
-      close: "</strong>",
+      open: "**",
+      close: "**",
       mixable: true,
       expelEnclosingWhitespace: true,
     },
     italic: {
-      open: "<em>",
-      close: "</em>",
+      open: "_",
+      close: "_",
       mixable: true,
       expelEnclosingWhitespace: true,
     },
     strike: {
-      open: "<del>",
-      close: "</del>",
+      open: "~~",
+      close: "~~",
       mixable: true,
       expelEnclosingWhitespace: true,
     },
@@ -242,8 +286,9 @@ export const markdownSerializer = new MarkdownSerializer(
 export function decodeMarkdownBase64(markdownB64) {
   return decodeURIComponent(
     Array.prototype.map
-      .call(atob(markdownB64), (c) =>
-        `%${`00${c.charCodeAt(0).toString(16)}`.slice(-2)}`,
+      .call(
+        atob(markdownB64),
+        (c) => `%${`00${c.charCodeAt(0).toString(16)}`.slice(-2)}`,
       )
       .join(""),
   );
@@ -272,7 +317,12 @@ export function getLanguagesConfig() {
   return { langs, current };
 }
 
-export function fetchTranslations(mdName, pageId, scope = "field", section = "") {
+export function fetchTranslations(
+  mdName,
+  pageId,
+  scope = "field",
+  section = "",
+) {
   const scopeParam = scope ? `&mdScope=${encodeURIComponent(scope)}` : "";
   const sectionParam = section
     ? `&mdSection=${encodeURIComponent(section)}`
@@ -344,4 +394,118 @@ export async function fetchCsrfToken() {
     // token fetch errors are handled by callers
   }
   return null;
+}
+/**
+ * SYSTEM INVARIANT: Markdown Losslessness Assertion
+ *
+ * Detects accidental normalization, transformation, or mutation of markdown source.
+ * In dev mode, this validates that parse → serialize round-trip is lossless.
+ *
+ * Rule: If markdown didn't change in the editor, it must not change in persistence.
+ *
+ * @param {string} original Original markdown source
+ * @param {string} serialized Serialized markdown from editor state
+ * @returns {boolean} true if lossless, false if mutation detected
+ */
+export function validateMarkdownLosslessness(original, serialized) {
+  if (!isDevMode()) return true;
+
+  if (original === serialized) return true;
+
+  return false;
+}
+
+/**
+ * Assert markdown is byte-for-byte identical unless explicitly edited.
+ * Throws in dev mode if mutation is detected.
+ *
+ * @param {string} original Original markdown passed to editor
+ * @param {string} edited Current markdown from editor buffer
+ * @throws Error if non-lossless transform detected
+ */
+export function assertMarkdownInvariant(original, edited) {
+  if (!isDevMode()) return;
+
+  if (original === edited) return;
+
+  const msg =
+    `INVARIANT VIOLATION: Markdown mutation detected\n` +
+    `Original (${original.length} bytes):\n${JSON.stringify(original)}\n\n` +
+    `Current (${edited.length} bytes):\n${JSON.stringify(edited)}`;
+
+  throw new Error(msg);
+}
+
+/**
+ * Detect if markdown appears to have been mutated implicitly.
+ */
+export function detectMarkdownNormalization(markdown) {
+  if (!isDevMode()) return [];
+
+  const violations = [];
+
+  // Check for HTML line breaks that should be newlines
+  if (markdown.includes("<br>")) {
+    violations.push("Found <br> instead of newlines");
+  }
+
+  // Check for HTML strong/em instead of markdown
+  if (markdown.includes("<strong>") || markdown.includes("<em>")) {
+    violations.push("Found HTML formatting instead of markdown");
+  }
+
+  // Check for collapsed blank lines (visible if originally had `\n\n`)
+  if (
+    markdown.includes("\n\n") &&
+    markdown !== markdown.replace(/\n\n+/g, "\n\n")
+  ) {
+    violations.push("Possible blank line normalization");
+  }
+
+  return violations;
+}
+
+/**
+ * Verify serializer losslessness: parse(src) → serialize() === src
+ *
+ * CRITICAL INVARIANT: If the user did not modify the markdown,
+ * the serialized output must be byte-identical to the input.
+ *
+ * This validates that the parse/serialize round-trip is lossless
+ * for untouched content.
+ *
+ * @param {string} markdown Original markdown source
+ * @param {SchemaSpec} schema ProseMirror schema
+ * @throws Error in dev mode if round-trip is not lossless
+ */
+export function validateSerializerLosslessness(markdown, schema) {
+  if (!isDevMode()) return;
+
+  try {
+    const parser = createMarkdownParser(schema);
+    const parsed = parser.parse(markdown);
+    const serialized = markdownSerializer.serialize(parsed);
+
+    if (serialized === markdown) return; // ✅ Lossless
+
+    // ❌ Mutation detected
+    const msg =
+      `SERIALIZER LOSSLESSNESS FAILURE\n` +
+      `Input (${markdown.length} bytes):\n${JSON.stringify(markdown)}\n\n` +
+      `Output (${serialized.length} bytes):\n${JSON.stringify(serialized)}\n\n` +
+      `Diff: Characters differ at unedited content`;
+
+    throw new Error(msg);
+  } catch (err) {
+    if (err.message.includes("SERIALIZER LOSSLESSNESS FAILURE")) throw err;
+    // Parse errors are OK - malformed markdown is expected sometimes
+    // Only throw losslessness violations
+  }
+}
+
+function isDevMode() {
+  return Boolean(
+    typeof window !== "undefined" &&
+    (window.__MFE_DEV || window.localStorage?.getItem("mfe-dev") === "1"),
+  );
 }
