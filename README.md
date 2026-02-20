@@ -27,11 +27,11 @@ Compare and update content in different languages (uses ProcessWire languages).
 
 ### Breadcrumbs in fullscreen:
 
-- Click breadcrumbs to edit parent sections, subsections oor container fields.
+Click breadcrumbs to edit parent sections, subsections oor container fields.
 
 ### In Markdown we trust
 
-The editor respects your markdown text and formatting. For example, if you markdown has a '<br>' we never transform it into a new line, we keep it as is. 
+The editor respects your markdown text and formatting. For example, if you markdown has a `<br>` we never transform it into a new line, we keep it as is. 
 
 
 ## Install
