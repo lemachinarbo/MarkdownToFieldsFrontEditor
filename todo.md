@@ -1,9 +1,10 @@
 # Editor north star
 
-Protect architecture quality as features grow. Priorities:
-- Content Map view for structural navigation
+- Protect architecture quality as features grow. Priorities:
 - Invariant guards at every identity boundary
 - Zero heuristic fallbacks, always deterministic resolution
+- Markdown source is the single source of truth, never mutated by the editor
+- Content Map view for structural navigation
 
 Rule: never trade determinism for convenience, even for “temporary” fixes.
 

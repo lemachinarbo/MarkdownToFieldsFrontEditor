@@ -1,24 +1,29 @@
 # Changelog
 
 ## V0.5.0
-- Live preview moved to deterministic server-fragment sync (DataStar SSE).
-- Added stable mount graph compiler (`data-mfe-key-id`) with compile report and ambiguity flagging (`data-mfe-ambiguous`).
-- Compiler now stamps canonical identity on mounts (`data-mfe-key`, `data-mfe-sig`) and uses canonical keys across the fragment request boundary.
-- Added optional dev diagnostics: `data-mfe-path`, invariant checks (`key->sig`, `keyId->sig`), and `watch()/unwatch()` auto-recompile helpers.
-- Added mount graph checksum handshake (`mfe-g-*`) between client and server with `FRAGMENTS_GRAPH_MISMATCH` logging.
-- Added stamped-key server sanity checks (`FRAGMENTS_STAMP_WARN`, `FRAGMENTS_STAMP_ERROR`) for mismatched or non-recomputable identities.
-- Added patch cycle tracing (`cycleId`, `data-mfe-last-patch`) and parent-first apply to avoid nested double-patches.
-- Added safe section guard: section patch is skipped if it would remove `.fe-editable` wrappers.
-- Added safe missing-key fallback: only matching editable nodes are updated (`mfe_missing`), no structural host flattening.
-- Added HTTP-render fallback for fragment generation when direct module render context fails.
-- Markdown save path remains canonical and deterministic even when preview is partial.
+
+Major change: preview system rewritten.
+
+- Preview is now server-rendered via SSE instead of client-side HTML guessing.
+- Added stable mount identity system so fragments patch reliably and never hit the wrong node.
+- Compiler detects ambiguous mounts and reports them.
+- Patch engine now applies updates parent-first to prevent nested double updates.
+- Safe guards added:
+  - won’t remove editable wrappers
+  - won’t reshape layout if a key is missing
+- Server and client now verify mount graph consistency and log mismatches.
+- Fragment rendering has a fallback path if direct render fails.
+- Markdown saving remains deterministic and untouched even with partial previews.
+
 
 ## V0.4.7
-- Live preview now uses server-rendered fragments delivered via DataStar SSE (`datastar-patch-elements`) keyed by changed scoped identities.
-- Added fragment endpoint `?markdownFrontEditorFragments=1` with shared auth/CSRF/lang rules and JSON fallback mode for debugging.
-- Frontend now requests changed keys after save and applies targeted patch swaps by mount selectors, instead of composing preview HTML client-side.
-- `data-mfe` remains the primary preview zone contract; `data-mfe-source` remains explicit mirror contract for extra projections.
-- Removed broad host fanout preview behavior that could flatten template-specific markup.
+
+Foundation release for the new preview architecture.
+
+- Preview switched from client-built HTML to server fragments.
+- Added fragment endpoint used after saves.
+- Preview updates now target only changed scopes instead of re-rendering whole zones.
+- Removed old preview system that could break template markup.
 
 ## V0.4.6.3
 - Save replacement is now structural and scope-based (section/subsection/field identity), not raw text search.
