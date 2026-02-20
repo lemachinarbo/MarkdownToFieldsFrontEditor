@@ -10,6 +10,8 @@ Rule: never trade determinism for convenience, even for “temporary” fixes.
 
 # Todo
 
+- Make all default option one section in UI and add the new one to force secttions preview
+- Add test passing on deploting release as a condition
 - On language switch, the windows tootlbar isnt independent. If i selected a bold in the left window, and then i switch to the right window, the bold is still selected, but it shouldnt be. 
 - On Language selector the first language that appears is the same on left, maybe because is the first returned by the server? i think we must skip it.
 - If user is updating a field, and field is a list they can add new lines and thgat content goes to markdown but maybe user insnt aware.

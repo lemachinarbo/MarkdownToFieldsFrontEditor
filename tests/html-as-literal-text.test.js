@@ -24,7 +24,7 @@ describe("HTML as Literal Text in Markdown", () => {
     expect(input).toBeDefined();
     expect(input).toContain("<br>");
     expect(expectedOutput).toContain("<br>");
-    expect(expectedOutput).not.toContain("\n#"); // Verify no accidental newline
+    expect(expectedOutput).toBe(input); // Round-trip must preserve original bytes
   });
 
   test("should preserve <strong>, <em>, <del> as text not HTML", () => {
@@ -68,7 +68,7 @@ _italic_ and <strong>strong</strong>`;
     expect(expectedOutput).toContain("<strong>strong</strong>");
 
     // Verify HTML tags were NOT converted to markdown
-    expect(expectedOutput).not.toContain("</em>"); // If it's in markdown form
+    expect(expectedOutput).not.toContain("_html_");
   });
 
   test("should preserve nested and complex HTML", () => {
