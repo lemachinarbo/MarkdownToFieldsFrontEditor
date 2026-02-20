@@ -25,6 +25,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run tests
+        run: npm test
+
       - name: Build frontend bundle
         run: npm run build
 
@@ -37,6 +40,7 @@ jobs:
           mkdir -p "$RELEASE_DIR"
 
           rsync -av \
+            --exclude "docs/video.mp4" \
             MarkdownToFieldsFrontEditor.module.php \
             README.md \
             assets \
