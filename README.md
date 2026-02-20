@@ -1,7 +1,8 @@
 # MarkdownToFieldsFrontEditor
 
 This is the **front‑end editor** for [MarkdownToFields](https://github.com/lemachinarbo/MarkdownToFields).
-The name is horrible, but it lets you double‑click tagged content and edit it right on the page (yes I know ProcessWire does that, but this is different and this is mine).
+
+The name is horrible, but it lets you double‑click tagged content, edit it and preview it right on the page (yes I know ProcessWire does that, but this is different and this is mine).
 
 It is NOT a standalone module. It only works **together** with MarkdownToFields.
 
