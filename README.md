@@ -13,6 +13,12 @@ It is NOT a standalone module. It only works **together** with MarkdownToFields.
 - Edit in multiple languages side by side
 - Changes save to markdown and preview live on the page
 
+ 
+
+https://github.com/user-attachments/assets/fa348df1-37ef-468d-ad05-027dccdef357
+
+
+
 ## Features
 
 ### Multilanguage support 
