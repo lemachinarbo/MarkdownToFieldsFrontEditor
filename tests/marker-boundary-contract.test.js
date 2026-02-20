@@ -224,6 +224,31 @@ function resolveScopedFieldRange(
   return { status: "ok", start, end };
 }
 
+function countMarkers(markdown) {
+  const text = String(markdown || "");
+  const matches = text.match(/<!--\s*[a-zA-Z0-9_:.\/-]+\s*-->/g);
+  return Array.isArray(matches) ? matches.length : 0;
+}
+
+function stripFieldMarkers(markdown) {
+  const text = String(markdown || "");
+  return text.replace(
+    /^[\t ]*<!--\s*[a-zA-Z0-9_:.\/-]+\s*-->[\t ]*(?:\r?\n|$)/gm,
+    "",
+  );
+}
+
+function saveThenRehydrate(markdown, scope) {
+  const outbound = scope === "field" ? stripFieldMarkers(markdown) : markdown;
+  const rehydrated = outbound;
+  return {
+    outbound,
+    rehydrated,
+    markersBefore: countMarkers(markdown),
+    markersAfter: countMarkers(outbound),
+  };
+}
+
 describe("Marker boundary contract (section/sub/field/container)", () => {
   test("section content excludes subsection blocks", () => {
     const doc = `<!-- section:body -->\nTop line\n\n<!-- sub:right -->\nsub line`;
@@ -291,5 +316,30 @@ describe("Marker boundary contract (section/sub/field/container)", () => {
     );
     expect(range.status).toBe("missing");
     expect(range.reason).toBe("field_expected_not_anchored");
+  });
+
+  test("section save + rehydrate preserves markers across repeated saves", () => {
+    const sectionMarkdown =
+      "<!-- title -->\n# The Urban Farm\n\n<!-- intro -->\nIntro text";
+
+    const first = saveThenRehydrate(sectionMarkdown, "section");
+    expect(first.markersBefore).toBe(2);
+    expect(first.markersAfter).toBe(2);
+
+    const second = saveThenRehydrate(first.rehydrated, "section");
+    expect(second.markersBefore).toBe(2);
+    expect(second.markersAfter).toBe(2);
+  });
+
+  test("field save + rehydrate strips markers deterministically", () => {
+    const fieldMarkdown = "<!-- title -->\n# The Urban Farm";
+
+    const first = saveThenRehydrate(fieldMarkdown, "field");
+    expect(first.markersBefore).toBe(1);
+    expect(first.markersAfter).toBe(0);
+
+    const second = saveThenRehydrate(first.rehydrated, "field");
+    expect(second.markersBefore).toBe(0);
+    expect(second.markersAfter).toBe(0);
   });
 });

@@ -882,6 +882,14 @@ function getMarkdownFromEditor(editor = activeEditor) {
   return markdownSerializer.serialize(editor.state.doc);
 }
 
+const MFE_MARKER_LINE_RE =
+  /^[\t ]*<!--\s*[a-zA-Z0-9_:.\/-]+\s*-->[\t ]*(?:\r?\n|$)/gm;
+
+function stripMfeMarkersForFieldScope(markdown) {
+  const text = typeof markdown === "string" ? markdown : "";
+  return text.replace(MFE_MARKER_LINE_RE, "");
+}
+
 function saveField(fieldId, markdown) {
   const { pageId, name: fieldName, scope, section } = parseFieldId(fieldId);
   const target = fieldElements.get(fieldId);
@@ -898,11 +906,17 @@ function saveField(fieldId, markdown) {
 
   return fetchCsrfToken()
     .then((csrf) => {
+      const scopeFromTarget = getMetaAttr(target, "scope") || "";
+      const resolvedScope = scopeFromTarget || scope || "field";
+      const outboundMarkdown =
+        resolvedScope === "field"
+          ? stripMfeMarkersForFieldScope(markdown)
+          : markdown;
       const { current } = getLanguagesConfig();
       const formData = new FormData();
-      formData.append("markdown", markdown);
+      formData.append("markdown", outboundMarkdown);
       formData.append("mdName", fieldName);
-      formData.append("mdScope", scope || "field");
+      formData.append("mdScope", resolvedScope);
       if (section) {
         formData.append("mdSection", section);
       }

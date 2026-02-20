@@ -1,5 +1,10 @@
 # Changelog
 
+## V0.5.2
+- Fixed marker persistence regression after save: active editor now rehydrates from canonical markdown, not fragment HTML.
+- Field saves keep stripping field markers deterministically; section/subsection saves keep markers intact.
+- Added regression coverage for repeated save/rehydrate marker behavior to prevent future regressions.
+
 ## V0.5.1
 - Fixed the inline editor staying open when the user jumped to open another editor.
 - Section preview now defaults to strict full-section replace rather than skipping (with deterministic safety checks).

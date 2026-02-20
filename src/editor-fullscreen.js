@@ -170,13 +170,6 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
   primaryDirty = false;
   syncDirtyStatusForActiveField();
 
-  const primaryHtmlRaw =
-    activeScopedKey && typeof htmlMap[activeScopedKey] === "string"
-      ? htmlMap[activeScopedKey]
-      : typeof data.html === "string"
-        ? data.html
-        : "";
-  const primaryHtml = normalizeHtmlImageSources(primaryHtmlRaw || "");
   if (data.sectionsIndex) {
     window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
     window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;
@@ -333,18 +326,25 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
   annotateBoundImages();
   initEditors();
 
-  if (updateActiveEditor && activeTarget && primaryHtml) {
-    activeTarget.dataset.markdown = finalMarkdown;
+  if (updateActiveEditor && activeTarget) {
+    const canonicalMarkdown =
+      typeof finalMarkdown === "string" ? finalMarkdown : "";
+    const canonicalHtml = normalizeHtmlImageSources(
+      renderMarkdownToHtml(canonicalMarkdown),
+    );
+    activeTarget.dataset.markdown = canonicalMarkdown;
     if (activeTarget.classList?.contains("fe-editable")) {
       activeTarget.setAttribute(
         "data-markdown-b64",
-        encodeMarkdownBase64(finalMarkdown),
+        encodeMarkdownBase64(canonicalMarkdown),
       );
     }
+    activeRawMarkdown = canonicalMarkdown;
+    activeDisplayMarkdown = canonicalMarkdown;
     if (primaryEditor) {
       const selection = primaryEditor.state.selection;
       runWithoutDirtyTracking(() => {
-        primaryEditor.commands.setContent(primaryHtml, false);
+        primaryEditor.commands.setContent(canonicalHtml, false);
       });
       try {
         primaryEditor.commands.setTextSelection(selection);
@@ -368,10 +368,15 @@ async function savePendingDrafts() {
 
     const parsed = parseFieldId(fieldId);
     if (!parsed) continue;
+    const resolvedScope = parsed.scope || "field";
+    const outboundMarkdown =
+      resolvedScope === "field"
+        ? stripMfeMarkersForFieldScope(markdown || "")
+        : markdown || "";
     const formData = new FormData();
-    formData.append("markdown", markdown || "");
+    formData.append("markdown", outboundMarkdown);
     formData.append("mdName", parsed.name);
-    formData.append("mdScope", parsed.scope || "field");
+    formData.append("mdScope", resolvedScope);
     if (parsed.section) formData.append("mdSection", parsed.section);
     if (parsed.subsection) formData.append("mdSubsection", parsed.subsection);
     formData.append("pageId", parsed.pageId || "0");
@@ -1667,6 +1672,20 @@ function getMarkdownFromEditor(editor = activeEditor) {
   return markdownSerializer.serialize(editor.state.doc);
 }
 
+const MFE_MARKER_LINE_RE =
+  /^[\t ]*<!--\s*[a-zA-Z0-9_:.\/-]+\s*-->[\t ]*(?:\r?\n|$)/gm;
+
+function stripMfeMarkersForFieldScope(markdown) {
+  const text = typeof markdown === "string" ? markdown : "";
+  return text.replace(MFE_MARKER_LINE_RE, "");
+}
+
+function resolveScopeAtSaveBoundary(fallbackScope = "field") {
+  const scopeFromTarget = getMetaAttr(activeTarget, "scope") || "";
+  const scopeFromState = activeFieldScope || "";
+  return scopeFromTarget || scopeFromState || fallbackScope || "field";
+}
+
 /**
  * Highlight extra paragraphs that won't be saved in tag fields
  */
@@ -2417,16 +2436,20 @@ function openFullscreenEditorFromPayload(payload) {
     }
 
     const currentFieldName = activeFieldName || fieldName;
-    const currentFieldScope = activeFieldScope || fieldScope || "field";
+    const currentFieldScope = resolveScopeAtSaveBoundary(fieldScope || "field");
     const currentFieldSection = activeFieldSection || fieldSection || "";
     const currentFieldSubsection =
       activeFieldSubsection || fieldSubsection || "";
     const currentPageId =
       activeTarget?.getAttribute("data-page") || pageId || "0";
+    const outboundMarkdown =
+      currentFieldScope === "field"
+        ? stripMfeMarkersForFieldScope(finalMarkdown)
+        : finalMarkdown;
     fetchCsrfToken().then((csrf) => {
       const { current } = getLanguagesConfig();
       const formData = new FormData();
-      formData.append("markdown", finalMarkdown);
+      formData.append("markdown", outboundMarkdown);
       formData.append("mdName", currentFieldName);
       formData.append("mdScope", currentFieldScope);
       if (currentFieldSection) {
