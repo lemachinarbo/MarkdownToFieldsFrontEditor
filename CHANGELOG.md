@@ -1,5 +1,8 @@
 # Changelog
 
+## V0.5.4
+- Made multilingual fragment rendering deterministic and route-first: uses current request path (`renderPath`) and fails closed instead of drifting to root/default route.
+
 ## V0.5.3
 - Fixed multilingual fragment preview drift by switching to localized URL resolution: `page.url(language,http)` → `page.localHttpUrl(language)` → `pages.getPath(language)+host` → request `renderPath` fallback.
 - Removed forced query-language override.

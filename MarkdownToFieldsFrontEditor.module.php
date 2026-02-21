@@ -790,6 +790,11 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
             $languageCode = $this->resolveRequestLanguageCode($page, $langCode);
             $renderPath = trim((string)$input->post('renderPath', 'string'));
+            $languages = $this->wire()->languages;
+            $isMultilingual = $languages && $languages->count() > 0;
+            if ($isMultilingual && $renderPath === '') {
+                $this->sendJsonError('Missing renderPath for multilingual fragment render', 400);
+            }
             $transport = $input->post->text('transport') ?: 'datastar';
             $keysPayload = (string)$input->post('keys', 'string');
             $keys = [];
@@ -869,6 +874,43 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 $missing = [];
                 foreach ($keys as $k) {
                     if (!isset($fragments[$k])) $missing[] = $k;
+                }
+
+                if ($missing) {
+                    try {
+                        $canonicalContent = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
+                        if ($canonicalContent) {
+                            $canonicalHtmlMap = $this->getAllFieldsHtml($canonicalContent);
+                            $filled = 0;
+                            foreach ($missing as $missingKey) {
+                                if (isset($canonicalHtmlMap[$missingKey]) && !isset($fragments[$missingKey])) {
+                                    $fragments[$missingKey] = (string)$canonicalHtmlMap[$missingKey];
+                                    $filled += 1;
+                                }
+                            }
+                            if ($filled > 0) {
+                                $this->logInfo(sprintf(
+                                    "FRAGMENTS_CANONICAL_FILL pageId=%d lang='%s' filled=%d",
+                                    $pageId,
+                                    $languageCode,
+                                    $filled
+                                ));
+                            }
+                        }
+                    } catch (\Throwable $e) {
+                        $this->logInfo(sprintf(
+                            "FRAGMENTS_CANONICAL_FILL_ERROR pageId=%d lang='%s' class='%s' message='%s'",
+                            $pageId,
+                            $languageCode,
+                            get_class($e),
+                            str_replace(["\n", "\r"], ' ', (string)$e->getMessage())
+                        ));
+                    }
+
+                    $missing = [];
+                    foreach ($keys as $k) {
+                        if (!isset($fragments[$k])) $missing[] = $k;
+                    }
                 }
 
                 $this->logInfo(sprintf(
@@ -2446,12 +2488,10 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $fetchHttpHtml = function() use ($page, $languageCode, $languages, $renderPath): string {
             try {
                 $config = $this->wire()->config;
-                $pageUrl = (string)$page->url;
                 $requestUrl = '';
-                $source = 'page.url';
-                $resolvedLang = '';
-                $resolvedLangId = 0;
-                $switched = '0';
+                $source = 'none';
+                $host = (string)($config->httpHost ?: ($_SERVER['HTTP_HOST'] ?? ''));
+                $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
                 $requestedPath = trim($renderPath);
                 if ($requestedPath !== '') {
                     if (strpos($requestedPath, '://') !== false || strpos($requestedPath, '/') !== 0) {
@@ -2459,90 +2499,33 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                     }
                 }
 
-                $nextLang = null;
-                if ($languages) {
+                // Deterministic pipeline:
+                // 1) exact current frontend path (renderPath)
+                // 2) ProcessWire language path via pages->getPath(language)
+                // 3) page->httpUrl fallback
+                if ($requestedPath !== '' && $host !== '') {
+                    $requestUrl = "{$scheme}://{$host}{$requestedPath}";
+                    $source = 'request.renderPath';
+                }
+
+                if ($requestUrl === '' && $languages && $host !== '') {
                     $nextLang = $this->resolveLanguagePageByRequestCode($page, $languageCode);
                     if ($nextLang) {
-                        $switched = '1';
-                        $resolvedLang = (string)($nextLang->name ?? '');
-                        $resolvedLangId = (int)$nextLang->id;
-
-                        $localizedByOptions = '';
-                        try {
-                            $localizedByOptions = (string)$page->url(['language' => $nextLang, 'http' => true]);
-                        } catch (\Throwable $e) {
-                            $localizedByOptions = '';
-                        }
-
-                        if ($localizedByOptions !== '') {
-                            $requestUrl = $localizedByOptions;
-                            $pageUrl = $localizedByOptions;
-                            $source = 'page.url(language,http)';
-                        }
-
-                        if ($requestUrl === '' && method_exists($page, 'localHttpUrl')) {
-                            $localHttpUrl = (string)$page->localHttpUrl($nextLang);
-                            if ($localHttpUrl !== '') {
-                                $requestUrl = $localHttpUrl;
-                                $pageUrl = $localHttpUrl;
-                                $source = 'page.localHttpUrl';
-                            }
-                        }
-
-                        if ($requestUrl === '' && method_exists($page, 'localUrl')) {
-                            $localUrl = (string)$page->localUrl($nextLang);
-                            if ($localUrl !== '') {
-                                $host = (string)($config->httpHost ?: ($_SERVER['HTTP_HOST'] ?? ''));
-                                $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-                                if ($host !== '') {
-                                    $requestUrl = "{$scheme}://{$host}{$localUrl}";
-                                    $pageUrl = $localUrl;
-                                    $source = 'page.localUrl+host';
-                                }
-                            }
-                        }
-
-                        if ($requestUrl === '') {
-                            $pagePath = (string)$this->wire()->pages->getPath((int)$page->id, ['language' => $nextLang]);
-                            if ($pagePath !== '') {
-                                $host = (string)($config->httpHost ?: ($_SERVER['HTTP_HOST'] ?? ''));
-                                $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-                                if ($host !== '') {
-                                    $requestUrl = "{$scheme}://{$host}{$pagePath}";
-                                    $pageUrl = $pagePath;
-                                    $source = 'pages.getPath(language)+host';
-                                }
-                            }
+                        $pagePath = (string)$this->wire()->pages->getPath((int)$page->id, ['language' => $nextLang]);
+                        if ($pagePath !== '') {
+                            $requestUrl = "{$scheme}://{$host}{$pagePath}";
+                            $source = 'pages.getPath(language)';
                         }
                     }
                 }
 
-                if ($requestUrl === '' && $requestedPath !== '') {
-                    $host = (string)($config->httpHost ?: ($_SERVER['HTTP_HOST'] ?? ''));
-                    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-                    if ($host !== '') {
-                        $requestUrl = "{$scheme}://{$host}{$requestedPath}";
-                        $pageUrl = $requestedPath;
-                        $source = 'request.renderPath';
+                if ($requestUrl === '' && isset($page->httpUrl)) {
+                    if ($languages && $languages->count() > 0) {
+                        return '';
                     }
-                }
-
-                if ($requestUrl === '') {
-                    if (isset($page->httpUrl)) {
-                        $requestUrl = (string)$page->httpUrl;
-                        if ($requestUrl !== '') {
-                            $source = $source === 'page.url' ? 'page.httpUrl' : $source;
-                        }
-                    }
-                }
-
-                if ($requestUrl === '') {
-                    $host = (string)($config->httpHost ?: ($_SERVER['HTTP_HOST'] ?? ''));
-                    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-                    if ($host !== '' && $pageUrl !== '') {
-                        $normalizedPath = '/' . ltrim($pageUrl, '/');
-                        $requestUrl = "{$scheme}://{$host}{$normalizedPath}";
-                        $source = $source . '+host';
+                    $requestUrl = (string)$page->httpUrl;
+                    if ($requestUrl !== '') {
+                        $source = 'page.httpUrl';
                     }
                 }
 
@@ -2561,9 +2544,10 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 $body = (string)$http->get($requestUrl);
                 $status = (int)$http->getHttpCode();
                 $this->logInfo(sprintf(
-                    "FRAGMENTS_HTTP_RENDER pageId=%d lang='%s' status=%d url='%s' len=%d",
+                    "FRAGMENTS_HTTP_RENDER pageId=%d lang='%s' source='%s' status=%d url='%s' len=%d",
                     (int)$page->id,
                     $languageCode,
+                    $source,
                     $status,
                     $requestUrl,
                     strlen($body)
@@ -2595,11 +2579,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             }
         }
 
-        // For multilingual requests, avoid HTTP render (separate request/session context can leak wrong language).
-        // In-process render keeps language deterministic inside this request.
-        if (!$isMultilingual) {
-            // Prefer real HTTP page render to ensure page/template runtime helpers
-            // run in the same context as normal frontend requests.
+        // Deterministic route-first rendering: for multilingual pages, prefer HTTP render first.
+        if ($isMultilingual) {
             $httpHtml = $fetchHttpHtml();
         }
 
@@ -2608,6 +2589,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 $user->language = $prevLang;
             }
             return $httpHtml;
+        }
+
+        if ($isMultilingual) {
+            if ($prevLang && $user) {
+                $user->language = $prevLang;
+            }
+            return '';
         }
 
         try {
@@ -2640,9 +2628,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             return $html;
         }
 
-        // Multilingual fallback when in-process render context is not sufficient
-        // (e.g. template helper methods that require full HTTP runtime context).
-        if ($isMultilingual) {
+        // Fallback for single-language or failed in-process render.
+        if (!$isMultilingual) {
             $fallbackHtml = $fetchHttpHtml();
             if ($fallbackHtml !== '') {
                 return $fallbackHtml;

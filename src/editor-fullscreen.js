@@ -144,9 +144,18 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
       : activeScopedKey
         ? [activeScopedKey]
         : [];
-  const requestedKeysFromServer = Array.from(
+  const rawRequestedKeysFromServer = Array.from(
     new Set((Array.isArray(changedKeys) ? changedKeys : []).filter(Boolean)),
   );
+  const canonicalResponseKeys = new Set(
+    htmlMap && typeof htmlMap === "object" ? Object.keys(htmlMap) : [],
+  );
+  const requestedKeysFromServer =
+    canonicalResponseKeys.size > 0
+      ? rawRequestedKeysFromServer.filter((key) =>
+          canonicalResponseKeys.has(key),
+        )
+      : rawRequestedKeysFromServer;
   debugWarn("[mfe:save-sync] fragment response", {
     activeScopedKey,
     changedKeys,
@@ -285,12 +294,21 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
         Array.isArray(patchResult?.missingKeys) &&
         patchResult.missingKeys.length
       ) {
+        const staleScopeKeys = Array.isArray(patchResult?.staleScopeKeys)
+          ? patchResult.staleScopeKeys
+          : [];
+        const fallbackMissingKeys = patchResult.missingKeys.filter(
+          (key) =>
+            !staleScopeKeys.some((scopeKey) =>
+              isScopeOrDescendantKey(key, scopeKey),
+            ),
+        );
         const editableFallbackUpdated = applyChangedHtmlEditableOnly({
-          changedKeys: patchResult.missingKeys,
+          changedKeys: fallbackMissingKeys,
           htmlMap,
         });
         debugWarn("[mfe:fragment-sync] missing-key editable fallback", {
-          missingKeys: patchResult.missingKeys,
+          missingKeys: fallbackMissingKeys,
           editableFallbackUpdated,
         });
       }
@@ -298,13 +316,19 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
         Array.isArray(patchResult?.skippedSectionKeys) &&
         patchResult.skippedSectionKeys.length
       ) {
+        const staleScopeKeys = Array.isArray(patchResult?.staleScopeKeys)
+          ? patchResult.staleScopeKeys
+          : [];
+        const fallbackSectionKeys = patchResult.skippedSectionKeys.filter(
+          (key) => !staleScopeKeys.includes(key),
+        );
         const sectionEditableUpdated = applyEditableFallbackInSectionHosts({
-          sectionKeys: patchResult.skippedSectionKeys,
+          sectionKeys: fallbackSectionKeys,
           mountTargets,
           htmlMap,
         });
         debugWarn("[mfe:fragment-sync] skipped-section editable fallback", {
-          skippedSectionKeys: patchResult.skippedSectionKeys,
+          skippedSectionKeys: fallbackSectionKeys,
           sectionEditableUpdated,
         });
       }
@@ -557,6 +581,57 @@ function hasDescendantScopedDrafts(sectionKey) {
   return false;
 }
 
+function isScopeOrDescendantKey(key, scopeKey) {
+  if (!key || !scopeKey) return false;
+  return key === scopeKey || isDescendantKey(key, scopeKey);
+}
+
+function getParentScopeKeys(keys) {
+  const list = Array.isArray(keys) ? keys : [];
+  return Array.from(
+    new Set(
+      list
+        .map((key) => String(key || "").trim())
+        .filter(Boolean)
+        .filter((key) => {
+          const parts = key.split(":");
+          const isSectionParent =
+            key.startsWith("section:") && parts.length === 2;
+          const isSubsectionParent =
+            key.startsWith("subsection:") && parts.length === 3;
+          return isSectionParent || isSubsectionParent;
+        }),
+    ),
+  );
+}
+
+function computeStaleScopeKeys({ requestedKeys, missingKeys }) {
+  const parentScopes = getParentScopeKeys(requestedKeys);
+  if (!parentScopes.length) return [];
+
+  const requested = Array.isArray(requestedKeys)
+    ? requestedKeys.map((k) => String(k || "").trim()).filter(Boolean)
+    : [];
+  const missing = Array.isArray(missingKeys)
+    ? missingKeys.map((k) => String(k || "").trim()).filter(Boolean)
+    : [];
+
+  const stale = [];
+  parentScopes.forEach((scopeKey) => {
+    const missingInScope = missing.some((k) =>
+      isScopeOrDescendantKey(k, scopeKey),
+    );
+    if (!missingInScope) return;
+    const requestedInScope = requested.some((k) =>
+      isScopeOrDescendantKey(k, scopeKey),
+    );
+    if (!requestedInScope) return;
+    stale.push(scopeKey);
+  });
+
+  return stale;
+}
+
 async function requestRenderedFragmentsDatastar({
   pageId,
   lang,
@@ -668,6 +743,23 @@ async function requestRenderedFragmentsDatastar({
   }
 
   queued.sort((a, b) => keyDepth(a.key) - keyDepth(b.key));
+  const staleScopeKeys = computeStaleScopeKeys({
+    requestedKeys: Array.isArray(keys) ? keys : [],
+    missingKeys,
+  });
+  if (staleScopeKeys.length) {
+    try {
+      window.dispatchEvent(
+        new CustomEvent("mfe:fragment-stale-scope", {
+          detail: {
+            cycleId,
+            staleScopeKeys,
+            missingKeys,
+          },
+        }),
+      );
+    } catch (_e) {}
+  }
   const appliedParents = new Set();
   const queuedScopedKeys = queued
     .map((entry) => String(entry.key || "").trim())
@@ -675,6 +767,26 @@ async function requestRenderedFragmentsDatastar({
   const strictSectionReplace =
     window.MarkdownFrontEditorConfig?.strictSectionReplace !== false;
   queued.forEach((patch) => {
+    if (
+      staleScopeKeys.some((scopeKey) =>
+        isScopeOrDescendantKey(patch.key, scopeKey),
+      )
+    ) {
+      if (
+        (patch.key?.startsWith("section:") ||
+          patch.key?.startsWith("subsection:")) &&
+        !skippedSectionKeys.includes(patch.key)
+      ) {
+        skippedSectionKeys.push(patch.key);
+      }
+      debugWarn("[mfe:fragment-api] scope patch skipped", {
+        cycleId,
+        key: patch.key,
+        selector: patch.selector,
+        reason: "stale-scope-incomplete",
+      });
+      return;
+    }
     for (const parent of appliedParents) {
       if (isDescendantKey(patch.key, parent)) {
         debugWarn("[mfe:fragment-api] patch skipped child-after-parent", {
@@ -802,6 +914,7 @@ async function requestRenderedFragmentsDatastar({
     signals,
     missingKeys,
     skippedSectionKeys,
+    staleScopeKeys,
     applied,
   };
   debugWarn("[mfe:fragment-api] result", result);
