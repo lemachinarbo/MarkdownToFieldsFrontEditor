@@ -147,15 +147,64 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
   });
 
   // Insert Action
-  addBtn.addEventListener("click", () => {
+  addBtn.addEventListener("click", async () => {
     const altInput = sidebar.querySelector("#mfe-picker-alt-input");
-    if (selectedImage && onSelect) {
-      onSelect({
-        filename: selectedImage.path || selectedImage.filename,
-        url: selectedImage.url,
-        alt: altInput.value,
-      });
+    if (!selectedImage || !onSelect) return;
+
+    // For local images: ensure file exists in PW assets, but store RELATIVE path in markdown
+    const relativePath = selectedImage.path || selectedImage.filename;
+    let resolveWarning = null;
+    let pwUrl = null; // PW URL for display (if resolution succeeds)
+
+    if (selectedImage.filename && !selectedImage.url.startsWith("http")) {
+      const pageId =
+        document.querySelector(".fe-editable")?.getAttribute("data-page") ||
+        "0";
+      const saveUrl = window.MarkdownFrontEditorConfig?.saveUrl || "./";
+
+      try {
+        const csrf = await fetchCsrfToken();
+        const formData = new FormData();
+        formData.append("action", "resolveImage");
+        formData.append("pageId", pageId);
+        formData.append("imagePath", relativePath);
+        if (csrf) {
+          formData.append(csrf.name, csrf.value);
+        }
+
+        const response = await fetch(saveUrl, {
+          method: "POST",
+          body: formData,
+          credentials: "same-origin",
+        });
+        const result = await response.json();
+
+        if (result.status === 1 && result.url) {
+          // Success: use PW URL for display
+          pwUrl = result.url;
+        } else {
+          resolveWarning =
+            "Image may not preview correctly (processing deferred to render)";
+          console.warn("Image resolve deferred:", result);
+        }
+      } catch (err) {
+        resolveWarning = "Image processing failed (will retry at render time)";
+        console.warn("Image resolution error:", err);
+      }
     }
+
+    // Pass both pieces of information:
+    // - url: PW URL for display (or fallback to relative if failed)
+    // - filename: relative path for markdown serialization
+    const displayUrl = pwUrl || relativePath;
+
+    onSelect({
+      filename: relativePath,
+      url: displayUrl, // PW URL for display (relative as fallback)
+      alt: altInput.value,
+      _resolveWarning: resolveWarning, // Soft warning for UI feedback
+    });
+
     closeTopWindow();
   });
 

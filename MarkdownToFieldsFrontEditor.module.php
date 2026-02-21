@@ -834,6 +834,40 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             exit;
         }
 
+        // Resolve image endpoint - copies MF image to PW assets, returns PW URL
+        if ($input->post->text('action') === 'resolveImage') {
+            $user = $this->wire()->user;
+            if(!$user->isLoggedIn() || !$user->hasPermission('page-edit-front')) {
+                $this->sendJsonError('Forbidden', 403);
+            }
+
+            try { $this->wire()->session->CSRF->validate(); }
+            catch(\Exception $e) { $this->sendJsonError('Failed CSRF check', 403); }
+
+            $pageId = (int)$input->post->pageId;
+            $imagePath = trim((string)$input->post->imagePath);
+
+            if(!$pageId) $this->sendJsonError('Missing pageId', 400);
+            if($imagePath === '') $this->sendJsonError('Missing imagePath', 400);
+
+            $page = $this->wire()->pages->get($pageId);
+            if(!$page->id) $this->sendJsonError('Page not found', 404);
+
+            // Use MarkdownHtmlConverter's existing pipeline to copy to PW assets
+            $resolvedUrl = \ProcessWire\MarkdownHtmlConverter::resolveImageForInsertion(
+                $page,
+                $imagePath
+            );
+
+            if ($resolvedUrl === null) {
+                $this->sendJsonError('Failed to process image to page assets', 500);
+            }
+
+            header('Content-Type: application/json');
+            echo json_encode(['status' => 1, 'url' => $resolvedUrl]);
+            exit;
+        }
+
         // List images endpoint
         if ($input->post->text('action') === 'listImages') {
             $user = $this->wire()->user;

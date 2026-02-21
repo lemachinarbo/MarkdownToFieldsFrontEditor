@@ -1814,9 +1814,14 @@ function openImagePicker(initialData = null, imagePos = null) {
   createImagePicker({
     initialData,
     onSelect: (imageData) => {
-      // imageData is { filename, url, alt }
+      // imageData is { filename, url, alt, _resolveWarning? }
       const editor = activeEditor || primaryEditor;
       if (!editor) return;
+
+      // Show soft warning if image resolution failed (deferred to render time)
+      if (imageData._resolveWarning) {
+        statusManager.setError(imageData._resolveWarning);
+      }
 
       let shouldReplaceSelectedImage = false;
       if (typeof imagePos === "number") {

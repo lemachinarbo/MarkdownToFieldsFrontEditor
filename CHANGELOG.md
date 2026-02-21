@@ -2,6 +2,7 @@
 
 ## V0.5.5
 - Added thumbnail support with cache index and lazy hash generation for image picker.
+- Image picker now resolves images through ProcessWire before insertion: images are copied from configurable source paths to PW assets, displayed with PW URLs in the editor preview, but stored as portable relative paths in markdown.
 
 ## V0.5.4
 - Live preview now uses the current page language path directly, so updates no longer jump to the wrong language/root route.
