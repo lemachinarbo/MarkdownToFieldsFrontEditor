@@ -1,7 +1,8 @@
 # Changelog
 
 ## V0.5.4
-- Made multilingual fragment rendering deterministic and route-first: uses current request path (`renderPath`) and fails closed instead of drifting to root/default route.
+- Live preview now uses the current page language path directly, so updates no longer jump to the wrong language/root route.
+- Fixed nested subsection preview updates: when some subsection keys are missing from rendered HTML, they are completed from canonical markdown content, so image updates patch correctly.
 
 ## V0.5.3
 - Fixed multilingual fragment preview drift by switching to localized URL resolution: `page.url(language,http)` → `page.localHttpUrl(language)` → `pages.getPath(language)+host` → request `renderPath` fallback.

@@ -499,6 +499,10 @@ function applyEditableFallbackInSectionHosts({
 function applyDatastarPatchElement({ selector, mode, elements, cycleId }) {
   if (!selector) return 0;
   const nodes = Array.from(document.querySelectorAll(selector));
+  return applyDatastarPatchToNodes({ nodes, mode, elements, cycleId });
+}
+
+function applyDatastarPatchToNodes({ nodes, mode, elements, cycleId }) {
   if (!nodes.length) return 0;
   const patchMode = mode || "inner";
   let updated = 0;
@@ -515,6 +519,127 @@ function applyDatastarPatchElement({ selector, mode, elements, cycleId }) {
     }
     updated += 1;
   });
+  return updated;
+}
+
+function parseFragmentHtmlDocument(html) {
+  try {
+    const parser = new DOMParser();
+    return parser.parseFromString(String(html || ""), "text/html");
+  } catch (_e) {
+    return null;
+  }
+}
+
+function collectNonEditableImages(root) {
+  if (!root || !root.querySelectorAll) return [];
+  return Array.from(root.querySelectorAll("img")).filter(
+    (img) => !img.closest(".fe-editable"),
+  );
+}
+
+function collectNonEditableMediaRoots(root) {
+  if (!root || !root.querySelectorAll) return [];
+  return Array.from(root.querySelectorAll("picture, img")).filter((node) => {
+    if (node.closest(".fe-editable")) return false;
+    if (node.tagName?.toLowerCase() === "img" && node.closest("picture")) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function normalizeSrcsetForHost(host, srcset) {
+  const value = String(srcset || "").trim();
+  if (!value) return "";
+  return value
+    .split(",")
+    .map((entry) => {
+      const trimmed = entry.trim();
+      if (!trimmed) return "";
+      const parts = trimmed.split(/\s+/);
+      const url = parts.shift() || "";
+      const descriptor = parts.join(" ");
+      const resolvedUrl = resolveHostImageSrc(host, url);
+      return descriptor ? `${resolvedUrl} ${descriptor}` : resolvedUrl;
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
+function normalizeMediaNodeUrlsForHost(host, node) {
+  if (!node || !node.querySelectorAll) return;
+  const elements = [];
+  if (node.matches?.("img, source")) elements.push(node);
+  node.querySelectorAll?.("img, source")?.forEach((el) => elements.push(el));
+  elements.forEach((el) => {
+    const src = el.getAttribute("src") || "";
+    if (src) {
+      el.setAttribute("src", resolveHostImageSrc(host, src));
+    }
+    const srcset = el.getAttribute("srcset") || "";
+    if (srcset) {
+      el.setAttribute("srcset", normalizeSrcsetForHost(host, srcset));
+    }
+  });
+}
+
+function syncNonEditableImagesFromPatch(host, patchHtml) {
+  if (!host || !host.querySelectorAll) return 0;
+  const parsed = parseFragmentHtmlDocument(patchHtml);
+  if (!parsed) return 0;
+
+  const liveMediaRoots = collectNonEditableMediaRoots(host);
+  const patchMediaRoots = collectNonEditableMediaRoots(parsed.body || parsed);
+  if (liveMediaRoots.length && patchMediaRoots.length) {
+    if (liveMediaRoots.length !== patchMediaRoots.length) return 0;
+    let mediaUpdated = 0;
+    liveMediaRoots.forEach((liveNode, idx) => {
+      const patchNode = patchMediaRoots[idx];
+      if (!patchNode || !liveNode?.isConnected) return;
+      const patchClone = patchNode.cloneNode(true);
+      normalizeMediaNodeUrlsForHost(host, patchClone);
+      const nextHtml = patchClone.outerHTML || "";
+      const currentHtml = liveNode.outerHTML || "";
+      if (!nextHtml || nextHtml === currentHtml) return;
+      liveNode.outerHTML = nextHtml;
+      mediaUpdated += 1;
+    });
+    if (mediaUpdated > 0) return mediaUpdated;
+  }
+
+  const liveImages = collectNonEditableImages(host);
+  const patchImages = collectNonEditableImages(parsed.body || parsed);
+  if (!liveImages.length || !patchImages.length) return 0;
+  if (liveImages.length !== patchImages.length) return 0;
+
+  let updated = 0;
+  liveImages.forEach((liveImg, idx) => {
+    const patchImg = patchImages[idx];
+    if (!patchImg) return;
+
+    const srcRaw = patchImg.getAttribute("src") || "";
+    if (srcRaw) {
+      const nextSrc = resolveHostImageSrc(host, srcRaw);
+      if ((liveImg.getAttribute("src") || "") !== nextSrc) {
+        liveImg.setAttribute("src", nextSrc);
+        updated += 1;
+      }
+    }
+
+    const nextAlt = patchImg.getAttribute("alt") || "";
+    if ((liveImg.getAttribute("alt") || "") !== nextAlt) {
+      liveImg.setAttribute("alt", nextAlt);
+    }
+
+    const nextTitle = patchImg.getAttribute("title");
+    if (nextTitle === null || nextTitle === "") {
+      if (liveImg.hasAttribute("title")) liveImg.removeAttribute("title");
+    } else if ((liveImg.getAttribute("title") || "") !== nextTitle) {
+      liveImg.setAttribute("title", nextTitle);
+    }
+  });
+
   return updated;
 }
 
@@ -823,6 +948,62 @@ async function requestRenderedFragmentsDatastar({
       hasQueuedDescendantKey &&
       !patchHtml.includes("fe-editable");
     if (isParentWithoutEditablePayload) {
+      const safeNodes = candidateNodes.filter(
+        (n) =>
+          n &&
+          !n.classList?.contains("fe-editable") &&
+          !n.querySelector?.(".fe-editable"),
+      );
+      if (safeNodes.length > 0) {
+        const safeUpdated = applyDatastarPatchToNodes({
+          nodes: safeNodes,
+          mode: patch.mode || "inner",
+          elements: patchHtml,
+          cycleId,
+        });
+        updated += safeUpdated;
+        applied.push({
+          key: patch.key || "",
+          selector: patch.selector || "",
+          mode: patch.mode || "inner",
+          htmlLen: (patch.elements || "").length,
+          updated: safeUpdated,
+        });
+        debugWarn("[mfe:fragment-api] scope patch partial", {
+          cycleId,
+          key: patch.key,
+          selector: patch.selector,
+          reason: "descendant-keys-safe-noneditable",
+          safeNodeCount: safeNodes.length,
+          updated: safeUpdated,
+        });
+        return;
+      }
+
+      const imageSynced = candidateNodes.reduce(
+        (count, node) =>
+          count + syncNonEditableImagesFromPatch(node, patchHtml),
+        0,
+      );
+      if (imageSynced > 0) {
+        applied.push({
+          key: patch.key || "",
+          selector: patch.selector || "",
+          mode: "image-sync",
+          htmlLen: (patch.elements || "").length,
+          updated: imageSynced,
+        });
+        updated += imageSynced;
+        debugWarn("[mfe:fragment-api] scope patch partial", {
+          cycleId,
+          key: patch.key,
+          selector: patch.selector,
+          reason: "descendant-keys-noneditable-image-sync",
+          updated: imageSynced,
+        });
+        return;
+      }
+
       if (!skippedSectionKeys.includes(patch.key)) {
         skippedSectionKeys.push(patch.key);
       }

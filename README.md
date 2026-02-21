@@ -117,8 +117,6 @@ And thats it. You can now edit the content directly on the page by double-clicki
 
 ### Live preview behavior with nested sections and fields
 
-## Live preview behavior with nested sections and fields
-
 When you use the editor to edit an area that contains other editable areas:
 
 ```html
@@ -135,8 +133,13 @@ Live preview tries hard to keep your layout intact with the new content. But whe
 
 So in those cases, when you save a parent (section/subsection), the editor checks if replacing the whole block is safe:
 
-* **If safe →** full parent block gets replaced. Content and HTML update, **but inner editable zones won’t be clickable** until refresh.
-* **If risky →** parent replace is skipped and only children are updated, which means the user won’t see their changes live. Content is saved, but this temporary preview doesn’t reflect final output.
+* **If safe →** full parent block gets replaced.
+* **If risky →** the editor keeps parent wrappers and applies safe partial updates:
+  * updates child editable keys,
+  * updates safe non-editable media nodes (like images/picture blocks),
+  * completes unresolved keys from canonical markdown content when needed.
+
+This keeps nested editable zones stable while still showing the saved changes in live preview.
 
 You can control this in module settings:
 
