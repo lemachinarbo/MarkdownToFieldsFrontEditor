@@ -1,5 +1,8 @@
 # Changelog
 
+## V0.5.5
+- Added thumbnail support with cache index and lazy hash generation for image picker.
+
 ## V0.5.4
 - Live preview now uses the current page language path directly, so updates no longer jump to the wrong language/root route.
 - Fixed nested subsection preview updates: when some subsection keys are missing from rendered HTML, they are completed from canonical markdown content, so image updates patch correctly.

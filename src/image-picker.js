@@ -20,9 +20,10 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
 
   function getImageBaseUrl() {
     const fromConfig = window.MarkdownFrontEditorConfig?.imageBaseUrl;
-    const base = typeof fromConfig === "string" && fromConfig.trim() !== ""
-      ? fromConfig
-      : "/";
+    const base =
+      typeof fromConfig === "string" && fromConfig.trim() !== ""
+        ? fromConfig
+        : "/";
     return base.endsWith("/") ? base : `${base}/`;
   }
 
@@ -199,6 +200,9 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
     }
 
     grid.innerHTML = "";
+    const pendingThumbs = [];
+    const requestThumbs = [];
+
     images.forEach((image) => {
       const item = document.createElement("div");
       item.className = "mfe-gallery-item";
@@ -211,7 +215,30 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
       }
 
       const img = document.createElement("img");
-      img.src = image.url;
+      if (image.thumbUrl) {
+        // Cached thumb exists - use it
+        img.src = image.thumbUrl;
+      } else if (image.thumbPending) {
+        // Has hash but thumb missing - show placeholder, wait for SSE
+        img.src =
+          "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect fill='%23f0f0f0' width='300' height='300'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23999' font-size='14'%3ELoading...%3C/text%3E%3C/svg%3E";
+        img.dataset.thumbName = image.thumbName;
+        img.dataset.imagePath = image.fullPath || image.path;
+        img.dataset.hash = image.hash || "";
+        img.dataset.relativePath = image.path || "";
+        pendingThumbs.push(img);
+      } else if (image.requestThumb) {
+        // No hash yet - show placeholder, generate thumb in background
+        img.src =
+          "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect fill='%23f0f0f0' width='300' height='300'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23999' font-size='14'%3ELoading...%3C/text%3E%3C/svg%3E";
+        img.dataset.imagePath = image.fullPath || image.path;
+        img.dataset.hash = "";
+        img.dataset.relativePath = image.path || "";
+        requestThumbs.push(img);
+      } else {
+        // Use full URL directly (only for SVG or unsupported formats)
+        img.src = image.url;
+      }
       img.alt = image.filename;
       img.loading = "lazy";
 
@@ -236,6 +263,96 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
       });
 
       grid.appendChild(item);
+    });
+
+    if (pendingThumbs.length > 0 || requestThumbs.length > 0) {
+      generateThumbs([...pendingThumbs, ...requestThumbs]);
+    }
+  }
+
+  function generateThumbs(pendingImgs) {
+    const saveUrl = window.MarkdownFrontEditorConfig?.saveUrl || "./";
+    const debug = !!window.MarkdownFrontEditorConfig?.debug;
+
+    const withHash = pendingImgs.filter((img) => img.dataset.hash);
+    const withoutHash = pendingImgs.filter((img) => !img.dataset.hash);
+
+    // Start SSE for images with known hashes
+    if (withHash.length > 0) {
+      const thumbNames = withHash
+        .map((img) => img.dataset.thumbName)
+        .filter(Boolean);
+      if (thumbNames.length > 0) {
+        const sseUrl = `${saveUrl}?action=thumbStream&thumbs=${encodeURIComponent(thumbNames.join(","))}`;
+        const eventSource = new EventSource(sseUrl);
+
+        eventSource.addEventListener("ready", (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            const img = withHash.find(
+              (i) => i.dataset.thumbName === data.thumbName,
+            );
+            if (img) {
+              img.src = data.thumbUrl;
+            }
+          } catch (err) {
+            if (debug) console.error("[MFE] SSE parse error:", err);
+          }
+        });
+
+        eventSource.addEventListener("done", () => {
+          eventSource.close();
+        });
+
+        eventSource.onerror = (err) => {
+          if (debug) console.error("[MFE] SSE error:", err);
+          eventSource.close();
+        };
+      }
+    }
+
+    // Generate thumbs: withHash first (while SSE is listening), then withoutHash
+    const orderedImgs = [...withHash, ...withoutHash];
+    orderedImgs.forEach((img) => {
+      const hasHash = !!img.dataset.hash;
+
+      fetchCsrfToken().then((csrf) => {
+        const formData = new FormData();
+        formData.append("action", "generateThumb");
+        formData.append("imagePath", img.dataset.imagePath);
+        if (img.dataset.relativePath) {
+          formData.append("relativePath", img.dataset.relativePath);
+        }
+        if (img.dataset.hash) {
+          formData.append("hash", img.dataset.hash);
+        }
+        if (csrf) {
+          formData.append(csrf.name, csrf.value);
+        }
+
+        fetch(saveUrl, {
+          method: "POST",
+          body: formData,
+          credentials: "same-origin",
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            // Handle SVG skip - use original URL
+            if (data.status === "skip" && data.reason === "svg") {
+              // SVG files don't get thumbs, already showing full URL
+              return;
+            }
+
+            // Update image src if thumb was created (for images without hash)
+            // Images with hash are updated via SSE
+            if (!hasHash && data.thumbUrl) {
+              img.src = data.thumbUrl;
+            }
+          })
+          .catch((err) => {
+            if (debug) console.error("[MFE] Thumb generation failed:", err);
+          });
+      });
     });
   }
 

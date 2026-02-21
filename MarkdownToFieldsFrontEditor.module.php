@@ -14,7 +14,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
             'summary' => 'Frontend editor for MarkdownToFields.',
-            'version' =>  '0.5.4',
+            'version' =>  '0.5.5',
             'autoload' => true,
             'singular' => true,
             'requires' => ['MarkdownToFields'],
@@ -45,6 +45,17 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         
         $defaults = self::getDefaultData();
         $data = array_merge($defaults, $data);
+
+        $input = wire('input');
+        if ($input->post->text('mfeClearThumbCache') !== '') {
+            $module = wire('modules')->get('MarkdownToFieldsFrontEditor');
+            if ($module) {
+                $deleted = $module->clearThumbCache();
+                $module->message(
+                    sprintf('Thumbnail cache cleared (%d files).', $deleted)
+                );
+            }
+        }
 
         $f = wire('modules')->get('InputfieldText');
         $f->name = 'toolbarButtons';
@@ -127,6 +138,19 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $debugFieldset->add($debugLabelsField);
 
         $inputfields->add($debugFieldset);
+
+        $thumbFieldset = wire('modules')->get('InputfieldFieldset');
+        $thumbFieldset->label = 'Thumbnail Cache';
+        $thumbFieldset->description = 'Manual cache controls for image picker thumbnails.';
+
+        $clearThumbs = wire('modules')->get('InputfieldSubmit');
+        $clearThumbs->name = 'mfeClearThumbCache';
+        $clearThumbs->value = 'Clear thumbnail cache';
+        $clearThumbs->description = 'Deletes /site/images/_thumbs/index.json and cached thumbs.';
+        $clearThumbs->columnWidth = 100;
+        $thumbFieldset->add($clearThumbs);
+
+        $inputfields->add($thumbFieldset);
 
         return $inputfields;
     }
@@ -623,6 +647,193 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             exit;
         }
 
+        // SSE thumb stream endpoint
+        if ($input->get->text('action') === 'thumbStream') {
+            $user = $this->wire()->user;
+            if(!$user->isLoggedIn() || !$user->hasPermission('page-edit-front')) {
+                header('HTTP/1.1 403 Forbidden');
+                echo 'Forbidden';
+                exit;
+            }
+
+            $thumbsParam = $input->get->text('thumbs');
+            if ($thumbsParam === '') {
+                header('HTTP/1.1 400 Bad Request');
+                echo 'Missing thumbs parameter';
+                exit;
+            }
+
+            $thumbNames = array_filter(array_map('trim', explode(',', $thumbsParam)));
+            if (empty($thumbNames)) {
+                header('HTTP/1.1 400 Bad Request');
+                echo 'No thumb names provided';
+                exit;
+            }
+
+            header('Content-Type: text/event-stream');
+            header('Cache-Control: no-cache');
+            header('Connection: keep-alive');
+            if (function_exists('apache_setenv')) {
+                @apache_setenv('no-gzip', '1');
+            }
+            @ini_set('output_buffering', 'off');
+            @ini_set('zlib.output_compression', 'off');
+            if (function_exists('ob_end_clean')) {
+                while (ob_get_level() > 0) {
+                    ob_end_clean();
+                }
+            }
+
+            $sitePath = $this->wire()->config->paths->site;
+            $thumbDir = rtrim($sitePath, '/') . '/images/_thumbs/';
+            $remaining = $thumbNames;
+            $timeout = 30;
+            $start = time();
+
+            while (count($remaining) > 0 && (time() - $start) < $timeout) {
+                $toCheck = $remaining;
+                $remaining = [];
+                foreach ($toCheck as $name) {
+                    $path = $thumbDir . $name;
+                    if (is_file($path)) {
+                        $siteUrl = rtrim($this->wire()->config->urls->site, '/');
+                        $url = $siteUrl . '/images/_thumbs/' . $name;
+                        echo "event: ready\n";
+                        echo 'data: ' . json_encode(['thumbName' => $name, 'thumbUrl' => $url]) . "\n\n";
+                        if (function_exists('ob_flush')) {
+                            ob_flush();
+                        }
+                        flush();
+                    } else {
+                        $remaining[] = $name;
+                    }
+                }
+                if (count($remaining) > 0) {
+                    usleep(500000);
+                }
+            }
+
+            echo "event: done\n";
+            echo "data: {}\n\n";
+            if (function_exists('ob_flush')) {
+                ob_flush();
+            }
+            flush();
+            exit;
+        }
+
+        // Thumb generation endpoint
+        if ($input->post->text('action') === 'generateThumb') {
+            $user = $this->wire()->user;
+            if(!$user->isLoggedIn() || !$user->hasPermission('page-edit-front')) {
+                $this->sendJsonError('Forbidden', 403);
+            }
+
+            try { $this->wire()->session->CSRF->validate(); }
+            catch(\Exception $e) { $this->sendJsonError('Failed CSRF check', 403); }
+
+            $imagePath = $input->post->text('imagePath');
+            $relativePath = $input->post->text('relativePath');
+            $hash = $input->post->text('hash');
+            if (!$imagePath) {
+                $this->sendJsonError('Missing imagePath', 400);
+            }
+
+            if (!is_file($imagePath) || !is_readable($imagePath)) {
+                $this->sendJsonError('Image not found or not readable', 404);
+            }
+
+            $basename = basename($imagePath);
+            $ext = strtolower(pathinfo($imagePath, PATHINFO_EXTENSION));
+            
+            // Skip SVG files - cannot generate thumb with GD library
+            if ($ext === 'svg') {
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'status' => 'skip',
+                    'reason' => 'svg',
+                    'url' => $input->post->text('imageUrl') ?: '',
+                ]);
+                exit;
+            }
+            
+            // Compute hash if not provided (lazy initialization)
+            if ($hash === '') {
+                $hash = $this->hashFile($imagePath);
+                if ($relativePath !== '') {
+                    $this->saveHashToIndex($relativePath, $hash);
+                }
+                $this->logDebug(sprintf(
+                    "THUMB_GENERATE_HASH_COMPUTED_AND_STORED imagePath='%s' hash='%s'",
+                    $imagePath,
+                    $hash
+                ));
+            }
+
+            $thumbPath = $this->thumbPath($basename, $hash);
+            if (is_file($thumbPath)) {
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'status' => 'exists',
+                    'thumbUrl' => $this->thumbUrl($basename, $hash),
+                    'hash' => $hash,
+                ]);
+                exit;
+            }
+
+            $img = null;
+            if ($ext === 'jpg' || $ext === 'jpeg') {
+                $img = @imagecreatefromjpeg($imagePath);
+            } elseif ($ext === 'png') {
+                $img = @imagecreatefrompng($imagePath);
+            } elseif ($ext === 'gif') {
+                $img = @imagecreatefromgif($imagePath);
+            } elseif ($ext === 'webp') {
+                $img = @imagecreatefromwebp($imagePath);
+            }
+
+            if (!$img) {
+                $this->sendJsonError('Failed to load image', 500);
+            }
+
+            $origW = imagesx($img);
+            $origH = imagesy($img);
+            $maxDim = 300;
+            if ($origW > $origH) {
+                $newW = $maxDim;
+                $newH = (int)(($origH / $origW) * $maxDim);
+            } else {
+                $newH = $maxDim;
+                $newW = (int)(($origW / $origH) * $maxDim);
+            }
+
+            $thumb = imagecreatetruecolor($newW, $newH);
+            imagecopyresampled($thumb, $img, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
+            imagedestroy($img);
+
+            $this->ensureThumbDir();
+            $saved = imagejpeg($thumb, $thumbPath, 70);
+            imagedestroy($thumb);
+
+            if (!$saved) {
+                $this->sendJsonError('Failed to save thumb', 500);
+            }
+
+            $this->logDebug(sprintf(
+                "THUMB_GENERATE_CREATED thumbPath='%s' size=%d bytes",
+                $thumbPath,
+                filesize($thumbPath)
+            ));
+
+            header('Content-Type: application/json');
+            echo json_encode([
+                'status' => 'created',
+                'thumbUrl' => $this->thumbUrl($basename, $hash),
+                'hash' => $hash,
+            ]);
+            exit;
+        }
+
         // List images endpoint
         if ($input->post->text('action') === 'listImages') {
             $user = $this->wire()->user;
@@ -712,6 +923,15 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
                     $filename = $file->getFilename();
                     $fullFilename = str_replace('\\', '/', $file->getPathname());
+                    
+                    // Skip files inside _thumbs directory (disposable cache)
+                    if (strpos($fullFilename, '/images/_thumbs/') !== false) {
+                        continue;
+                    }
+                    
+                    // Skip SVG files from thumb generation (display directly)
+                    $isSvg = strtolower($ext) === 'svg';
+                    
                     $relativeSourcePath = ltrim(substr($fullFilename, strlen($fullPathNorm)), '/');
                     $relativeSourcePath = str_replace('\\', '/', $relativeSourcePath);
 
@@ -722,32 +942,67 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         $url = $siteUrl . rtrim($relativePath, '/') . '/' . $relativeSourcePath;
                     } else {
                         if (!$warnedOutsideRoot && $rootPath && !str_starts_with($fullPathNorm, $rootPath)) {
-                            $this->logInfo(sprintf(
-                                "LIST_IMAGES warning: path outside root/site: %s",
-                                $fullPathNorm
-                            ));
                             $warnedOutsideRoot = true;
                         }
                         $relativePath = $rootPath ? str_replace($rootPath, '/', $fullPathNorm) : $fullPathNorm;
                         $url = rtrim($relativePath, '/') . '/' . $relativeSourcePath;
                     }
 
-                    $images[] = [
+                    // Check mfe-owned hash index (lazy cache)
+                    $hash = null;
+                    if (!isset($thumbIndex)) {
+                        $thumbIndex = $this->loadThumbIndex();
+                    }
+                    if (isset($thumbIndex[$relativeSourcePath])) {
+                        $hash = $thumbIndex[$relativeSourcePath];
+                    }
+
+                    $thumbUrl = null;
+                    $thumbPending = false;
+                    $thumbName = null;
+                    $requestThumb = false;
+                    
+                    // SVG files: no thumb generation, display directly
+                    if ($isSvg) {
+                        // No thumb for SVG, will use full URL
+                    } elseif ($hash) {
+                        $name = pathinfo($filename, PATHINFO_FILENAME);
+                        $thumbName = $name . '.' . $hash . '.jpg';
+                        $thumbPath = $sitePath . 'images/_thumbs/' . $thumbName;
+                        if (is_file($thumbPath)) {
+                            $thumbUrl = $siteUrl . '/images/_thumbs/' . $thumbName;
+                        } else {
+                            $thumbPending = true;
+                        }
+                    } else {
+                        // No hash: request thumb generation but don't show loading state
+                        $requestThumb = true;
+                    }
+
+                    $imageItem = [
                         'filename' => $filename,
                         'path' => $relativeSourcePath,
                         'url' => $url,
                         'size' => $file->getSize(),
+                        'fullPath' => $fullFilename,
                     ];
+                    if ($hash) {
+                        $imageItem['hash'] = $hash;
+                    }
+                    if ($thumbUrl) {
+                        $imageItem['thumbUrl'] = $thumbUrl;
+                    }
+                    if ($thumbPending) {
+                        $imageItem['thumbPending'] = true;
+                        $imageItem['thumbName'] = $thumbName;
+                    }
+                    if ($requestThumb) {
+                        $imageItem['requestThumb'] = true;
+                    }
+
+                    $images[] = $imageItem;
                 }
             }
-
-            $this->logDebug(sprintf(
-                "LIST_IMAGES pageId=%d paths=%s missing=%s count=%d",
-                $pageId,
-                json_encode(array_values($imageSourcePaths)),
-                json_encode(array_values($missingDirs)),
-                count($images)
-            ));
 
             header('Content-Type: application/json');
             echo json_encode(['status' => 1, 'images' => $images]);
@@ -3166,6 +3421,78 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             }
         }
         return array_keys($out);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Thumbnail system (mfe-only)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    protected function ensureThumbDir(): string {
+        $sitePath = $this->wire()->config->paths->site;
+        $thumbDir = rtrim($sitePath, '/') . '/images/_thumbs/';
+        if (!is_dir($thumbDir)) {
+            if (!mkdir($thumbDir, 0755, true)) {
+                throw new \RuntimeException("Failed to create thumb directory: {$thumbDir}");
+            }
+        }
+        return $thumbDir;
+    }
+
+    protected function hashFile(string $path): string {
+        if (!is_file($path) || !is_readable($path)) {
+            throw new \RuntimeException("Cannot read file for hashing: {$path}");
+        }
+        return hash_file('sha256', $path);
+    }
+
+    protected function thumbPath(string $basename, string $hash): string {
+        $thumbDir = $this->ensureThumbDir();
+        $name = pathinfo($basename, PATHINFO_FILENAME);
+        return $thumbDir . $name . '.' . $hash . '.jpg';
+    }
+
+    protected function thumbUrl(string $basename, string $hash): string {
+        $siteUrl = rtrim($this->wire()->config->urls->site, '/');
+        $name = pathinfo($basename, PATHINFO_FILENAME);
+        return $siteUrl . '/images/_thumbs/' . $name . '.' . $hash . '.jpg';
+    }
+
+    protected function clearThumbCache(): int {
+        $thumbDir = $this->ensureThumbDir();
+        if (!is_dir($thumbDir)) {
+            return 0;
+        }
+        $iterator = new \FilesystemIterator($thumbDir, \FilesystemIterator::SKIP_DOTS);
+        $deleted = 0;
+        foreach ($iterator as $file) {
+            if ($file->isFile()) {
+                if (@unlink($file->getPathname())) {
+                    $deleted++;
+                }
+            }
+        }
+        return $deleted;
+    }
+
+    protected function thumbIndexPath(): string {
+        $thumbDir = $this->ensureThumbDir();
+        return $thumbDir . 'index.json';
+    }
+
+    protected function loadThumbIndex(): array {
+        $indexPath = $this->thumbIndexPath();
+        if (!is_file($indexPath)) {
+            return [];
+        }
+        $data = json_decode(file_get_contents($indexPath), true);
+        return is_array($data) ? $data : [];
+    }
+
+    protected function saveHashToIndex(string $filename, string $hash): void {
+        $index = $this->loadThumbIndex();
+        $index[$filename] = $hash;
+        $indexPath = $this->thumbIndexPath();
+        file_put_contents($indexPath, json_encode($index, JSON_PRETTY_PRINT));
     }
 
 }
