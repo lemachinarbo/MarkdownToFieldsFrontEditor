@@ -1,4 +1,9 @@
-import { getSectionEntry, getSubsectionEntry } from "./content-index.js";
+import {
+  getSectionEntry,
+  getSubsectionEntry,
+  findSectionNameForSubsection,
+} from "./content-index.js";
+import { getMetaAttr } from "./editor-shared-helpers.js";
 
 export function resolveDblclickAction({
   event,
@@ -10,26 +15,6 @@ export function resolveDblclickAction({
   createVirtualTarget,
   pageId,
 }) {
-  const getMetaAttr = (el, name) => {
-    if (!el) return "";
-    return (
-      el.getAttribute(`data-mfe-${name}`) ||
-      el.getAttribute(`data-md-${name}`) ||
-      ""
-    );
-  };
-
-  const findSectionNameForSubsection = (subName) => {
-    const sections = window.MarkdownFrontEditorConfig?.sectionsIndex || [];
-    for (const section of sections) {
-      const subs = Array.isArray(section.subsections) ? section.subsections : [];
-      for (const sub of subs) {
-        if (sub?.name === subName) return section.name || "";
-      }
-    }
-    return "";
-  };
-
   if (!hit) {
     const fallback =
       overlayEngine.findFieldSubsectionTargetFromPoint(
@@ -51,8 +36,7 @@ export function resolveDblclickAction({
     }
     if (!fallbackB64 && fallback?.scope === "subsection") {
       fallbackB64 =
-        getSubsectionEntry(fallbackSection, fallback.name)?.markdownB64 ||
-        "";
+        getSubsectionEntry(fallbackSection, fallback.name)?.markdownB64 || "";
     }
 
     const allowEmptyVirtual =
@@ -91,8 +75,12 @@ export function resolveDblclickAction({
         target.closest(
           '[data-mfe-scope="field"][data-field-type="container"], [data-md-scope="field"][data-field-type="container"]',
         ) ||
-        target.closest('[data-mfe-scope="subsection"], [data-md-scope="subsection"]') ||
-        target.closest('[data-mfe-scope="section"], [data-md-scope="section"]') ||
+        target.closest(
+          '[data-mfe-scope="subsection"], [data-md-scope="subsection"]',
+        ) ||
+        target.closest(
+          '[data-mfe-scope="section"], [data-md-scope="section"]',
+        ) ||
         target;
     }
 
@@ -105,7 +93,11 @@ export function resolveDblclickAction({
 
   const scope = getMetaAttr(target, "scope") || "field";
   const fieldType = target.getAttribute("data-field-type") || "tag";
-  if (scope === "section" || scope === "subsection" || fieldType === "container") {
+  if (
+    scope === "section" ||
+    scope === "subsection" ||
+    fieldType === "container"
+  ) {
     return { action: "fullscreen", target, reason: "inline-ignored" };
   }
 

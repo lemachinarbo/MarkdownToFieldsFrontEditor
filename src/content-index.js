@@ -11,6 +11,22 @@ function getSubsectionEntry(sectionName, subName) {
   return subs.find((s) => s.name === subName) || null;
 }
 
+function getFieldsIndex() {
+  const cfg = window.MarkdownFrontEditorConfig || {};
+  return Array.isArray(cfg.fieldsIndex) ? cfg.fieldsIndex : [];
+}
+
+function findSectionNameForSubsection(subName) {
+  const sections = window.MarkdownFrontEditorConfig?.sectionsIndex || [];
+  for (const section of sections) {
+    const subs = Array.isArray(section.subsections) ? section.subsections : [];
+    for (const sub of subs) {
+      if (sub?.name === subName) return section.name || "";
+    }
+  }
+  return "";
+}
+
 function collectFieldTargets(root = document) {
   const fields = Array.from(root.querySelectorAll(".fe-editable"));
   return fields.map((el) => {
@@ -73,4 +89,9 @@ export function buildContentIndex({ root = document } = {}) {
 
 // intentionally no debug exports
 
-export { getSectionEntry, getSubsectionEntry };
+export {
+  getSectionEntry,
+  getSubsectionEntry,
+  getFieldsIndex,
+  findSectionNameForSubsection,
+};

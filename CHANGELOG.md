@@ -1,5 +1,9 @@
 # Changelog
 
+## V0.5.6
+- Refactored duplicated inline/fullscreen editor code into shared helpers.
+- Moved shared TipTap extensions into one module to keep inline/fullscreen in sync.
+
 ## V0.5.5
 - Image picker is faster thanks to thumbnail caching.
 - Picked images are now copied into ProcessWire assets, previewed with site URLs, and saved in markdown as relative paths.

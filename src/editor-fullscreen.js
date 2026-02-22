@@ -5,14 +5,12 @@
  * This editor provides WYSIWYG editing while preserving markdown integrity.
  */
 
-import { Editor, Extension, Mark } from "@tiptap/core";
+import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
-import Image from "@tiptap/extension-image";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { common, createLowlight } from "lowlight";
-import { Plugin, NodeSelection } from "prosemirror-state";
-import { Decoration, DecorationSet } from "prosemirror-view";
+import { NodeSelection } from "prosemirror-state";
 import { createToolbarButtons } from "./editor-toolbar.js";
 import { renderToolbarButtons } from "./editor-toolbar-renderer.js";
 import { createStatusManager } from "./editor-status.js";
@@ -22,12 +20,9 @@ import {
   createSingleBlockEnterToastExtension,
 } from "./field-constraints-extension.js";
 import {
-  inlineHtmlTags,
   shouldWarnForExtraContent,
-  countNonEmptyBlocks,
   countSignificantTopLevelBlocks,
   renderMarkdownToHtml,
-  serializeMarkdownDoc,
   decodeMarkdownBase64,
   decodeHtmlEntitiesInFences,
   trimTrailingLineBreaks,
@@ -40,11 +35,30 @@ import {
   assertMarkdownInvariant,
   validateSerializerLosslessness,
 } from "./editor-core.js";
+import {
+  InlineHtmlLabelExtension,
+  UnderlineMark,
+  SuperscriptMark,
+  SubscriptMark,
+  createMfeImageExtension,
+} from "./editor-tiptap-extensions.js";
+import {
+  getMetaAttr,
+  getImageBaseUrl,
+  setOriginalBlockCount,
+  getOriginalBlockCount,
+  applyFieldAttributes,
+  stripTrailingEmptyParagraph,
+  getMarkdownFromEditor,
+  stripMfeMarkersForFieldScope,
+} from "./editor-shared-helpers.js";
 import { Marker } from "./marker-extension.js";
 import {
   buildContentIndex,
   getSectionEntry,
   getSubsectionEntry,
+  getFieldsIndex,
+  findSectionNameForSubsection,
 } from "./content-index.js";
 import { createImagePicker } from "./image-picker.js";
 import {
@@ -430,15 +444,6 @@ async function savePendingDrafts() {
       updateActiveEditor: false,
     });
   }
-}
-
-function getMetaAttr(el, name) {
-  if (!el) return "";
-  return (
-    el.getAttribute(`data-mfe-${name}`) ||
-    el.getAttribute(`data-md-${name}`) ||
-    ""
-  );
 }
 
 function applyChangedHtmlEditableOnly({ changedKeys, htmlMap }) {
@@ -1113,15 +1118,6 @@ async function requestRenderedFragmentsDatastar({
   return result;
 }
 
-function getImageBaseUrl() {
-  const fromConfig = window.MarkdownFrontEditorConfig?.imageBaseUrl;
-  const base =
-    typeof fromConfig === "string" && fromConfig.trim() !== ""
-      ? fromConfig
-      : "/";
-  return base.endsWith("/") ? base : `${base}/`;
-}
-
 function buildFieldId(pageId, scope, section, subsection, name) {
   const sub = subsection || "";
   if (sub) {
@@ -1133,21 +1129,6 @@ let breadcrumbsEl = null;
 let breadcrumbClickHandler = null;
 const statusManager = createStatusManager();
 
-function stripTrailingEmptyParagraph(editor) {
-  if (!editor) return;
-  const { state, view } = editor;
-  const { doc } = state;
-  if (doc.childCount <= 1) return;
-
-  const last = doc.child(doc.childCount - 1);
-  if (last.type.name !== "paragraph") return;
-  if (last.textContent.trim() !== "") return;
-
-  const from = doc.content.size - last.nodeSize;
-  const to = doc.content.size;
-  const tr = state.tr.delete(from, to);
-  view.dispatch(tr);
-}
 let saveCallback = null;
 let keydownHandler = null;
 
@@ -1226,30 +1207,6 @@ async function keepPendingChangesBeforeSwitch() {
   return true;
 }
 
-function setOriginalBlockCount(editor, fieldType, fieldName) {
-  const count = shouldWarnForExtraContent(fieldType, fieldName)
-    ? 1
-    : countNonEmptyBlocks(editor.state.doc);
-  originalBlockCounts.set(editor, count);
-}
-
-function getOriginalBlockCount(editor) {
-  return originalBlockCounts.get(editor) || 0;
-}
-
-function applyFieldAttributes(editor, fieldType, fieldName) {
-  const dom = editor.view.dom;
-  dom.setAttribute("data-field-type", fieldType);
-  dom.setAttribute("data-field-name", fieldName || "");
-  if (shouldWarnForExtraContent(fieldType, fieldName)) {
-    dom.setAttribute("data-extra-warning", "true");
-    dom.setAttribute("data-extra-warning-active", "false");
-  } else {
-    dom.removeAttribute("data-extra-warning");
-    dom.removeAttribute("data-extra-warning-active");
-  }
-}
-
 function createEditorInstance(element, fieldType, fieldName) {
   const restrictToSingleBlock = shouldWarnForExtraContent(fieldType, fieldName);
   const starterKitOptions = {
@@ -1262,77 +1219,15 @@ function createEditorInstance(element, fieldType, fieldName) {
   const SingleBlockEnterToastExtension = createSingleBlockEnterToastExtension(
     (message, options) => statusManager.setError(message, options),
   );
-  const InlineHtmlLabel = Extension.create({
-    name: "inlineHtmlLabel",
-    addProseMirrorPlugins() {
-      return [
-        new Plugin({
-          props: {
-            decorations(state) {
-              const decorations = [];
-              state.doc.descendants((node, pos, parent) => {
-                if (!node.isText) return;
-                if (parent?.type?.name === "codeBlock") return;
-                if (node.marks?.some((mark) => mark.type.name === "code"))
-                  return;
-
-                inlineHtmlTags.forEach((tag) => {
-                  const re = new RegExp(`<\\s*\\/?\\s*${tag}\\b[^>]*>`, "gi");
-                  let match;
-                  while ((match = re.exec(node.text)) !== null) {
-                    const from = pos + match.index;
-                    const to = from + match[0].length;
-                    decorations.push(
-                      Decoration.inline(from, to, {
-                        class: "mfe-inline-html",
-                        "data-inline-html": match[0],
-                      }),
-                    );
-                  }
-                });
-              });
-              return DecorationSet.create(state.doc, decorations);
-            },
-          },
-        }),
-      ];
-    },
-  });
-  const Underline = Mark.create({
-    name: "underline",
-    parseHTML() {
-      return [{ tag: "u" }];
-    },
-    renderHTML() {
-      return ["u", 0];
-    },
-  });
-  const Superscript = Mark.create({
-    name: "superscript",
-    parseHTML() {
-      return [{ tag: "sup" }];
-    },
-    renderHTML() {
-      return ["sup", 0];
-    },
-  });
-  const Subscript = Mark.create({
-    name: "subscript",
-    parseHTML() {
-      return [{ tag: "sub" }];
-    },
-    renderHTML() {
-      return ["sub", 0];
-    },
-  });
+  const ImageExtension = createMfeImageExtension(getImageBaseUrl);
   const editor = new Editor({
     element,
     extensions: [
       StarterKit.configure(starterKitOptions),
       ...(restrictToSingleBlock ? [SingleBlockDocumentExtension] : []),
-      Underline,
-      Superscript,
-      Subscript,
+      UnderlineMark,
+      SuperscriptMark,
+      SubscriptMark,
       Marker,
       CodeBlockLowlight.configure({
         lowlight,
@@ -1341,117 +1236,8 @@ function createEditorInstance(element, fieldType, fieldName) {
         openOnClick: false,
         linkOnPaste: true,
       }),
-      Image.extend({
-        addAttributes() {
-          return {
-            ...this.parent?.(),
-            src: {
-              default: null,
-              parseHTML: (element) => element.getAttribute("src"),
-              renderHTML: (attributes) => {
-                if (!attributes.src) return {};
-
-                // If it's already an absolute URL or starts with /, use as-is
-                // Supports picker URLs starting with ? or protocol-relative //
-                if (attributes.src.match(/^(https?:|\/|\?|\/\/)/)) {
-                  return { src: attributes.src };
-                }
-
-                const resolvedSrc = `${getImageBaseUrl()}${attributes.src.replace(/^\/+/, "")}`;
-                return { src: resolvedSrc };
-              },
-            },
-            originalFilename: {
-              default: null,
-            },
-          };
-        },
-        addNodeView() {
-          return ({ node, HTMLAttributes, getPos, editor }) => {
-            const resolveImageSrc = (src) => {
-              if (!src) return "";
-              if (src.match(/^(https?:|\/|\?|\/\/)/)) return src;
-              return `${getImageBaseUrl()}${src.replace(/^\/+/, "")}`;
-            };
-
-            const container = document.createElement("span");
-            container.classList.add("mfe-tiptap-image-container");
-
-            const img = document.createElement("img");
-
-            // Set attributes. TipTap's HTMLAttributes already contains the resolved src from renderHTML.
-            Object.entries(HTMLAttributes).forEach(([key, value]) => {
-              if (value !== null && value !== undefined) {
-                img.setAttribute(key, value);
-              }
-            });
-
-            const label = document.createElement("span");
-            label.classList.add("mfe-tiptap-image-label");
-            label.innerText = "edit";
-
-            container.append(img, label);
-
-            // Handle double click for image picker
-            container.ondblclick = (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              if (window.mfeOpenImagePicker) {
-                const imagePos = typeof getPos === "function" ? getPos() : null;
-                window.mfeOpenImagePicker(node.attrs, imagePos);
-              }
-            };
-
-            return {
-              dom: container,
-              update: (updatedNode) => {
-                if (updatedNode.type.name !== "image") return false;
-                const src = resolveImageSrc(updatedNode.attrs.src);
-                if (src) {
-                  img.setAttribute("src", src);
-                } else {
-                  img.removeAttribute("src");
-                }
-                img.setAttribute("alt", updatedNode.attrs.alt || "");
-                if (updatedNode.attrs.title) {
-                  img.setAttribute("title", updatedNode.attrs.title);
-                } else {
-                  img.removeAttribute("title");
-                }
-                return true;
-              },
-            };
-          };
-        },
-        addProseMirrorPlugins() {
-          return [
-            new Plugin({
-              props: {
-                handleDoubleClickOn: (
-                  view,
-                  pos,
-                  node,
-                  nodePos,
-                  event,
-                  direct,
-                ) => {
-                  if (node.type.name === "image") {
-                    if (window.mfeOpenImagePicker) {
-                      window.mfeOpenImagePicker(node.attrs, nodePos);
-                    }
-                    return true;
-                  }
-                  return false;
-                },
-              },
-            }),
-          ];
-        },
-      }).configure({
-        inline: true,
-        allowBase64: false,
-      }),
-      InlineHtmlLabel,
+      ImageExtension,
+      InlineHtmlLabelExtension,
       ...(restrictToSingleBlock ? [SingleBlockEnterToastExtension] : []),
       HeadingSingleLineExtension,
       // EscapeKeyExtension, - DEPRECATED: WindowManager now handles global Escape
@@ -1707,7 +1493,12 @@ function setSecondaryLanguage(lang) {
   if (shouldWarnForExtraContent(activeFieldType, activeFieldName)) {
     stripTrailingEmptyParagraph(secondaryEditor);
   }
-  setOriginalBlockCount(secondaryEditor, activeFieldType, activeFieldName);
+  setOriginalBlockCount(
+    secondaryEditor,
+    activeFieldType,
+    activeFieldName,
+    originalBlockCounts,
+  );
   highlightExtraContent(secondaryEditor);
   dirtyTranslations.set(lang, false);
 }
@@ -1774,7 +1565,12 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
   if (shouldWarnForExtraContent(fieldType, activeFieldName)) {
     stripTrailingEmptyParagraph(primaryEditor);
   }
-  setOriginalBlockCount(primaryEditor, fieldType, activeFieldName);
+  setOriginalBlockCount(
+    primaryEditor,
+    fieldType,
+    activeFieldName,
+    originalBlockCounts,
+  );
   highlightExtraContent(primaryEditor);
   primaryDirty = false;
   dirtyTranslations.clear();
@@ -2023,20 +1819,6 @@ function setupKeyboardShortcuts() {
 /**
  * Get markdown from editor state
  */
-function getMarkdownFromEditor(editor = activeEditor) {
-  if (!editor) return "";
-
-  return trimTrailingLineBreaks(serializeMarkdownDoc(editor.state.doc));
-}
-
-const MFE_MARKER_LINE_RE =
-  /^[\t ]*<!--\s*[a-zA-Z0-9_:.\/-]+\s*-->[\t ]*(?:\r?\n|$)/gm;
-
-function stripMfeMarkersForFieldScope(markdown) {
-  const text = typeof markdown === "string" ? markdown : "";
-  return text.replace(MFE_MARKER_LINE_RE, "");
-}
-
 function resolveScopeAtSaveBoundary(fallbackScope = "field") {
   const scopeFromTarget = getMetaAttr(activeTarget, "scope") || "";
   const scopeFromState = activeFieldScope || "";
@@ -2060,7 +1842,7 @@ function highlightExtraContent(editor = activeEditor) {
 
   const currentBlockCount = countSignificantTopLevelBlocks(editor.state.doc);
 
-  const originalBlockCount = getOriginalBlockCount(editor);
+  const originalBlockCount = getOriginalBlockCount(editor, originalBlockCounts);
 
   // Only show warning if user has ADDED blocks beyond the original
   // (This applies to any field - if originalBlockCount is 1, only 1 block should be added)
@@ -2082,7 +1864,7 @@ function hasBlockingExtraContent(editor = activeEditor) {
     return false;
   }
   const currentBlockCount = countSignificantTopLevelBlocks(editor.state.doc);
-  const originalBlockCount = getOriginalBlockCount(editor);
+  const originalBlockCount = getOriginalBlockCount(editor, originalBlockCounts);
   return currentBlockCount > originalBlockCount;
 }
 
@@ -2551,11 +2333,6 @@ function extractMarkdownImageSrc(markdown) {
   return m?.[1] || "";
 }
 
-function getFieldsIndex() {
-  const cfg = window.MarkdownFrontEditorConfig || {};
-  return Array.isArray(cfg.fieldsIndex) ? cfg.fieldsIndex : [];
-}
-
 function annotateInferredImages(root = document) {
   const fields = getFieldsIndex();
   if (!fields.length) return;
@@ -2611,17 +2388,6 @@ function normalizeHtmlImageSources(html) {
   } catch (e) {
     return html;
   }
-}
-
-function findSectionNameForSubsection(subName) {
-  const sections = window.MarkdownFrontEditorConfig?.sectionsIndex || [];
-  for (const section of sections) {
-    const subs = Array.isArray(section.subsections) ? section.subsections : [];
-    for (const sub of subs) {
-      if (sub?.name === subName) return section.name || "";
-    }
-  }
-  return "";
 }
 
 async function handleBreadcrumbClick(e) {
@@ -2982,7 +2748,12 @@ function replaceActiveEditor(payload) {
   if (shouldWarnForExtraContent(fieldType, fieldName)) {
     stripTrailingEmptyParagraph(primaryEditor);
   }
-  setOriginalBlockCount(primaryEditor, fieldType, fieldName);
+  setOriginalBlockCount(
+    primaryEditor,
+    fieldType,
+    fieldName,
+    originalBlockCounts,
+  );
   highlightExtraContent(primaryEditor);
   const loadedFromDraft = Boolean(scopedDraftMarkdown || draftMarkdown);
   primaryDirty = loadedFromDraft;
