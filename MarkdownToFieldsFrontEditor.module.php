@@ -278,6 +278,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $version = is_file($jsPath) ? (string) filemtime($jsPath) : (string) time();
         $sectionsIndex = $this->buildSectionsIndex($page);
         $fieldsIndex = $this->buildFieldsIndex($page);
+        $documentMarkdownB64 = '';
+        try {
+            $fullMarkdown = $this->loadRawMarkdownDocument($page, $currentLangCode);
+            $documentMarkdownB64 = base64_encode($fullMarkdown);
+        } catch (\Throwable $e) {
+            $documentMarkdownB64 = '';
+        }
 
         $frontConfig = [
             'toolbarButtons' => $toolbarButtons,
@@ -288,6 +295,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'buildStamp' => $version,
             'sectionsIndex' => $sectionsIndex,
             'fieldsIndex' => $fieldsIndex,
+            'documentMarkdownB64' => $documentMarkdownB64,
             'debug' => (bool)($this->debug ?? false),
             'debugShowSections' => (bool)($this->debugShowSections ?? false),
             'debugLabels' => (bool)($this->debugShowLabels ?? false),
@@ -1464,6 +1472,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 'changed' => $expandedChanged,
                 'sectionsIndex' => $this->buildSectionsIndex($page),
                 'fieldsIndex' => $this->buildFieldsIndex($page),
+                'documentMarkdownB64' => base64_encode($updatedMarkdown),
                 'skipped' => $skipped ?? []
             ]);
             exit;
@@ -1529,6 +1538,35 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             );
             $handledByEmptyScopeInsert = false;
             $changedKeys = [];
+
+            if ($mdScope === 'document') {
+                $oldFieldMarkdown = $fullMarkdown;
+                $normalizedDocument = (string)$blockMarkdown;
+                [$oldFrontmatter, $_oldBody] = $this->splitLeadingFrontmatter($oldFieldMarkdown);
+                [$newFrontmatter, $newBody] = $this->splitLeadingFrontmatter($normalizedDocument);
+                if ($newFrontmatter === '' && $oldFrontmatter !== '') {
+                    $normalizedDocument = $oldFrontmatter . $newBody;
+                }
+                $normalizedDocument = $this->preserveMarkdownFormattingFromOriginal(
+                    $oldFieldMarkdown,
+                    $normalizedDocument
+                );
+                if ((string)$oldFieldMarkdown !== $normalizedDocument) {
+                    \ProcessWire\MarkdownFileIO::saveLanguageMarkdown($page, $normalizedDocument, $languageCode);
+                    $this->logInfo("SUCCESS: Full document markdown updated");
+                    $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
+                    if (!$content) {
+                        throw new \ProcessWire\WireException("Failed to reload fresh content after document save.");
+                    }
+                } else {
+                    $content = \ProcessWire\MarkdownFileIO::loadLanguageMarkdown($page, $languageCode);
+                    if (!$content) {
+                        throw new \ProcessWire\WireException("Failed to load markdown content for language '{$languageCode}'.");
+                    }
+                }
+                $allKeys = array_keys($this->getAllFieldsHtml($content));
+                $changedKeys = array_values(array_filter($allKeys, fn($k) => is_string($k) && $k !== ''));
+            } else {
 
             if (($mdScope === 'section' || $mdScope === 'subsection') && trim($blockMarkdown) !== '') {
                 if ($oldFieldMarkdown === null || trim((string)$oldFieldMarkdown) === '') {
@@ -1632,6 +1670,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 }
             }
 
+            }
+
         } catch (\Throwable $e) {
             $this->sendJsonError('Failed to update markdown: ' . $e->getMessage(), 500);
         }
@@ -1680,6 +1720,12 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             array_values(array_unique($changedKeys ?? [])),
             $allHtml
         );
+        $documentMarkdown = '';
+        try {
+            $documentMarkdown = $this->loadRawMarkdownDocument($page, $languageCode);
+        } catch (\Throwable $e) {
+            $documentMarkdown = (string)($mdScope === 'document' ? $blockMarkdown : $fullMarkdown);
+        }
 
         header('Content-Type: application/json');
         echo json_encode([
@@ -1690,6 +1736,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'changed' => $expandedChanged,
             'sectionsIndex' => $this->buildSectionsIndex($page),
             'fieldsIndex' => $this->buildFieldsIndex($page),
+            'documentMarkdownB64' => base64_encode($documentMarkdown),
             'fieldId' => $requestedFieldId
         ]);
         exit;
@@ -1984,6 +2031,12 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         string $sectionName = '',
         string $subsectionName = ''
     ): ?string {
+        if ($scope === 'document') {
+            if (isset($content->markdown)) {
+                return (string)$content->markdown;
+            }
+            return null;
+        }
         if ($scope === 'block') {
             if ($sectionName === '' || !isset($content->sectionsByName[$sectionName])) {
                 return null;
@@ -2066,6 +2119,12 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         string $sectionName = '',
         string $subsectionName = ''
     ): ?string {
+        if ($scope === 'document') {
+            if (isset($content->html)) {
+                return (string)$content->html;
+            }
+            return null;
+        }
         if ($scope === 'block') {
             if ($sectionName === '' || !isset($content->sectionsByName[$sectionName])) {
                 return null;
@@ -2737,6 +2796,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $newLines = explode("\n", str_replace(["\r\n", "\r"], "\n", $newMarkdown));
 
         $listLinePattern = '/^([ \t]{0,3})([*+-])(\s+)(.*)$/';
+        $markerLinePattern = '/^<!--\s*[^>]+-->$/';
 
         $count = min(count($oldLines), count($newLines));
         for ($i = 0; $i < $count; $i++) {
@@ -2785,6 +2845,85 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
         $newLines = $separatedLines;
 
+        // Preserve original blank-line spacing around marker comment lines
+        // (e.g. <!-- section:... -->, <!-- sub:... -->, <!-- title -->, <!-- intro... -->).
+        $oldMarkerSpacing = [];
+        foreach ($oldLines as $idx => $line) {
+            $trimmed = trim((string)$line);
+            if (!preg_match($markerLinePattern, $trimmed)) {
+                continue;
+            }
+
+            $before = 0;
+            for ($j = $idx - 1; $j >= 0; $j--) {
+                if (trim((string)$oldLines[$j]) !== '') break;
+                $before += 1;
+            }
+
+            $after = 0;
+            for ($j = $idx + 1; $j < count($oldLines); $j++) {
+                if (trim((string)$oldLines[$j]) !== '') break;
+                $after += 1;
+            }
+
+            if (!isset($oldMarkerSpacing[$trimmed])) {
+                $oldMarkerSpacing[$trimmed] = [];
+            }
+            $oldMarkerSpacing[$trimmed][] = [
+                'before' => $before,
+                'after' => $after,
+            ];
+        }
+
+        $newMarkerOccurrence = [];
+        for ($i = 0; $i < count($newLines); $i++) {
+            $trimmed = trim((string)$newLines[$i]);
+            if (!preg_match($markerLinePattern, $trimmed)) {
+                continue;
+            }
+
+            $occurrence = $newMarkerOccurrence[$trimmed] ?? 0;
+            $newMarkerOccurrence[$trimmed] = $occurrence + 1;
+
+            if (!isset($oldMarkerSpacing[$trimmed][$occurrence])) {
+                continue;
+            }
+
+            $target = $oldMarkerSpacing[$trimmed][$occurrence];
+            $targetBefore = (int)($target['before'] ?? 0);
+            $targetAfter = (int)($target['after'] ?? 0);
+
+            $before = 0;
+            for ($j = $i - 1; $j >= 0; $j--) {
+                if (trim((string)$newLines[$j]) !== '') break;
+                $before += 1;
+            }
+
+            if ($before < $targetBefore) {
+                $add = $targetBefore - $before;
+                array_splice($newLines, $i, 0, array_fill(0, $add, ''));
+                $i += $add;
+            } elseif ($before > $targetBefore) {
+                $remove = $before - $targetBefore;
+                array_splice($newLines, $i - $before, $remove);
+                $i -= $remove;
+            }
+
+            $after = 0;
+            for ($j = $i + 1; $j < count($newLines); $j++) {
+                if (trim((string)$newLines[$j]) !== '') break;
+                $after += 1;
+            }
+
+            if ($after < $targetAfter) {
+                $add = $targetAfter - $after;
+                array_splice($newLines, $i + 1, 0, array_fill(0, $add, ''));
+            } elseif ($after > $targetAfter) {
+                $remove = $after - $targetAfter;
+                array_splice($newLines, $i + 1, $remove);
+            }
+        }
+
         $joined = implode("\n", $newLines);
         if ($oldNl !== "\n") {
             $joined = str_replace("\n", $oldNl, $joined);
@@ -2796,6 +2935,16 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         if (strpos($markdown, "\r\n") !== false) return "\r\n";
         if (strpos($markdown, "\r") !== false) return "\r";
         return "\n";
+    }
+
+    protected function splitLeadingFrontmatter(string $markdown): array {
+        $match = [];
+        if (preg_match('/^(?:\xEF\xBB\xBF)?---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)(?:\r?\n|$)/', $markdown, $match) === 1) {
+            $frontmatter = (string)$match[0];
+            $body = substr($markdown, strlen($frontmatter));
+            return [$frontmatter, $body === false ? '' : $body];
+        }
+        return ['', $markdown];
     }
 
     protected function renderPageHtmlForLang(\ProcessWire\Page $page, string $languageCode, string $renderPath = ''): string {

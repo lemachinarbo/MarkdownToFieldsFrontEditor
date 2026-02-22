@@ -192,6 +192,238 @@ body.mfe-no-scroll {
   pointer-events: none;
 }
 
+.mfe-view-fullscreen.mfe-document-mode {
+  --mfe-doc-neutral: rgba(15, 23, 42, 0.18);
+  --mfe-doc-neutral-strong: rgba(15, 23, 42, 0.32);
+  --mfe-doc-surface: rgba(15, 23, 42, 0.03);
+  --mfe-doc-label-neutral: #64748b;
+  --mfe-doc-active: #3b82f6;
+  --mfe-doc-active-soft: rgba(59, 130, 246, 0.12);
+  --mfe-doc-gutter: 0;
+  --mfe-doc-segment-gutter: 1rem;
+  --mfe-doc-list-offset: 1.25em;
+  --mfe-doc-rail-bleed: 8px;
+}
+
+.mfe-view-fullscreen.mfe-document-mode
+  .mfe-window-breadcrumbs
+  .mfe-window-inner,
+.mfe-view-fullscreen.mfe-document-mode .mfe-window-content-inner {
+  box-sizing: border-box;
+  padding-left: var(--mfe-doc-gutter);
+  padding-right: var(--mfe-doc-gutter);
+}
+
+.mfe-view-fullscreen.mfe-document-mode
+  .mfe-window-breadcrumbs
+  .mfe-window-inner {
+  padding-left: var(--mfe-doc-segment-gutter);
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-segment {
+  position: relative;
+  display: block;
+  overflow: visible;
+  margin-left: 0;
+  padding-left: var(--mfe-doc-segment-gutter);
+  border-left: 2px solid transparent;
+  transition: border-color 0.16s ease;
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-segment::before {
+  content: none;
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-segment ul,
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-segment ol {
+  margin-left: 0;
+  padding-left: var(--mfe-doc-list-offset);
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-segment--dim {
+  border-left-color: transparent;
+  background: transparent;
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-segment--active {
+  border-left-color: transparent;
+  background: transparent;
+}
+
+.mfe-view-fullscreen.mfe-document-mode
+  .mfe-doc-segment--active.mfe-doc-segment--group-single::before,
+.mfe-view-fullscreen.mfe-document-mode
+  .mfe-doc-segment--active.mfe-doc-segment--group-start::before,
+.mfe-view-fullscreen.mfe-document-mode
+  .mfe-doc-segment--active.mfe-doc-segment--group-middle::before,
+.mfe-view-fullscreen.mfe-document-mode
+  .mfe-doc-segment--active.mfe-doc-segment--group-end::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 2px;
+  background: color-mix(in srgb, var(--mfe-doc-active) 76%, #94a3b8);
+  pointer-events: none;
+}
+
+.mfe-view-fullscreen.mfe-document-mode
+  .mfe-doc-segment--active.mfe-doc-segment--group-single::before {
+  top: 0;
+  bottom: 0;
+}
+
+.mfe-view-fullscreen.mfe-document-mode
+  .mfe-doc-segment--active.mfe-doc-segment--group-start::before {
+  top: 0;
+  bottom: calc(-1 * var(--mfe-doc-rail-bleed));
+}
+
+.mfe-view-fullscreen.mfe-document-mode
+  .mfe-doc-segment--active.mfe-doc-segment--group-middle::before {
+  top: calc(-1 * var(--mfe-doc-rail-bleed));
+  bottom: calc(-1 * var(--mfe-doc-rail-bleed));
+}
+
+.mfe-view-fullscreen.mfe-document-mode
+  .mfe-doc-segment--active.mfe-doc-segment--group-end::before {
+  top: calc(-1 * var(--mfe-doc-rail-bleed));
+  bottom: 0;
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-marker {
+  margin: 14px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  line-height: 1;
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-marker::before {
+  content: "";
+  display: block;
+  width: 100%;
+  height: 1px;
+  border-top: 1px dotted var(--mfe-doc-neutral);
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker {
+  position: relative;
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--section {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: 22px;
+  margin-bottom: 12px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--subsection {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: 16px;
+  margin-bottom: 10px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker::after {
+  content: attr(data-mfe-doc-label);
+  position: absolute;
+  left: 50%;
+  top: -8px;
+  transform: translate(-50%, -100%);
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--mfe-doc-label-neutral);
+  border: 1px solid transparent;
+  font-size: 10px;
+  line-height: 16px;
+  letter-spacing: 0.03em;
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--section::after,
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--subsection::after {
+  position: static;
+  left: auto;
+  top: auto;
+  transform: none;
+  display: block;
+  width: max-content;
+  margin: 0 0 6px 0;
+  order: 1;
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--section::before,
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--subsection::before {
+  order: 2;
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--active::before {
+  border-top-color: var(--mfe-doc-active);
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--active::after {
+  color: var(--mfe-doc-active);
+  border-color: color-mix(in srgb, var(--mfe-doc-active) 32%, #ffffff);
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--field::before {
+  width: 0;
+  border-top: 0;
+}
+
+.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--field::after {
+  position: static;
+  transform: none;
+  display: inline-block;
+  margin-top: 0;
+  margin-left: 0;
+  padding: 0 8px;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.04);
+  border-color: var(--mfe-doc-neutral);
+}
+
+.mfe-view-fullscreen.mfe-document-mode .ProseMirror > * {
+  margin-left: 0;
+}
+
+.mfe-view-fullscreen.mfe-document-mode .ProseMirror > :not(.mfe-doc-segment) {
+  box-sizing: border-box;
+  padding-left: var(--mfe-doc-segment-gutter);
+}
+
+.mfe-view-fullscreen.mfe-document-mode .ProseMirror {
+  overflow: visible;
+}
+
+.mfe-view-fullscreen.mfe-document-mode .ProseMirror ul,
+.mfe-view-fullscreen.mfe-document-mode .ProseMirror ol {
+  margin-left: 0;
+  padding-left: var(--mfe-doc-list-offset);
+}
+
+.mfe-view-fullscreen.mfe-document-mode .ProseMirror li {
+  margin-left: 0;
+}
+
+.mfe-view-fullscreen.mfe-document-mode .ProseMirror pre,
+.mfe-view-fullscreen.mfe-document-mode .ProseMirror blockquote {
+  margin-left: 0;
+}
+
+.mfe-view-fullscreen.mfe-document-mode .ProseMirror blockquote {
+  margin-right: 0;
+}
+
 .mfe-view-fullscreen .mfe-inline-html {
   display: inline-block;
   padding: 1px 6px;

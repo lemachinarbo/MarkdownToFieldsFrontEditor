@@ -8,6 +8,8 @@ export function createToolbarButtons({
   onSave,
   onToggleSplit,
   onToggleMarkers,
+  onToggleDocumentMode,
+  isDocumentMode,
 }) {
   const getActiveEditor = () =>
     typeof getEditor === "function" ? getEditor() : null;
@@ -258,6 +260,20 @@ export function createToolbarButtons({
       },
       isActive: () => false,
       title: "View languages",
+    },
+    {
+      key: "document",
+      label: "DOC",
+      action: () => {
+        if (typeof onToggleDocumentMode === "function") {
+          onToggleDocumentMode();
+        }
+      },
+      isActive: () =>
+        typeof isDocumentMode === "function"
+          ? Boolean(isDocumentMode())
+          : false,
+      title: "Toggle Document mode",
     },
     {
       key: "markers",

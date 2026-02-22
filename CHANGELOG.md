@@ -1,6 +1,10 @@
 # Changelog
 
 ## V0.5.6
+- Added Document mode (root scope, breadcrumb root navigation, document-scoped saves) with boundary visualization and contiguous active rail rendering.
+- Fixed active-scope semantics: scalar fields are single-block active; container fields (e.g. `intro...`) stay active across their marker range.
+- Fixed full-document preservation: frontmatter stays hidden in editor view but is preserved on save (BOM/non-BOM, draft/save paths, canonical `documentMarkdownB64`).
+- Preserved marker blank-line spacing during save normalization and added regression coverage for frontmatter + marker spacing.
 - Refactored duplicated inline/fullscreen editor code into shared helpers.
 - Moved shared TipTap extensions into one module to keep inline/fullscreen in sync.
 - Fixed fenced code blocks gaining extra blank lines after repeated fullscreen save/rehydrate cycles.
