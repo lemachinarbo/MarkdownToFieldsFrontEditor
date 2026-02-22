@@ -253,6 +253,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $currentLangCode = \ProcessWire\MarkdownLanguageResolver::getLanguageCode($this->wire()->page);
         $langList = [];
         $languages = $this->wire()->languages;
+        $currentLangName = (string)$currentLangCode;
         if ($languages) {
             foreach ($languages as $lang) {
                 $langList[] = [
@@ -260,6 +261,10 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                     'title' => (string)($lang->title ?: $lang->name),
                     'isDefault' => (bool)$lang->isDefault(),
                 ];
+            }
+            $resolvedCurrent = $this->resolveLanguagePageByRequestCode($page, $currentLangCode);
+            if ($resolvedCurrent) {
+                $currentLangName = (string)$resolvedCurrent->name;
             }
         } else {
             $langList[] = [
@@ -277,7 +282,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $frontConfig = [
             'toolbarButtons' => $toolbarButtons,
             'languages' => $langList,
-            'currentLanguage' => $currentLangCode,
+            'currentLanguage' => $currentLangName,
             'imageBaseUrl' => rtrim((string)$this->wire()->config->urls->site, '/') . '/images/',
             'pageFilesBaseUrl' => rtrim((string)$this->wire()->config->urls->files, '/') . '/' . (int)$page->id . '/',
             'buildStamp' => $version,

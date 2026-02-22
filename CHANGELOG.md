@@ -1,5 +1,9 @@
 # Changelog
 
+## V0.5.6
+- Language resolution now uses ProcessWire language `name` (not custom code fields).
+- Fixed fullscreen toolbar/editor independence in split view: active-state buttons now follow the focused editor (left/right) and no longer bleed state across panes.
+
 ## V0.5.5
 - Added thumbnail support with cache index and lazy hash generation for image picker.
 - Image picker now resolves images through ProcessWire before insertion: images are copied from configurable source paths to PW assets, displayed with PW URLs in the editor preview, but stored as portable relative paths in markdown.

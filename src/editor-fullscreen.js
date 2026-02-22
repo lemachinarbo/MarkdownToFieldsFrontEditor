@@ -66,6 +66,7 @@ let editorContainer = null;
 let overlayEl = null;
 let splitPane = null;
 let saveStatusEl = null;
+let refreshToolbarState = null;
 let primaryDirty = false;
 const dirtyTranslations = new Map();
 let activeTarget = null;
@@ -370,9 +371,7 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
       runWithoutDirtyTracking(() => {
         primaryEditor.commands.setContent(canonicalHtml, false);
       });
-      try {
-        primaryEditor.commands.setTextSelection(selection);
-      } catch (e) {}
+      primaryEditor.commands.setTextSelection(selection);
     }
   }
 }
@@ -840,7 +839,12 @@ async function requestRenderedFragmentsDatastar({
               missingKeys.push(k.trim());
             }
           });
-        } catch (_e) {}
+        } catch (error) {
+          debugWarn("[mfe:fragment-api] invalid signal payload", {
+            payload: evt.payload || {},
+            message: error?.message || String(error),
+          });
+        }
         debugWarn("[mfe:fragment-api] signal", evt.payload || {});
         return;
       }
@@ -873,17 +877,15 @@ async function requestRenderedFragmentsDatastar({
     missingKeys,
   });
   if (staleScopeKeys.length) {
-    try {
-      window.dispatchEvent(
-        new CustomEvent("mfe:fragment-stale-scope", {
-          detail: {
-            cycleId,
-            staleScopeKeys,
-            missingKeys,
-          },
-        }),
-      );
-    } catch (_e) {}
+    window.dispatchEvent(
+      new CustomEvent("mfe:fragment-stale-scope", {
+        detail: {
+          cycleId,
+          staleScopeKeys,
+          missingKeys,
+        },
+      }),
+    );
   }
   const appliedParents = new Set();
   const queuedScopedKeys = queued
@@ -1449,6 +1451,9 @@ function createEditorInstance(element, fieldType, fieldName) {
 
   editor.on("focus", () => {
     activeEditor = editor;
+    if (typeof refreshToolbarState === "function") {
+      refreshToolbarState();
+    }
   });
 
   editor.on("update", () => {
@@ -1566,7 +1571,20 @@ function toggleMarkers() {
 function openSplit() {
   if (!editorShell || secondaryEditor) return;
   const { langs, current } = getLanguagesConfig();
-  const otherLangs = langs.filter((l) => l.name !== current);
+  const normalizeLangValue = (value) =>
+    String(value || "")
+      .trim()
+      .toLowerCase();
+  const currentNormalized = normalizeLangValue(current);
+  const seen = new Set();
+  const otherLangs = langs.filter((lang) => {
+    const name = normalizeLangValue(lang?.name);
+    if (!name || seen.has(name)) return false;
+    seen.add(name);
+    if (!currentNormalized) return true;
+    return name !== currentNormalized;
+  });
+
   if (otherLangs.length === 0) return;
 
   splitPane = document.createElement("div");
@@ -1607,6 +1625,9 @@ function openSplit() {
     activeFieldName,
   );
   activeEditor = secondaryEditor;
+  if (typeof refreshToolbarState === "function") {
+    refreshToolbarState();
+  }
 
   select.addEventListener("change", () => {
     setSecondaryLanguage(select.value);
@@ -1643,6 +1664,9 @@ function closeSplit() {
   }
   secondaryLang = "";
   activeEditor = primaryEditor;
+  if (typeof refreshToolbarState === "function") {
+    refreshToolbarState();
+  }
 }
 
 function setSecondaryLanguage(lang) {
@@ -1774,6 +1798,7 @@ function cleanupEditorOnly() {
     primaryEditor = null;
   }
   activeEditor = null;
+  refreshToolbarState = null;
 
   // Remove keyboard event listener
   if (keydownHandler) {
@@ -1909,12 +1934,13 @@ function createToolbar() {
   const configButtons =
     window.MarkdownFrontEditorConfig?.toolbarButtons ||
     "bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,code,codeblock,clear,|,split,markers";
-  const { statusEl } = renderToolbarButtons({
+  const { statusEl, refreshButtons } = renderToolbarButtons({
     toolbar,
     buttons,
     configButtons,
     getEditor: () => activeEditor,
   });
+  refreshToolbarState = refreshButtons;
   saveStatusEl = statusEl;
   statusManager.registerStatusEl(statusEl);
 
@@ -2872,6 +2898,9 @@ function replaceActiveEditor(payload) {
   const effectiveMarkdown =
     scopedDraftMarkdown ?? draftMarkdown ?? markdownContent;
   activeEditor = primaryEditor;
+  if (typeof refreshToolbarState === "function") {
+    refreshToolbarState();
+  }
   activeTarget = payload.element;
   activeFieldName = fieldName;
   activeFieldType = fieldType;

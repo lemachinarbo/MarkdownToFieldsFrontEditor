@@ -1,5 +1,35 @@
-export function renderToolbarButtons({ toolbar, buttons, configButtons, getEditor }) {
-  const resolveEditor = () => (typeof getEditor === "function" ? getEditor() : null);
+export function renderToolbarButtons({
+  toolbar,
+  buttons,
+  configButtons,
+  getEditor,
+}) {
+  const resolveEditor = () =>
+    typeof getEditor === "function" ? getEditor() : null;
+  const buttonRefreshers = [];
+
+  const createEditorAwareRefresher = (updateStyle) => {
+    let boundEditor = null;
+    const onEditorUpdate = () => {
+      updateStyle();
+    };
+
+    return () => {
+      const nextEditor = resolveEditor();
+      if (nextEditor !== boundEditor) {
+        if (boundEditor && typeof boundEditor.off === "function") {
+          boundEditor.off("update", onEditorUpdate);
+          boundEditor.off("selectionUpdate", onEditorUpdate);
+        }
+        boundEditor = nextEditor;
+        if (boundEditor && typeof boundEditor.on === "function") {
+          boundEditor.on("update", onEditorUpdate);
+          boundEditor.on("selectionUpdate", onEditorUpdate);
+        }
+      }
+      updateStyle();
+    };
+  };
 
   const buttonMap = new Map(buttons.map((btn) => [btn.key, btn]));
 
@@ -51,7 +81,7 @@ export function renderToolbarButtons({ toolbar, buttons, configButtons, getEdito
     btn.addEventListener("mousedown", (e) => {
       e.preventDefault();
       btnDef.action();
-      setTimeout(updateStyle, 0);
+      setTimeout(refreshButton, 0);
     });
 
     btn.addEventListener("mouseenter", () => {
@@ -62,16 +92,12 @@ export function renderToolbarButtons({ toolbar, buttons, configButtons, getEdito
     });
 
     btn.addEventListener("mouseleave", () => {
-      updateStyle();
+      refreshButton();
     });
 
-    const editor = resolveEditor();
-    if (editor) {
-      editor.on("update", updateStyle);
-      editor.on("selectionUpdate", updateStyle);
-    }
-
-    updateStyle();
+    const refreshButton = createEditorAwareRefresher(updateStyle);
+    buttonRefreshers.push(refreshButton);
+    refreshButton();
     toolbar.appendChild(btn);
   });
 
@@ -112,7 +138,7 @@ export function renderToolbarButtons({ toolbar, buttons, configButtons, getEdito
     btn.addEventListener("mousedown", (e) => {
       e.preventDefault();
       saveBtn.action();
-      setTimeout(updateStyle, 0);
+      setTimeout(refreshButton, 0);
     });
 
     btn.addEventListener("mouseenter", () => {
@@ -123,19 +149,19 @@ export function renderToolbarButtons({ toolbar, buttons, configButtons, getEdito
     });
 
     btn.addEventListener("mouseleave", () => {
-      updateStyle();
+      refreshButton();
     });
 
-    const editor = resolveEditor();
-    if (editor) {
-      editor.on("update", updateStyle);
-      editor.on("selectionUpdate", updateStyle);
-    }
-
-    updateStyle();
+    const refreshButton = createEditorAwareRefresher(updateStyle);
+    buttonRefreshers.push(refreshButton);
+    refreshButton();
     toolbar.appendChild(btn);
     saveButtonEl = btn;
   }
 
-  return { statusEl: status, saveButtonEl };
+  const refreshButtons = () => {
+    buttonRefreshers.forEach((refresh) => refresh());
+  };
+
+  return { statusEl: status, saveButtonEl, refreshButtons };
 }
