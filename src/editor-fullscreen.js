@@ -17,13 +17,20 @@ import { createToolbarButtons } from "./editor-toolbar.js";
 import { renderToolbarButtons } from "./editor-toolbar-renderer.js";
 import { createStatusManager } from "./editor-status.js";
 import {
+  HeadingSingleLineExtension,
+  SingleBlockDocumentExtension,
+  createSingleBlockEnterToastExtension,
+} from "./field-constraints-extension.js";
+import {
   inlineHtmlTags,
   shouldWarnForExtraContent,
   countNonEmptyBlocks,
+  countSignificantTopLevelBlocks,
   renderMarkdownToHtml,
-  markdownSerializer,
+  serializeMarkdownDoc,
   decodeMarkdownBase64,
   decodeHtmlEntitiesInFences,
+  trimTrailingLineBreaks,
   getLanguagesConfig,
   fetchTranslations,
   saveTranslation,
@@ -352,8 +359,9 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
   initEditors();
 
   if (updateActiveEditor && activeTarget) {
-    const canonicalMarkdown =
-      typeof finalMarkdown === "string" ? finalMarkdown : "";
+    const canonicalMarkdown = trimTrailingLineBreaks(
+      typeof finalMarkdown === "string" ? finalMarkdown : "",
+    );
     const canonicalHtml = normalizeHtmlImageSources(
       renderMarkdownToHtml(canonicalMarkdown),
     );
@@ -396,8 +404,9 @@ async function savePendingDrafts() {
       resolvedScope === "field"
         ? stripMfeMarkersForFieldScope(markdown || "")
         : markdown || "";
+    const normalizedOutboundMarkdown = trimTrailingLineBreaks(outboundMarkdown);
     const formData = new FormData();
-    formData.append("markdown", outboundMarkdown);
+    formData.append("markdown", normalizedOutboundMarkdown);
     formData.append("mdName", parsed.name);
     formData.append("mdScope", resolvedScope);
     if (parsed.section) formData.append("mdSection", parsed.section);
@@ -1242,7 +1251,17 @@ function applyFieldAttributes(editor, fieldType, fieldName) {
 }
 
 function createEditorInstance(element, fieldType, fieldName) {
+  const restrictToSingleBlock = shouldWarnForExtraContent(fieldType, fieldName);
+  const starterKitOptions = {
+    codeBlock: false,
+    link: false,
+    underline: false,
+    ...(restrictToSingleBlock ? { document: false } : {}),
+  };
   const lowlight = createLowlight(common);
+  const SingleBlockEnterToastExtension = createSingleBlockEnterToastExtension(
+    (message, options) => statusManager.setError(message, options),
+  );
   const InlineHtmlLabel = Extension.create({
     name: "inlineHtmlLabel",
     addProseMirrorPlugins() {
@@ -1309,11 +1328,8 @@ function createEditorInstance(element, fieldType, fieldName) {
   const editor = new Editor({
     element,
     extensions: [
-      StarterKit.configure({
-        codeBlock: false,
-        link: false,
-        underline: false,
-      }),
+      StarterKit.configure(starterKitOptions),
+      ...(restrictToSingleBlock ? [SingleBlockDocumentExtension] : []),
       Underline,
       Superscript,
       Subscript,
@@ -1436,6 +1452,8 @@ function createEditorInstance(element, fieldType, fieldName) {
         allowBase64: false,
       }),
       InlineHtmlLabel,
+      ...(restrictToSingleBlock ? [SingleBlockEnterToastExtension] : []),
+      HeadingSingleLineExtension,
       // EscapeKeyExtension, - DEPRECATED: WindowManager now handles global Escape
     ],
     content: "",
@@ -1499,6 +1517,15 @@ function createEditorInstance(element, fieldType, fieldName) {
 }
 
 function saveAllEditors() {
+  if (primaryEditor && hasBlockingExtraContent(primaryEditor)) {
+    statusManager.setError(EXTRA_SCOPE_SAVE_ERROR);
+    return;
+  }
+  if (secondaryEditor && hasBlockingExtraContent(secondaryEditor)) {
+    statusManager.setError(EXTRA_SCOPE_SAVE_ERROR);
+    return;
+  }
+
   const tasks = [];
   if (primaryEditor && (primaryDirty || hasActivePrimaryDraft())) {
     tasks.push(
@@ -1999,7 +2026,7 @@ function setupKeyboardShortcuts() {
 function getMarkdownFromEditor(editor = activeEditor) {
   if (!editor) return "";
 
-  return markdownSerializer.serialize(editor.state.doc);
+  return trimTrailingLineBreaks(serializeMarkdownDoc(editor.state.doc));
 }
 
 const MFE_MARKER_LINE_RE =
@@ -2031,7 +2058,7 @@ function highlightExtraContent(editor = activeEditor) {
     return;
   }
 
-  const currentBlockCount = countNonEmptyBlocks(editor.state.doc);
+  const currentBlockCount = countSignificantTopLevelBlocks(editor.state.doc);
 
   const originalBlockCount = getOriginalBlockCount(editor);
 
@@ -2043,6 +2070,20 @@ function highlightExtraContent(editor = activeEditor) {
   }
 
   editor.view.dom.setAttribute("data-extra-warning-active", "true");
+}
+
+const EXTRA_SCOPE_SAVE_ERROR =
+  "Can't save yet. Keep only the first line here, then save again.";
+function hasBlockingExtraContent(editor = activeEditor) {
+  if (!editor) {
+    return false;
+  }
+  if (!shouldWarnForExtraContent(activeFieldType, activeFieldName)) {
+    return false;
+  }
+  const currentBlockCount = countSignificantTopLevelBlocks(editor.state.doc);
+  const originalBlockCount = getOriginalBlockCount(editor);
+  return currentBlockCount > originalBlockCount;
 }
 
 /**
@@ -2272,6 +2313,11 @@ function renderBreadcrumbs() {
 function saveEditorContent(editor = activeEditor) {
   if (!editor) return;
 
+  if (hasBlockingExtraContent(editor)) {
+    statusManager.setError(EXTRA_SCOPE_SAVE_ERROR);
+    return;
+  }
+
   let markdown = getMarkdownFromEditor(editor);
 
   // Clear highlights when saving
@@ -2284,6 +2330,10 @@ function saveEditorContent(editor = activeEditor) {
 
 function saveActiveEditor() {
   if (!activeEditor) return;
+  if (hasBlockingExtraContent(activeEditor)) {
+    statusManager.setError(EXTRA_SCOPE_SAVE_ERROR);
+    return;
+  }
   if (activeEditor === secondaryEditor && secondaryLang) {
     const pageId = activeTarget?.getAttribute("data-page") || "";
     const mdName = activeFieldName || "";
@@ -2756,7 +2806,7 @@ function openFullscreenEditorFromPayload(payload) {
   secondaryLang = "";
 
   const saveCallback = (markdown, resolve, reject) => {
-    const finalMarkdown = markdown;
+    const finalMarkdown = trimTrailingLineBreaks(markdown);
 
     // INVARIANT: Validate markdown byte-for-byte if not explicitly edited
     const original = originalMarkdownByFieldId.get(activeFieldId);
@@ -2776,10 +2826,11 @@ function openFullscreenEditorFromPayload(payload) {
       currentFieldScope === "field"
         ? stripMfeMarkersForFieldScope(finalMarkdown)
         : finalMarkdown;
+    const normalizedOutboundMarkdown = trimTrailingLineBreaks(outboundMarkdown);
     fetchCsrfToken().then((csrf) => {
       const { current } = getLanguagesConfig();
       const formData = new FormData();
-      formData.append("markdown", outboundMarkdown);
+      formData.append("markdown", normalizedOutboundMarkdown);
       formData.append("mdName", currentFieldName);
       formData.append("mdScope", currentFieldScope);
       if (currentFieldSection) {

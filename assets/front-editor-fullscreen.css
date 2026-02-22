@@ -342,8 +342,20 @@ body.mfe-no-scroll {
   > h5:nth-child(1):not(:only-child)::after,
 .mfe-view-fullscreen
   .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
-  > h6:nth-child(1):not(:only-child)::after {
-  content: "This field saves only one line. Everything below won’t be saved.";
+  > h6:nth-child(1):not(:only-child)::after,
+.mfe-view-fullscreen
+  .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
+  > blockquote:nth-child(1):not(:only-child)::after,
+.mfe-view-fullscreen
+  .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
+  > ul:nth-child(1):not(:only-child)::after,
+.mfe-view-fullscreen
+  .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
+  > ol:nth-child(1):not(:only-child)::after,
+.mfe-view-fullscreen
+  .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
+  > pre:nth-child(1):not(:only-child)::after {
+  content: "Only the first line will be saved. Remove extra lines to continue.";
   display: block;
   margin: 24px 0 18px;
   text-align: center;

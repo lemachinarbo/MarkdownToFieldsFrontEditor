@@ -1,10 +1,16 @@
+import {
+  toggleListWithFieldConstraints,
+  clearFormattingWithFieldConstraints,
+} from "./field-constraints-toolbar.js";
+
 export function createToolbarButtons({
   getEditor,
   onSave,
   onToggleSplit,
   onToggleMarkers,
 }) {
-  const getActiveEditor = () => (typeof getEditor === "function" ? getEditor() : null);
+  const getActiveEditor = () =>
+    typeof getEditor === "function" ? getEditor() : null;
 
   const withEditor = (fn) => () => {
     const editor = getActiveEditor();
@@ -37,7 +43,9 @@ export function createToolbarButtons({
           <path fill-rule="evenodd" d="M10.497 3.744a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-3.275l-5.357 15.002h2.632a.75.75 0 1 1 0 1.5h-7.5a.75.75 0 1 1 0-1.5h3.275l5.357-15.002h-2.632a.75.75 0 0 1-.75-.75Z" clip-rule="evenodd"></path>
         </svg>
       `,
-      action: withEditor((editor) => editor.chain().focus().toggleItalic().run()),
+      action: withEditor((editor) =>
+        editor.chain().focus().toggleItalic().run(),
+      ),
       isActive: () => isActiveMark("italic"),
       title: "Italic (Ctrl+I)",
     },
@@ -48,7 +56,9 @@ export function createToolbarButtons({
           <path fill-rule="evenodd" d="M9.657 4.728c-1.086.385-1.766 1.057-1.979 1.85-.214.8.046 1.733.81 2.616.746.862 1.93 1.612 3.388 2.003.07.019.14.037.21.053h8.163a.75.75 0 0 1 0 1.5h-8.24a.66.66 0 0 1-.02 0H3.75a.75.75 0 0 1 0-1.5h4.78a7.108 7.108 0 0 1-1.175-1.074C6.372 9.042 5.849 7.61 6.229 6.19c.377-1.408 1.528-2.38 2.927-2.876 1.402-.497 3.127-.55 4.855-.086A8.937 8.937 0 0 1 16.94 4.6a.75.75 0 0 1-.881 1.215 7.437 7.437 0 0 0-2.436-1.14c-1.473-.394-2.885-.331-3.966.052Zm6.533 9.632a.75.75 0 0 1 1.03.25c.592.974.846 2.094.55 3.2-.378 1.408-1.529 2.38-2.927 2.876-1.402.497-3.127.55-4.855.087-1.712-.46-3.168-1.354-4.134-2.47a.75.75 0 0 1 1.134-.982c.746.862 1.93 1.612 3.388 2.003 1.473.394 2.884.331 3.966-.052 1.085-.384 1.766-1.056 1.978-1.85.169-.628.046-1.33-.381-2.032a.75.75 0 0 1 .25-1.03Z" clip-rule="evenodd"></path>
         </svg>
       `,
-      action: withEditor((editor) => editor.chain().focus().toggleStrike().run()),
+      action: withEditor((editor) =>
+        editor.chain().focus().toggleStrike().run(),
+      ),
       isActive: () => isActiveMark("strike"),
       title: "Strikethrough",
     },
@@ -66,14 +76,18 @@ export function createToolbarButtons({
     {
       key: "codeblock",
       label: "```",
-      action: withEditor((editor) => editor.chain().focus().toggleCodeBlock().run()),
+      action: withEditor((editor) =>
+        editor.chain().focus().toggleCodeBlock().run(),
+      ),
       isActive: () => isActiveMark("codeBlock"),
       title: "Code block",
     },
     {
       key: "paragraph",
       label: "P",
-      action: withEditor((editor) => editor.chain().focus().setParagraph().run()),
+      action: withEditor((editor) =>
+        editor.chain().focus().setParagraph().run(),
+      ),
       isActive: () => isActiveMark("paragraph"),
       title: "Paragraph",
     },
@@ -136,7 +150,9 @@ export function createToolbarButtons({
       label: `
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M9 6l11 0" /><path d="M9 12l11 0" /><path d="M9 18l11 0" /><path d="M5 6l0 .01" /><path d="M5 12l0 .01" /><path d="M5 18l0 .01" /></svg>
       `,
-      action: withEditor((editor) => editor.chain().focus().toggleBulletList().run()),
+      action: withEditor((editor) =>
+        toggleListWithFieldConstraints(editor, "bullet"),
+      ),
       isActive: () => isActiveMark("bulletList"),
       title: "Bullet list",
     },
@@ -145,7 +161,9 @@ export function createToolbarButtons({
       label: `
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M11 6h9" /><path d="M11 12h9" /><path d="M12 18h8" /><path d="M4 16a2 2 0 1 1 4 0c0 .591 -.5 1 -1 1.5l-3 2.5h4" /><path d="M6 10v-6l-2 2" /></svg>
       `,
-      action: withEditor((editor) => editor.chain().focus().toggleOrderedList().run()),
+      action: withEditor((editor) =>
+        toggleListWithFieldConstraints(editor, "ordered"),
+      ),
       isActive: () => isActiveMark("orderedList"),
       title: "Numbered list",
     },
@@ -156,7 +174,9 @@ export function createToolbarButtons({
           <path d="M3.75 3.25A.75.75 0 0 0 3 4v16a.75.75 0 0 0 .75.75.75.75 0 0 0 .75-.75V4a.75.75 0 0 0-.75-.75Zm4.5 2A.75.75 0 0 0 7.5 6a.75.75 0 0 0 .75.75h12A.75.75 0 0 0 21 6a.75.75 0 0 0-.75-.75Zm0 6a.75.75 0 0 0-.75.75.75.75 0 0 0 .75.75h12A.75.75 0 0 0 21 12a.75.75 0 0 0-.75-.75Zm0 6a.75.75 0 0 0-.75.75.75.75 0 0 0 .75.75h8.25a.75.75 0 0 0 .75-.75.75.75 0 0 0-.75-.75Z"></path>
         </svg>
       `,
-      action: withEditor((editor) => editor.chain().focus().toggleBlockquote().run()),
+      action: withEditor((editor) =>
+        editor.chain().focus().toggleBlockquote().run(),
+      ),
       isActive: () => isActiveMark("blockquote"),
       title: "Blockquote",
     },
@@ -218,7 +238,9 @@ export function createToolbarButtons({
       label: `
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M17 15l4 4m0 -4l-4 4" /><path d="M7 6v-1h11v1" /><path d="M7 19l4 0" /><path d="M13 5l-4 14" /></svg>
       `,
-      action: withEditor((editor) => editor.chain().focus().clearNodes().unsetAllMarks().run()),
+      action: withEditor((editor) =>
+        clearFormattingWithFieldConstraints(editor),
+      ),
       isActive: () => false,
       title: "Clear formatting",
     },
@@ -252,8 +274,7 @@ export function createToolbarButtons({
           onToggleMarkers();
         }
       },
-      isActive: () =>
-        document.body.classList.contains("mfe-hide-markers"),
+      isActive: () => document.body.classList.contains("mfe-hide-markers"),
       title: "Toggle markers",
     },
     {

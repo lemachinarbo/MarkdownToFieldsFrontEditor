@@ -3,11 +3,52 @@ function createManager() {
   let dirtyFields = new Set();
   let lastExplicit = null;
   let hideTimer = null;
+  let toastEl = null;
+  let toastTimer = null;
 
-  function clearTimers() {
+  function clearStatusTimer() {
     if (hideTimer) {
       window.clearTimeout(hideTimer);
       hideTimer = null;
+    }
+  }
+
+  function clearToastTimer() {
+    if (toastTimer) {
+      window.clearTimeout(toastTimer);
+      toastTimer = null;
+    }
+  }
+
+  function hideToast() {
+    clearToastTimer();
+    if (toastEl) {
+      toastEl.classList.remove("mfe-toast-visible");
+    }
+  }
+
+  function showToast(message, kind = "error", { persistent = false } = {}) {
+    const text = String(message || "").trim();
+    if (!text) return;
+    if (!toastEl) {
+      toastEl = document.createElement("div");
+      toastEl.className = "mfe-toast";
+      document.body.appendChild(toastEl);
+    }
+    toastEl.classList.remove("mfe-toast-error", "mfe-toast-visible");
+    if (kind === "error") {
+      toastEl.classList.add("mfe-toast-error");
+    }
+    toastEl.textContent = text;
+    toastEl.classList.add("mfe-toast-visible");
+    clearToastTimer();
+    if (!persistent) {
+      toastTimer = window.setTimeout(() => {
+        if (toastEl) {
+          toastEl.classList.remove("mfe-toast-visible");
+        }
+        toastTimer = null;
+      }, 3200);
     }
   }
 
@@ -24,9 +65,13 @@ function createManager() {
     }
   }
 
-  function showMessage(message, className, { autoHide = true, timeout = 2000 } = {}) {
+  function showMessage(
+    message,
+    className,
+    { autoHide = true, timeout = 2000 } = {},
+  ) {
     if (!statusEl) return;
-    clearTimers();
+    clearStatusTimer();
     statusEl.textContent = message;
     setClasses(className);
     statusEl.classList.add("is-visible");
@@ -78,26 +123,32 @@ function createManager() {
   }
 
   function setSaved() {
+    hideToast();
     lastExplicit = { message: "Saved", className: "is-saved" };
     updateFromState();
   }
 
   function setNoChanges() {
+    hideToast();
     lastExplicit = { message: "No changes", className: "is-unchanged" };
     updateFromState();
   }
 
-  function setError(message = "Save failed") {
+  function setError(message = "Save failed", options = {}) {
     lastExplicit = {
-      message,
+      message: "Error",
       className: "is-error",
       timeout: 2500,
     };
+    showToast(message, "error", {
+      persistent: Boolean(options?.persistent),
+    });
     updateFromState();
   }
 
   function reset() {
-    clearTimers();
+    clearStatusTimer();
+    hideToast();
     dirtyFields.clear();
     lastExplicit = null;
     if (statusEl) {
@@ -109,6 +160,10 @@ function createManager() {
         "is-visible",
       );
       statusEl.textContent = "";
+    }
+    if (toastEl) {
+      toastEl.remove();
+      toastEl = null;
     }
     statusEl = null;
   }

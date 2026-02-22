@@ -2222,6 +2222,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             preg_match('/^\s*<!--\s*(section:|sub:|[^>]+)-->/i', $after) &&
             !preg_match('/\R\s*\R?\s*$/', $safeReplacement)
         ) {
+            $safeReplacement = rtrim($safeReplacement, " \t\r\n");
+            $after = ltrim($after, " \t\r\n");
             $safeReplacement .= "\n\n";
         }
 
@@ -2734,11 +2736,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $oldLines = explode("\n", str_replace(["\r\n", "\r"], "\n", $oldMarkdown));
         $newLines = explode("\n", str_replace(["\r\n", "\r"], "\n", $newMarkdown));
 
+        $listLinePattern = '/^([ \t]{0,3})([*+-])(\s+)(.*)$/';
+
         $count = min(count($oldLines), count($newLines));
         for ($i = 0; $i < $count; $i++) {
             if (
-                preg_match('/^([ \t]{0,3})([*+-])(\s+)(.*)$/', $oldLines[$i], $oldMatch) &&
-                preg_match('/^([ \t]{0,3})([*+-])(\s+)(.*)$/', $newLines[$i], $newMatch)
+                preg_match($listLinePattern, $oldLines[$i], $oldMatch) &&
+                preg_match($listLinePattern, $newLines[$i], $newMatch)
             ) {
                 $newLines[$i] = $oldMatch[1] . $oldMatch[2] . $oldMatch[3] . $newMatch[4];
             }
@@ -2746,7 +2750,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         $oldMarkers = [];
         foreach ($oldLines as $line) {
-            if (preg_match('/^([ \t]{0,3})([*+-])(\s+)(.*)$/', $line, $match)) {
+            if (preg_match($listLinePattern, $line, $match)) {
                 $oldMarkers[] = $match[2];
             }
         }
@@ -2754,11 +2758,32 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         if (count($uniqueOldMarkers) === 1) {
             $preferredMarker = $uniqueOldMarkers[0];
             foreach ($newLines as $index => $line) {
-                if (preg_match('/^([ \t]{0,3})([*+-])(\s+)(.*)$/', $line, $match)) {
+                if (preg_match($listLinePattern, $line, $match)) {
                     $newLines[$index] = $match[1] . $preferredMarker . $match[3] . $match[4];
                 }
             }
         }
+
+        // Keep list blocks separated when marker style changes between adjacent list lines.
+        // Without this, mixed-marker lists can collapse into one list after save.
+        $separatedLines = [];
+        $lineCount = count($newLines);
+        for ($i = 0; $i < $lineCount; $i++) {
+            $separatedLines[] = $newLines[$i];
+            if ($i >= $lineCount - 1) {
+                continue;
+            }
+
+            $currentMatch = [];
+            $nextMatch = [];
+            $currentIsList = preg_match($listLinePattern, $newLines[$i], $currentMatch) === 1;
+            $nextIsList = preg_match($listLinePattern, $newLines[$i + 1], $nextMatch) === 1;
+
+            if ($currentIsList && $nextIsList && $currentMatch[2] !== $nextMatch[2]) {
+                $separatedLines[] = '';
+            }
+        }
+        $newLines = $separatedLines;
 
         $joined = implode("\n", $newLines);
         if ($oldNl !== "\n") {

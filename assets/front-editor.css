@@ -131,7 +131,6 @@ body[data-mfe-label-style="inside"] .mfe-hover-overlay .mfe-hover-label {
   outline: none !important;
 }
 
-
 .fe-editable::after {
   content: attr(data-mfe-label);
   position: absolute;
@@ -376,6 +375,40 @@ body[data-mfe-label-style="inside"] .mfe-label-host::after {
 
 .mfe-window-close-btn:hover {
   color: #0f172a;
+}
+
+.mfe-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(185, 28, 28, 0.35);
+  background: rgba(254, 242, 242, 0.98);
+  color: #991b1b;
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 600;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.15);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+  z-index: 100003;
+}
+
+.mfe-toast.mfe-toast-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.mfe-toast.mfe-toast-error {
+  border-color: rgba(185, 28, 28, 0.35);
+  background: rgba(254, 242, 242, 0.98);
+  color: #991b1b;
 }
 
 /* ELEMENT 4: Content Container */

@@ -10,10 +10,12 @@ import {
   inlineHtmlTags,
   shouldWarnForExtraContent,
   countNonEmptyBlocks,
+  countSignificantTopLevelBlocks,
   renderMarkdownToHtml,
-  markdownSerializer,
+  serializeMarkdownDoc,
   decodeMarkdownBase64,
   decodeHtmlEntitiesInFences,
+  trimTrailingLineBreaks,
   getLanguagesConfig,
   getSaveUrl,
   fetchCsrfToken,
@@ -36,6 +38,11 @@ import {
   setNoChanges,
   setError,
 } from "./editor-status.js";
+import {
+  HeadingSingleLineExtension,
+  SingleBlockDocumentExtension,
+  createSingleBlockEnterToastExtension,
+} from "./field-constraints-extension.js";
 
 let activeEditor = null;
 let activeTarget = null;
@@ -633,7 +640,7 @@ function highlightExtraContent(editor = activeEditor) {
     return;
   }
 
-  const currentBlockCount = countNonEmptyBlocks(editor.state.doc);
+  const currentBlockCount = countSignificantTopLevelBlocks(editor.state.doc);
   const originalCount = getOriginalBlockCount(editor);
 
   if (currentBlockCount <= originalCount) {
@@ -644,8 +651,29 @@ function highlightExtraContent(editor = activeEditor) {
   editor.view.dom.setAttribute("data-extra-warning-active", "true");
 }
 
+const EXTRA_SCOPE_SAVE_ERROR =
+  "Can't save yet. Keep only the first line here, then save again.";
+
+function hasBlockingExtraContent(editor = activeEditor) {
+  if (!editor) return false;
+  if (!shouldWarnForExtraContent(activeFieldType, activeFieldName))
+    return false;
+  const currentBlockCount = countSignificantTopLevelBlocks(editor.state.doc);
+  const originalCount = getOriginalBlockCount(editor);
+  return currentBlockCount > originalCount;
+}
+
 function createEditorInstance(host, fieldType, fieldName) {
+  const restrictToSingleBlock = shouldWarnForExtraContent(fieldType, fieldName);
+  const starterKitOptions = {
+    codeBlock: false,
+    link: false,
+    underline: false,
+    ...(restrictToSingleBlock ? { document: false } : {}),
+  };
   const lowlight = createLowlight(common);
+  const SingleBlockEnterToastExtension =
+    createSingleBlockEnterToastExtension(setError);
   const InlineHtmlLabel = Extension.create({
     name: "inlineHtmlLabel",
     addProseMirrorPlugins() {
@@ -713,11 +741,8 @@ function createEditorInstance(host, fieldType, fieldName) {
   const editor = new Editor({
     element: host,
     extensions: [
-      StarterKit.configure({
-        codeBlock: false,
-        link: false,
-        underline: false,
-      }),
+      StarterKit.configure(starterKitOptions),
+      ...(restrictToSingleBlock ? [SingleBlockDocumentExtension] : []),
       Underline,
       Superscript,
       Subscript,
@@ -840,6 +865,8 @@ function createEditorInstance(host, fieldType, fieldName) {
         allowBase64: false,
       }),
       InlineHtmlLabel,
+      ...(restrictToSingleBlock ? [SingleBlockEnterToastExtension] : []),
+      HeadingSingleLineExtension,
       EscapeKeyExtension,
     ],
     content: "",
@@ -879,7 +906,7 @@ function createEditorInstance(host, fieldType, fieldName) {
 
 function getMarkdownFromEditor(editor = activeEditor) {
   if (!editor) return "";
-  return markdownSerializer.serialize(editor.state.doc);
+  return trimTrailingLineBreaks(serializeMarkdownDoc(editor.state.doc));
 }
 
 const MFE_MARKER_LINE_RE =
@@ -891,6 +918,7 @@ function stripMfeMarkersForFieldScope(markdown) {
 }
 
 function saveField(fieldId, markdown) {
+  const finalMarkdown = trimTrailingLineBreaks(markdown);
   const { pageId, name: fieldName, scope, section } = parseFieldId(fieldId);
   const target = fieldElements.get(fieldId);
   if (!pageId || !fieldName || !target) {
@@ -899,19 +927,20 @@ function saveField(fieldId, markdown) {
 
   // INVARIANT: Validate markdown byte-for-byte if not explicitly edited
   const original = originalMarkdownByField.get(fieldId);
-  if (original !== undefined && original === markdown) {
+  if (original !== undefined && original === finalMarkdown) {
     // No user edits - markdown must remain unchanged
-    assertMarkdownInvariant(original, markdown);
+    assertMarkdownInvariant(original, finalMarkdown);
   }
 
   return fetchCsrfToken()
     .then((csrf) => {
       const scopeFromTarget = getMetaAttr(target, "scope") || "";
       const resolvedScope = scopeFromTarget || scope || "field";
-      const outboundMarkdown =
+      const outboundRawMarkdown =
         resolvedScope === "field"
-          ? stripMfeMarkersForFieldScope(markdown)
-          : markdown;
+          ? stripMfeMarkersForFieldScope(finalMarkdown)
+          : finalMarkdown;
+      const outboundMarkdown = trimTrailingLineBreaks(outboundRawMarkdown);
       const { current } = getLanguagesConfig();
       const formData = new FormData();
       formData.append("markdown", outboundMarkdown);
@@ -1027,6 +1056,11 @@ function saveField(fieldId, markdown) {
 }
 
 function saveAllDrafts({ showStatus = true } = {}) {
+  if (hasBlockingExtraContent(activeEditor)) {
+    setError(EXTRA_SCOPE_SAVE_ERROR);
+    return Promise.resolve();
+  }
+
   if (draftMarkdownByField.size === 0 && activeEditor && activeFieldId) {
     const markdown = decodeHtmlEntitiesInFences(
       getMarkdownFromEditor(activeEditor),
@@ -1044,12 +1078,13 @@ function saveAllDrafts({ showStatus = true } = {}) {
     const { pageId, name, scope, section } = parseFieldId(fieldId);
     if (!pageId || !name) return;
     if (!grouped.has(pageId)) grouped.set(pageId, []);
+    const normalizedMarkdown = trimTrailingLineBreaks(markdown);
     grouped.get(pageId).push({
       key: fieldId,
       name,
       scope: scope || "field",
       section: section || "",
-      markdown,
+      markdown: normalizedMarkdown,
     });
   });
 

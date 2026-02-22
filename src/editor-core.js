@@ -5,6 +5,46 @@ import {
   defaultMarkdownSerializer,
 } from "prosemirror-markdown";
 
+function normalizeHardBreaksInHeadings(node, insideHeading = false) {
+  if (!node || node.childCount === 0) {
+    return node;
+  }
+
+  const schema = node.type?.schema;
+  if (!schema) {
+    return node;
+  }
+
+  const nextChildren = [];
+  let changed = false;
+
+  node.forEach((child) => {
+    if (insideHeading && child?.type?.name === "hardBreak") {
+      nextChildren.push(schema.text(" "));
+      changed = true;
+      return;
+    }
+
+    const nextInsideHeading = insideHeading || child?.type?.name === "heading";
+    const normalizedChild = normalizeHardBreaksInHeadings(
+      child,
+      nextInsideHeading,
+    );
+
+    if (normalizedChild !== child) {
+      changed = true;
+    }
+
+    nextChildren.push(normalizedChild);
+  });
+
+  if (!changed) {
+    return node;
+  }
+
+  return node.type.create(node.attrs, nextChildren, node.marks);
+}
+
 /**
  * CRITICAL: Each parser/serializer instance MUST be fresh and isolated.
  * Never mutate shared instances. Markdown source must be immutable.
@@ -27,15 +67,20 @@ export const inlineHtmlTags = [
   "sup",
 ];
 
+export function trimTrailingLineBreaks(markdown) {
+  const text = typeof markdown === "string" ? markdown : "";
+  return text.replace(/(?:\r?\n)+$/, "");
+}
+
 export function shouldWarnForExtraContent(fieldType, fieldName) {
   if (fieldType === "container") return false;
-  if (warningFieldTypes.size === 0 && warningFieldNames.size === 0)
-    return false;
-  if (warningFieldTypes.size > 0 && warningFieldNames.size > 0) {
-    return warningFieldTypes.has(fieldType) && warningFieldNames.has(fieldName);
+  if (warningFieldNames.size > 0 && warningFieldNames.has(fieldName)) {
+    return true;
   }
-  if (warningFieldTypes.size > 0) return warningFieldTypes.has(fieldType);
-  return warningFieldNames.has(fieldName);
+  if (warningFieldTypes.size > 0 && warningFieldTypes.has(fieldType)) {
+    return true;
+  }
+  return false;
 }
 
 export function countNonEmptyBlocks(doc) {
@@ -45,6 +90,19 @@ export function countNonEmptyBlocks(doc) {
     if (child.textContent.trim().length > 0) {
       count += 1;
     }
+  }
+  return count;
+}
+
+export function countSignificantTopLevelBlocks(doc) {
+  let count = 0;
+  for (let i = 0; i < doc.childCount; i += 1) {
+    const child = doc.child(i);
+    const isEmptyParagraph =
+      child?.type?.name === "paragraph" &&
+      child.textContent.trim().length === 0;
+    if (isEmptyParagraph) continue;
+    count += 1;
   }
   return count;
 }
@@ -233,7 +291,7 @@ export const markdownSerializer = new MarkdownSerializer(
       state.atBlockStart = true;
     },
     hardBreak(state) {
-      state.write("\n");
+      state.write("  \n");
     },
     text: defaultMarkdownSerializer.nodes.text,
   },
@@ -282,6 +340,12 @@ export const markdownSerializer = new MarkdownSerializer(
     bulletListMarker: "-",
   },
 );
+
+export function serializeMarkdownDoc(doc) {
+  if (!doc) return "";
+  const normalized = normalizeHardBreaksInHeadings(doc);
+  return markdownSerializer.serialize(normalized);
+}
 
 export function decodeMarkdownBase64(markdownB64) {
   return decodeURIComponent(

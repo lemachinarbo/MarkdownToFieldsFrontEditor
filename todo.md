@@ -14,12 +14,10 @@ Rule: never trade determinism for convenience, even for “temporary” fixes.
 - If user is updating a field, and field is a list they can add new lines and thgat content goes to markdown but maybe user insnt aware.
 - If a field is edited inside a section, the mirror doent update. Probably thats ok, but lets investigate  
 - Inline editor and fullscreen editor have logic duplicated?
-- How to make nested fields live preview available? 
 
 - container fields labels do not appear in the editor
 - Implement a Notion-like editor.
 - Add an edit all document option
-- when using ->text the rollover appears ons ection, but iof section is100% width height, the rollover can dissapear, maybe the solution is giving options on how to render the rollover, so is visible
 - Why book button gets editable? ius because multiple scrion use the same class or something? markdown using same label?
 - If the markdown contains HTML, we keep it as HTML. However, if the user adds styling using the toolbar (such as H1, italic, bold, etc.), we must save it as markdown. For example, italic should be saved as *foo*, not <em>foo>.
 - A full-page plan editor, similar to a large Word document, making it easy to view sections and compare translations as a whole.
