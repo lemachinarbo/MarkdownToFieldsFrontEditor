@@ -23,6 +23,7 @@ import {
   shouldWarnForExtraContent,
   countSignificantTopLevelBlocks,
   renderMarkdownToHtml,
+  parseMarkdownToDoc,
   decodeMarkdownBase64,
   decodeHtmlEntitiesInFences,
   trimTrailingLineBreaks,
@@ -376,9 +377,6 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
     const canonicalMarkdown = trimTrailingLineBreaks(
       typeof finalMarkdown === "string" ? finalMarkdown : "",
     );
-    const canonicalHtml = normalizeHtmlImageSources(
-      renderMarkdownToHtml(canonicalMarkdown),
-    );
     activeTarget.dataset.markdown = canonicalMarkdown;
     if (activeTarget.classList?.contains("fe-editable")) {
       activeTarget.setAttribute(
@@ -391,7 +389,18 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
     if (primaryEditor) {
       const selection = primaryEditor.state.selection;
       runWithoutDirtyTracking(() => {
-        primaryEditor.commands.setContent(canonicalHtml, false);
+        try {
+          const canonicalDoc = parseMarkdownToDoc(
+            canonicalMarkdown,
+            primaryEditor.schema,
+          );
+          primaryEditor.commands.setContent(canonicalDoc.toJSON(), false);
+        } catch (_e) {
+          const canonicalHtml = normalizeHtmlImageSources(
+            renderMarkdownToHtml(canonicalMarkdown),
+          );
+          primaryEditor.commands.setContent(canonicalHtml, false);
+        }
       });
       primaryEditor.commands.setTextSelection(selection);
     }

@@ -210,6 +210,17 @@ export function createMarkdownParser(schema) {
   return new MarkdownParser(schema, markdownIt, tokens);
 }
 
+export function parseMarkdownToDoc(markdown, schema) {
+  if (!schema) {
+    throw new Error("parseMarkdownToDoc requires schema");
+  }
+  const parser = createMarkdownParser(schema);
+  const canonicalMarkdown = trimTrailingLineBreaks(
+    typeof markdown === "string" ? markdown : "",
+  );
+  return parser.parse(canonicalMarkdown);
+}
+
 /**
  * Render markdown to HTML for display purposes ONLY.
  *

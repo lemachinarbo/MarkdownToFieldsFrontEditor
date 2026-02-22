@@ -3,6 +3,7 @@
 ## V0.5.6
 - Refactored duplicated inline/fullscreen editor code into shared helpers.
 - Moved shared TipTap extensions into one module to keep inline/fullscreen in sync.
+- Fixed fenced code blocks gaining extra blank lines after repeated fullscreen save/rehydrate cycles.
 
 ## V0.5.5
 - Image picker is faster thanks to thumbnail caching.

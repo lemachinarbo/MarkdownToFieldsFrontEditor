@@ -1,0 +1,261 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`Behavior lock: markdown + editor parity field resolution + id format contracts snapshot 1`] = `
+{
+  "draftUtilsFieldIdParse": {
+    "fieldId": "123:field:body:title",
+    "name": "title",
+    "pageId": "123",
+    "scope": "field",
+    "section": "body",
+    "subsection": "",
+  },
+  "draftUtilsScopedFromFieldId": "field:body:title",
+  "fullscreenBuildFieldIdSource": "function buildFieldId(pageId, scope, section, subsection, name) { const sub = subsection || ""; if (sub) { return \`\${pageId}:\${scope}:\${section}:\${sub}:\${name}\`; } return \`\${pageId}:\${scope}:\${section}:\${name}\`; }",
+  "fullscreenStripMarkersWrapperOrUse": "",
+  "inlineBuildFieldIdSource": "function buildFieldId({ pageId, scope, section, name }",
+  "inlineParseDataMfeSource": "function parseDataMfe(value) { const raw = (value || "").trim(); if (!raw) return null; const lower = raw.toLowerCase(); const splitPath = (path) => (path || "") .split("/") .map((p) => p.trim()) .filter(Boolean); if (lower.startsWith("field:")) { const parts = splitPath(raw.slice(6)); if (parts.length === 1) { return { scope: "field", name: parts[0], section: "", subsection: "" }; } if (parts.length === 2) { return { scope: "field", section: parts[0], name: parts[1], subsection: "", }; } if (parts.length >= 3) { return { scope: "field", section: parts[0], subsection: parts[1], name: parts[2], }; } return null; } if (lower.startsWith("section:")) { const parts = splitPath(raw.slice(8)); if (!parts.length) return null; return { scope: "section", name: parts[0], section: "" }; } if (lower.startsWith("sub:") || lower.startsWith("subsection:")) { const path = lower.startsWith("sub:") ? raw.slice(4) : raw.slice(11); const parts = splitPath(path.replace(/:/g, "/")); if (parts.length < 2) return null; return { scope: "subsection", section: parts[0], name: parts[1] }; } // New shorthand for field-within-section // "topics" => auto resolve (field first, then section) // "foo/topics" => auto resolve (field in section first, then subsection) const pathParts = splitPath(raw); if (pathParts.length === 2) { return { scope: "auto", section: pathParts[0], name: pathParts[1], subsection: "", }; } if (pathParts.length >= 3) { return { scope: "field", section: pathParts[0], subsection: pathParts[1], name: pathParts[2], }; } // Backward compatibility with previous syntax: // "hero" => section, "hero:chirology" => subsection const legacy = raw .split(":") .map((p) => p.trim()) .filter(Boolean); if (legacy.length === 1) { return { scope: "auto", name: legacy[0], section: "", subsection: "" }; } if (legacy.length >= 2) { return { scope: "subsection", section: legacy[0], name: legacy[1] }; } return null; }",
+  "inlineParseFieldIdSource": "function parseFieldId(fieldId) { const [pageId, scope, section, name] = fieldId .split("|") .map((part) => decodeURIComponent(part || "")); return { pageId, scope: scope || "field", section: section || "", name: name || "", }; }",
+  "inlineStripMarkersWrapperOrUse": "",
+  "markerRegexShared": "const MFE_MARKER_LINE_RE =
+  /^[\\t ]*<!--\\s*[a-zA-Z0-9_:.\\/-]+\\s*-->[\\t ]*(?:\\r?\\n|$)/gm;",
+  "scopedHtmlKeyFromMeta": "field:body:title",
+  "sharedStripMarkersSource": "function stripMfeMarkersForFieldScope(markdown) { const text = typeof markdown === "string" ? markdown : ""; return text.replace(MFE_MARKER_LINE_RE, ""); }",
+}
+`;
+
+exports[`Behavior lock: markdown + editor parity image insertion flow signatures stay unchanged 1`] = `
+{
+  "fullscreenImageFlow": "function openImagePicker(initialData = null, imagePos = null) { const editor = activeEditor || primaryEditor; if (!editor) return; createImagePicker({ initialData, onSelect: (imageData) => { // imageData is { filename, url, alt, _resolveWarning? } const editor = activeEditor || primaryEditor; if (!editor) return; // Show soft warning if image resolution failed (deferred to render time) if (imageData._resolveWarning) { statusManager.setError(imageData._resolveWarning); } let shouldReplaceSelectedImage = false; if (typeof imagePos === "number") { const imageNode = editor.state.doc.nodeAt(imagePos); if (imageNode && imageNode.type.name === "image") { const tr = editor.state.tr.setSelection( NodeSelection.create(editor.state.doc, imagePos), ); editor.view.dispatch(tr); shouldReplaceSelectedImage = true; } } if (!shouldReplaceSelectedImage) { const { selection } = editor.state; shouldReplaceSelectedImage = selection.node && selection.node.type.name === "image"; } if (shouldReplaceSelectedImage) { editor .chain() .focus() .updateAttributes("image", { src: imageData.url, alt: imageData.alt || "", originalFilename: imageData.filename, }) .run(); } else { editor .chain() .focus() .setImage({ src: imageData.url, alt: imageData.alt || "", originalFilename: imageData.filename, }) .run(); } // Mark as dirty if (editor === primaryEditor) { primaryDirty = true; const scopedKey = getActiveScopedHtmlKey(); if (scopedKey) { draftMarkdownByScopedKey.set( scopedKey, getMarkdownFromEditor(editor), ); } if (activeFieldId) { statusManager.markDirty(activeFieldId); } } if (editor === secondaryEditor && secondaryLang) { dirtyTranslations.set(secondaryLang, true); } }, onClose: () => { // Refocus editor after picker closes setTimeout(() => editor.view.focus(), 0); }, }); }",
+  "inlineImageFlow": "function openImagePickerInline(initialData = null, imagePos = null) { if (!activeEditor) return; createImagePicker({ initialData, onSelect: (imageData) => { // imageData is { filename, url, alt, _resolveWarning? } if (!activeEditor) return; // Show soft warning if image resolution failed (deferred to render time) if (imageData._resolveWarning) { setError(imageData._resolveWarning); } let shouldReplaceSelectedImage = false; if (typeof imagePos === "number") { const imageNode = activeEditor.state.doc.nodeAt(imagePos); if (imageNode && imageNode.type.name === "image") { const tr = activeEditor.state.tr.setSelection( NodeSelection.create(activeEditor.state.doc, imagePos), ); activeEditor.view.dispatch(tr); shouldReplaceSelectedImage = true; } } if (!shouldReplaceSelectedImage) { const { selection } = activeEditor.state; shouldReplaceSelectedImage = selection.node && selection.node.type.name === "image"; } if (shouldReplaceSelectedImage) { activeEditor .chain() .focus() .updateAttributes("image", { src: imageData.url, alt: imageData.alt || "", originalFilename: imageData.filename, }) .run(); } else { activeEditor .chain() .focus() .setImage({ src: imageData.url, alt: imageData.alt || "", originalFilename: imageData.filename, }) .run(); } // Mark as dirty dirty = true; if (activeFieldId) { markDirty(activeFieldId); const markdown = decodeHtmlEntitiesInFences( getMarkdownFromEditor(activeEditor), ); draftMarkdownByField.set(activeFieldId, markdown); } }, onClose: () => { // Refocus editor after picker closes setTimeout(() => activeEditor?.view?.focus(), 0); }, }); }",
+}
+`;
+
+exports[`Behavior lock: markdown + editor parity inline vs fullscreen exact duplicate blocks remain equivalent 1`] = `
+{
+  "createEditorInstanceFullscreen": "function createEditorInstance(element, fieldType, fieldName) { const restrictToSingleBlock = shouldWarnForExtraContent(fieldType, fieldName); const starterKitOptions = { codeBlock: false, link: false, underline: false, ...(restrictToSingleBlock ? { document: false } : {}), }; const lowlight = createLowlight(common); const SingleBlockEnterToastExtension = createSingleBlockEnterToastExtension( (message, options) => statusManager.setError(message, options), ); const ImageExtension = createMfeImageExtension(getImageBaseUrl); const editor = new Editor({ element, extensions: [ StarterKit.configure(starterKitOptions), ...(restrictToSingleBlock ? [SingleBlockDocumentExtension] : []), UnderlineMark, SuperscriptMark, SubscriptMark, Marker, CodeBlockLowlight.configure({ lowlight, }), Link.configure({ openOnClick: false, linkOnPaste: true, }), ImageExtension, InlineHtmlLabelExtension, ...(restrictToSingleBlock ? [SingleBlockEnterToastExtension] : []), HeadingSingleLineExtension, // EscapeKeyExtension, - DEPRECATED: WindowManager now handles global Escape ], content: "", editorProps: { attributes: { class: "prose prose-sm focus:outline-none mfe-editor", spellcheck: "false", }, }, }); applyFieldAttributes(editor, fieldType, fieldName); editor.on("focus", () => { activeEditor = editor; if (typeof refreshToolbarState === "function") { refreshToolbarState(); } }); editor.on("update", () => { if (suppressDirtyTracking > 0) return; highlightExtraContent(editor); if (shouldWarnForExtraContent(fieldType, fieldName)) { stripTrailingEmptyParagraph(editor); } if (editor === primaryEditor) { primaryDirty = true; if (activeFieldId) { primaryDraftsByFieldId.set( activeFieldId, getMarkdownFromEditor(editor), ); } if (activeFieldId) { statusManager.markDirty(activeFieldId); } } if (editor === secondaryEditor && secondaryLang) { dirtyTranslations.set(secondaryLang, true); translationsCache = translationsCache || {}; translationsCache[secondaryLang] = getMarkdownFromEditor(editor); if (activeFieldId) { translationsCacheByFieldId.set(activeFieldId, translationsCache); } } }); editor.view.dom.addEventListener("keydown", (e) => { if (e.key !== "Tab") return; if (!primaryEditor || !secondaryEditor) return; e.preventDefault(); if (e.shiftKey) { primaryEditor.view.focus(); } else { secondaryEditor.view.focus(); } }); return editor; }",
+  "createEditorInstanceInline": "function createEditorInstance(host, fieldType, fieldName) { const restrictToSingleBlock = shouldWarnForExtraContent(fieldType, fieldName); const starterKitOptions = { codeBlock: false, link: false, underline: false, ...(restrictToSingleBlock ? { document: false } : {}), }; const lowlight = createLowlight(common); const SingleBlockEnterToastExtension = createSingleBlockEnterToastExtension(setError); const ImageExtension = createMfeImageExtension(getImageBaseUrl); const editor = new Editor({ element: host, extensions: [ StarterKit.configure(starterKitOptions), ...(restrictToSingleBlock ? [SingleBlockDocumentExtension] : []), UnderlineMark, SuperscriptMark, SubscriptMark, Marker, CodeBlockLowlight.configure({ lowlight, }), Link.configure({ openOnClick: false, linkOnPaste: true, }), ImageExtension, InlineHtmlLabelExtension, ...(restrictToSingleBlock ? [SingleBlockEnterToastExtension] : []), HeadingSingleLineExtension, EscapeKeyExtension, ], content: "", editorProps: { attributes: { class: "mfe-inline-editor", spellcheck: "false", }, }, }); applyFieldAttributes(editor, fieldType, fieldName); editor.on("focus", () => { activeEditor = editor; }); editor.on("update", () => { if (suppressUpdates) return; highlightExtraContent(editor); if (shouldWarnForExtraContent(fieldType, fieldName)) { stripTrailingEmptyParagraph(editor); } dirty = true; if (activeFieldId) { markDirty(activeFieldId); draftByField.set(activeFieldId, editor.getJSON()); const markdown = decodeHtmlEntitiesInFences( getMarkdownFromEditor(editor), ); draftMarkdownByField.set(activeFieldId, markdown); } }); return editor; }",
+  "fullscreenUsageAnchors": [
+    {
+      "name": "setOriginalBlockCount",
+      "used": true,
+    },
+    {
+      "name": "getOriginalBlockCount",
+      "used": true,
+    },
+    {
+      "name": "applyFieldAttributes",
+      "used": true,
+    },
+    {
+      "name": "stripTrailingEmptyParagraph",
+      "used": true,
+    },
+    {
+      "name": "getMarkdownFromEditor",
+      "used": true,
+    },
+    {
+      "name": "stripMfeMarkersForFieldScope",
+      "used": true,
+    },
+  ],
+  "inlineUsageAnchors": [
+    {
+      "name": "setOriginalBlockCount",
+      "used": true,
+    },
+    {
+      "name": "getOriginalBlockCount",
+      "used": true,
+    },
+    {
+      "name": "applyFieldAttributes",
+      "used": true,
+    },
+    {
+      "name": "stripTrailingEmptyParagraph",
+      "used": true,
+    },
+    {
+      "name": "getMarkdownFromEditor",
+      "used": true,
+    },
+    {
+      "name": "stripMfeMarkersForFieldScope",
+      "used": true,
+    },
+  ],
+  "sharedFunctions": [
+    {
+      "name": "setOriginalBlockCount",
+      "source": "function setOriginalBlockCount( editor, fieldType, fieldName, originalBlockCounts, ) { const count = shouldWarnForExtraContent(fieldType, fieldName) ? 1 : countNonEmptyBlocks(editor.state.doc); originalBlockCounts.set(editor, count); }",
+    },
+    {
+      "name": "getOriginalBlockCount",
+      "source": "function getOriginalBlockCount(editor, originalBlockCounts) { return originalBlockCounts.get(editor) || 0; }",
+    },
+    {
+      "name": "applyFieldAttributes",
+      "source": "function applyFieldAttributes(editor, fieldType, fieldName) { const dom = editor.view.dom; dom.setAttribute("data-field-type", fieldType); dom.setAttribute("data-field-name", fieldName || ""); if (shouldWarnForExtraContent(fieldType, fieldName)) { dom.setAttribute("data-extra-warning", "true"); dom.setAttribute("data-extra-warning-active", "false"); } else { dom.removeAttribute("data-extra-warning"); dom.removeAttribute("data-extra-warning-active"); } }",
+    },
+    {
+      "name": "stripTrailingEmptyParagraph",
+      "source": "function stripTrailingEmptyParagraph(editor) { if (!editor) return; const { state, view } = editor; const { doc } = state; if (doc.childCount <= 1) return; const last = doc.child(doc.childCount - 1); if (last.type.name !== "paragraph") return; if (last.textContent.trim() !== "") return; const from = doc.content.size - last.nodeSize; const to = doc.content.size; const tr = state.tr.delete(from, to); view.dispatch(tr); }",
+    },
+    {
+      "name": "getMarkdownFromEditor",
+      "source": "function getMarkdownFromEditor(editor) { if (!editor) return ""; return trimTrailingLineBreaks(serializeMarkdownDoc(editor.state.doc)); }",
+    },
+    {
+      "name": "stripMfeMarkersForFieldScope",
+      "source": "function stripMfeMarkersForFieldScope(markdown) { const text = typeof markdown === "string" ? markdown : ""; return text.replace(MFE_MARKER_LINE_RE, ""); }",
+    },
+  ],
+}
+`;
+
+exports[`Behavior lock: markdown + editor parity keyboard shortcut behavior signatures stay unchanged 1`] = `
+{
+  "fullscreenShortcutHandler": "function setupKeyboardShortcuts() { if (keydownHandler) { document.removeEventListener("keydown", keydownHandler, true); } const handler = (e) => { if (!activeEditor) return; // Handle Ctrl/Cmd+S for save if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); e.stopPropagation(); saveAllEditors(); return; // Important: return to avoid processing other cases } // Handle other Ctrl/Cmd shortcuts if (e.ctrlKey || e.metaKey) { switch (e.key.toLowerCase()) { case "b": e.preventDefault(); activeEditor.chain().focus().toggleBold().run(); return; case "i": e.preventDefault(); activeEditor.chain().focus().toggleItalic().run(); return; case "k": e.preventDefault(); // show link prompt const url = prompt("Enter URL:"); if (url) { activeEditor.chain().focus().setLink({ href: url }).run(); } return; } } }; keydownHandler = handler; document.addEventListener("keydown", keydownHandler, true); }",
+  "inlineEscapeConfirm": "function confirmDiscardChanges() { if (!dirty) return true; return window.confirm("You have unsaved changes. Discard them and close?"); }",
+  "inlineKeydownAnchor": "if (!keydownHandler) { keydownHandler = (e) => { if (e.key === "Escape") { closeInlineEditor({ saveOnClose: false, promptOnClose: true }); } if (e.ctrlKey || e.metaKey) { if (e.key.toLowerCase() === "s") { e.preventDefault(); saveAllDrafts({ showStatus: true }); } } }; document.addEventListener("keydown", keydownHandler, true); }",
+}
+`;
+
+exports[`Behavior lock: markdown + editor parity marker parsing/render/serialize contract snapshot 1`] = `
+{
+  "markerCountInRendered": 2,
+  "markerCountInSerializedMarkerDoc": 0,
+  "markerMarkdown": "<!-- section:body -->
+
+Alpha line
+
+<!-- hero -->
+
+![alt](image one.jpg)
+",
+  "parserSignature": {
+    "createMarkdownParserSource": "function createMarkdownParser(schema) { // Create a fresh markdown-it instance - DO NOT mutate global state const markdownIt = createFreshMarkdownItInstance(); // Add MFE marker rule (only once per instance) if (!markdownIt.__mfeMarker) { markdownIt.block.ruler.before( "html_block", "mfe_marker", (state, startLine, endLine, silent) => { const pos = state.bMarks[startLine] + state.tShift[startLine]; const max = state.eMarks[startLine]; if (pos >= max) return false; const line = state.src.slice(pos, max); const match = line.match(/^\\s*<!--\\s*([a-zA-Z0-9_:.\\/-]+)\\s*-->\\s*$/); if (!match) return false; if (silent) return true; markdownIt.__mfeMarkerHits = (markdownIt.__mfeMarkerHits || 0) + 1; if (markdownIt.__mfeMarkerHits > 5000) { return false; } const token = state.push("mfe_marker", "", 0); token.meta = { name: match[1] }; token.block = true; state.line = startLine + 1; return true; }, ); markdownIt.__mfeMarker = true; } if (!schema.nodes.image) { markdownIt.disable("image"); } const tokens = { ...defaultMarkdownParser.tokens, blockquote: { block: "blockquote" }, paragraph: { block: "paragraph" }, list_item: { block: "listItem" }, bullet_list: { block: "bulletList", getAttrs: defaultMarkdownParser.tokens.bullet_list?.getAttrs, }, ordered_list: { block: "orderedList", getAttrs: defaultMarkdownParser.tokens.ordered_list?.getAttrs, }, heading: { block: "heading", getAttrs: defaultMarkdownParser.tokens.heading?.getAttrs, }, code_block: { block: "codeBlock", noCloseToken: true }, fence: { block: "codeBlock", getAttrs: defaultMarkdownParser.tokens.fence?.getAttrs, noCloseToken: true, }, hr: { node: "horizontalRule" }, hardbreak: { node: "hardBreak" }, softbreak: { node: "hardBreak" }, em: { mark: "italic" }, strong: { mark: "bold" }, link: defaultMarkdownParser.tokens.link, image: defaultMarkdownParser.tokens.image, mfe_marker: { block: "mfeMarker", getAttrs: (tok) => ({ name: tok.meta?.name || "" }), }, }; if (!schema.nodes.codeBlock) { delete tokens.code_block; delete tokens.fence; } if (!schema.nodes.image) { delete tokens.image; } return new MarkdownParser(schema, markdownIt, tokens); }",
+    "fullscreenStripMarkersWrapperOrUse": "",
+    "inlineStripMarkersWrapperOrUse": "",
+    "markerRegexShared": "const MFE_MARKER_LINE_RE =
+  /^[\\t ]*<!--\\s*[a-zA-Z0-9_:.\\/-]+\\s*-->[\\t ]*(?:\\r?\\n|$)/gm;",
+    "sharedStripMarkersSource": "function stripMfeMarkersForFieldScope(markdown) { const text = typeof markdown === "string" ? markdown : ""; return text.replace(MFE_MARKER_LINE_RE, ""); }",
+  },
+  "rendered": "<div data-mfe-marker="section:body"></div>
+<p>Alpha line</p>
+<div data-mfe-marker="hero"></div>
+<p>![alt](image one.jpg)</p>
+",
+  "serializedMarkerDoc": "<!-- section:body -->
+Alpha line
+
+<!-- hero -->
+!\\[alt\\](image one.jpg)",
+  "serializedPlain": "Alpha line
+
+Second line",
+}
+`;
+
+exports[`Behavior lock: markdown + editor parity save pipeline DOM mutation signatures stay unchanged 1`] = `
+{
+  "fullscreenHandlePrimarySaveResponse": [],
+  "inlineSaveBatch": [
+    {
+      "code": "return fetch(getSaveUrl(), {",
+      "line": 22,
+      "token": "fetch(",
+    },
+    {
+      "code": "window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;",
+      "line": 38,
+      "token": "window.MarkdownFrontEditorConfig.sectionsIndex",
+    },
+    {
+      "code": "window.MarkdownFrontEditorConfig.fieldsIndex = data.fieldsIndex;",
+      "line": 43,
+      "token": "window.MarkdownFrontEditorConfig.fieldsIndex",
+    },
+    {
+      "code": "activeEditor.commands.setContent(html, false);",
+      "line": 75,
+      "token": "setContent(",
+    },
+    {
+      "code": "target.innerHTML = html;",
+      "line": 80,
+      "token": "innerHTML =",
+    },
+    {
+      "code": "target.dataset.markdown = markdown;",
+      "line": 87,
+      "token": "dataset.markdown",
+    },
+    {
+      "code": "target.dataset.markdownB64 = btoa(",
+      "line": 88,
+      "token": "dataset.markdown",
+    },
+    {
+      "code": "target.dataset.markdownB64 = btoa(",
+      "line": 88,
+      "token": "dataset.markdownB64",
+    },
+  ],
+  "inlineSaveField": [
+    {
+      "code": "return fetch(getSaveUrl(), {",
+      "line": 43,
+      "token": "fetch(",
+    },
+    {
+      "code": "window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;",
+      "line": 59,
+      "token": "window.MarkdownFrontEditorConfig.sectionsIndex",
+    },
+    {
+      "code": "window.MarkdownFrontEditorConfig.fieldsIndex = data.fieldsIndex;",
+      "line": 64,
+      "token": "window.MarkdownFrontEditorConfig.fieldsIndex",
+    },
+    {
+      "code": "activeEditor.commands.setContent(html, false);",
+      "line": 107,
+      "token": "setContent(",
+    },
+    {
+      "code": "el.innerHTML = html;",
+      "line": 112,
+      "token": "innerHTML =",
+    },
+    {
+      "code": "activeEditor.commands.setContent(primaryHtml, false);",
+      "line": 120,
+      "token": "setContent(",
+    },
+    {
+      "code": "target.innerHTML = primaryHtml;",
+      "line": 125,
+      "token": "innerHTML =",
+    },
+    {
+      "code": "target.dataset.markdown = finalMarkdown;",
+      "line": 129,
+      "token": "dataset.markdown",
+    },
+    {
+      "code": "target.dataset.markdownB64 = btoa(",
+      "line": 130,
+      "token": "dataset.markdown",
+    },
+    {
+      "code": "target.dataset.markdownB64 = btoa(",
+      "line": 130,
+      "token": "dataset.markdownB64",
+    },
+  ],
+}
+`;
