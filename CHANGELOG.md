@@ -1,5 +1,8 @@
 # Changelog
 
+## V0.5.7
+
+- Fixed image thumbnail delivery**: Thumbnails now serve through ProcessWire cache using an endpoint.
 
 ## V0.5.6
 

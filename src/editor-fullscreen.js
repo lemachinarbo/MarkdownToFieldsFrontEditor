@@ -3263,12 +3263,7 @@ function resolveHostImageSrc(host, src) {
     return `${filesBase}${cleanName}`;
   }
 
-  const fromConfig = window.MarkdownFrontEditorConfig?.imageBaseUrl;
-  const base =
-    typeof fromConfig === "string" && fromConfig.trim() !== ""
-      ? fromConfig
-      : "/";
-  const normalizedBase = base.endsWith("/") ? base : `${base}/`;
+  const normalizedBase = getImageBaseUrl();
   return `${normalizedBase}${value.replace(/^\/+/, "")}`;
 }
 

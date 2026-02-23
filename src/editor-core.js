@@ -445,6 +445,10 @@ export function saveTranslation(
 }
 
 export function getSaveUrl() {
+  const fromConfig = window.MarkdownFrontEditorConfig?.saveUrl;
+  if (typeof fromConfig === "string" && fromConfig.trim() !== "") {
+    return fromConfig;
+  }
   return "?markdownFrontEditorSave=1";
 }
 

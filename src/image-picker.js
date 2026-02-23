@@ -1,4 +1,5 @@
-import { fetchCsrfToken } from "./editor-core.js";
+import { fetchCsrfToken, getSaveUrl } from "./editor-core.js";
+import { getImageBaseUrl } from "./editor-shared-helpers.js";
 import { openWindow, closeTopWindow } from "./window-manager.js";
 
 /**
@@ -18,15 +19,6 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
       }
     : null;
 
-  function getImageBaseUrl() {
-    const fromConfig = window.MarkdownFrontEditorConfig?.imageBaseUrl;
-    const base =
-      typeof fromConfig === "string" && fromConfig.trim() !== ""
-        ? fromConfig
-        : "/";
-    return base.endsWith("/") ? base : `${base}/`;
-  }
-
   // Internal helper to resolve local filenames to ProcessWire asset paths
   function resolveImageUrl(url) {
     if (!url) return "";
@@ -35,6 +27,23 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
   }
 
   const isRemote = selectedImage?.url.startsWith("http");
+
+  function resolvePageId() {
+    const editablePage = document
+      .querySelector(".fe-editable[data-page]")
+      ?.getAttribute("data-page");
+    if (editablePage && editablePage !== "0") return editablePage;
+
+    const anyPageAttr = document
+      .querySelector("[data-page]")
+      ?.getAttribute("data-page");
+    if (anyPageAttr && anyPageAttr !== "0") return anyPageAttr;
+
+    const cfgPage = String(window.MarkdownFrontEditorConfig?.pageId || "0");
+    if (cfgPage !== "0") return cfgPage;
+
+    return "0";
+  }
 
   // Create the main container that will be passed to openWindow
   const container = document.createElement("div");
@@ -151,16 +160,13 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
     const altInput = sidebar.querySelector("#mfe-picker-alt-input");
     if (!selectedImage || !onSelect) return;
 
-    // For local images: ensure file exists in PW assets, but store RELATIVE path in markdown
+    // For local images: require successful ProcessWire resolution to page assets
     const relativePath = selectedImage.path || selectedImage.filename;
-    let resolveWarning = null;
-    let pwUrl = null; // PW URL for display (if resolution succeeds)
+    let pwUrl = null;
 
     if (selectedImage.filename && !selectedImage.url.startsWith("http")) {
-      const pageId =
-        document.querySelector(".fe-editable")?.getAttribute("data-page") ||
-        "0";
-      const saveUrl = window.MarkdownFrontEditorConfig?.saveUrl || "./";
+      const pageId = resolvePageId();
+      const saveUrl = getSaveUrl();
 
       try {
         const csrf = await fetchCsrfToken();
@@ -180,39 +186,35 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
         const result = await response.json();
 
         if (result.status === 1 && result.url) {
-          // Success: use PW URL for display
           pwUrl = result.url;
         } else {
-          resolveWarning =
-            "Image may not preview correctly (processing deferred to render)";
-          console.warn("Image resolve deferred:", result);
+          console.error("Image resolve failed:", result);
+          return;
         }
       } catch (err) {
-        resolveWarning = "Image processing failed (will retry at render time)";
-        console.warn("Image resolution error:", err);
+        console.error("Image resolution error:", err);
+        return;
       }
     }
 
-    // Pass both pieces of information:
-    // - url: PW URL for display (or fallback to relative if failed)
-    // - filename: relative path for markdown serialization
-    const displayUrl = pwUrl || relativePath;
+    const displayUrl = pwUrl || selectedImage.url;
+    if (!displayUrl) {
+      return;
+    }
 
     onSelect({
       filename: relativePath,
-      url: displayUrl, // PW URL for display (relative as fallback)
+      url: displayUrl,
       alt: altInput.value,
-      _resolveWarning: resolveWarning, // Soft warning for UI feedback
     });
 
     closeTopWindow();
   });
 
   function loadImages() {
-    const pageId =
-      document.querySelector(".fe-editable")?.getAttribute("data-page") || "0";
+    const pageId = resolvePageId();
     const grid = gallerySection.querySelector(".mfe-picker-gallery-grid");
-    const saveUrl = window.MarkdownFrontEditorConfig?.saveUrl || "./";
+    const saveUrl = getSaveUrl();
 
     return fetchCsrfToken()
       .then((csrf) => {
@@ -263,14 +265,26 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
         item.classList.add("is-selected");
       }
 
+      // Create aspect ratio wrapper for stable layout during image load
+      const wrapper = document.createElement("div");
+      wrapper.className = "mfe-gallery-item-wrapper";
+
+      // Calculate padding-top based on aspect ratio if dimensions available
+      if (image.width && image.height) {
+        const aspectRatioPct = (image.height / image.width) * 100;
+        wrapper.style.paddingTop = aspectRatioPct + "%";
+      } else {
+        // Fallback if dimensions unavailable
+        wrapper.style.paddingTop = "66.67%";
+      }
+
       const img = document.createElement("img");
       if (image.thumbUrl) {
         // Cached thumb exists - use it
         img.src = image.thumbUrl;
       } else if (image.thumbPending) {
         // Has hash but thumb missing - show placeholder, wait for SSE
-        img.src =
-          "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect fill='%23f0f0f0' width='300' height='300'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23999' font-size='14'%3ELoading...%3C/text%3E%3C/svg%3E";
+        img.style.backgroundColor = "#e8e8e8";
         img.dataset.thumbName = image.thumbName;
         img.dataset.imagePath = image.fullPath || image.path;
         img.dataset.hash = image.hash || "";
@@ -278,8 +292,7 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
         pendingThumbs.push(img);
       } else if (image.requestThumb) {
         // No hash yet - show placeholder, generate thumb in background
-        img.src =
-          "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect fill='%23f0f0f0' width='300' height='300'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23999' font-size='14'%3ELoading...%3C/text%3E%3C/svg%3E";
+        img.style.backgroundColor = "#e8e8e8";
         img.dataset.imagePath = image.fullPath || image.path;
         img.dataset.hash = "";
         img.dataset.relativePath = image.path || "";
@@ -291,7 +304,8 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
       img.alt = image.filename;
       img.loading = "lazy";
 
-      item.appendChild(img);
+      wrapper.appendChild(img);
+      item.appendChild(wrapper);
 
       item.addEventListener("click", () => {
         selectedImage = {
@@ -320,11 +334,32 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
   }
 
   function generateThumbs(pendingImgs) {
-    const saveUrl = window.MarkdownFrontEditorConfig?.saveUrl || "./";
+    const saveUrl = getSaveUrl();
     const debug = !!window.MarkdownFrontEditorConfig?.debug;
+    const pageId = resolvePageId();
 
-    const withHash = pendingImgs.filter((img) => img.dataset.hash);
-    const withoutHash = pendingImgs.filter((img) => !img.dataset.hash);
+    function buildActionUrl(action, extraParams = {}) {
+      const [base, query = ""] = String(saveUrl).split("?");
+      const params = new URLSearchParams(query);
+      params.set("action", action);
+      Object.entries(extraParams).forEach(([key, value]) => {
+        if (value === undefined || value === null || value === "") return;
+        params.set(key, String(value));
+      });
+      const qs = params.toString();
+      return qs ? `${base || ""}?${qs}` : base || saveUrl;
+    }
+
+    const visualOrdered = [...pendingImgs].sort((a, b) => {
+      const rectA = a.getBoundingClientRect();
+      const rectB = b.getBoundingClientRect();
+      const topDelta = rectA.top - rectB.top;
+      if (Math.abs(topDelta) > 4) return topDelta;
+      return rectA.left - rectB.left;
+    });
+
+    const withHash = visualOrdered.filter((img) => img.dataset.hash);
+    const withoutHash = visualOrdered.filter((img) => !img.dataset.hash);
 
     // Start SSE for images with known hashes
     if (withHash.length > 0) {
@@ -332,7 +367,9 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
         .map((img) => img.dataset.thumbName)
         .filter(Boolean);
       if (thumbNames.length > 0) {
-        const sseUrl = `${saveUrl}?action=thumbStream&thumbs=${encodeURIComponent(thumbNames.join(","))}`;
+        const sseUrl = buildActionUrl("thumbStream", {
+          thumbs: thumbNames.join(","),
+        });
         const eventSource = new EventSource(sseUrl);
 
         eventSource.addEventListener("ready", (e) => {
@@ -362,46 +399,84 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
 
     // Generate thumbs: withHash first (while SSE is listening), then withoutHash
     const orderedImgs = [...withHash, ...withoutHash];
-    orderedImgs.forEach((img) => {
-      const hasHash = !!img.dataset.hash;
+    const maxConcurrent = 2;
 
-      fetchCsrfToken().then((csrf) => {
-        const formData = new FormData();
-        formData.append("action", "generateThumb");
-        formData.append("imagePath", img.dataset.imagePath);
-        if (img.dataset.relativePath) {
-          formData.append("relativePath", img.dataset.relativePath);
-        }
-        if (img.dataset.hash) {
-          formData.append("hash", img.dataset.hash);
-        }
-        if (csrf) {
-          formData.append(csrf.name, csrf.value);
-        }
+    fetchCsrfToken().then((csrf) => {
+      let nextIndex = 0;
 
-        fetch(saveUrl, {
-          method: "POST",
-          body: formData,
-          credentials: "same-origin",
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            // Handle SVG skip - use original URL
-            if (data.status === "skip" && data.reason === "svg") {
-              // SVG files don't get thumbs, already showing full URL
-              return;
+      const runOne = async () => {
+        while (nextIndex < orderedImgs.length) {
+          const currentIndex = nextIndex;
+          nextIndex += 1;
+          const img = orderedImgs[currentIndex];
+          const hasHash = !!img.dataset.hash;
+
+          const formData = new FormData();
+          formData.append("action", "generateThumb");
+          formData.append("pageId", pageId);
+          formData.append("imagePath", img.dataset.imagePath);
+          if (img.dataset.relativePath) {
+            formData.append("relativePath", img.dataset.relativePath);
+          }
+          if (img.dataset.hash) {
+            formData.append("hash", img.dataset.hash);
+          }
+          if (csrf) {
+            formData.append(csrf.name, csrf.value);
+          }
+
+          try {
+            const res = await fetch(saveUrl, {
+              method: "POST",
+              body: formData,
+              credentials: "same-origin",
+            });
+
+            const raw = await res.text();
+            let data = null;
+
+            if (raw) {
+              try {
+                data = JSON.parse(raw);
+              } catch (parseErr) {
+                throw new Error(
+                  `[${res.status}] Invalid JSON response: ${raw.slice(0, 240)}`,
+                );
+              }
             }
 
-            // Update image src if thumb was created (for images without hash)
-            // Images with hash are updated via SSE
+            if (!res.ok) {
+              const message =
+                (data && data.message) ||
+                (data && data.error) ||
+                raw ||
+                `HTTP ${res.status}`;
+              throw new Error(message);
+            }
+
+            if (!data) {
+              throw new Error(`Empty response (HTTP ${res.status})`);
+            }
+
+            // Handle SVG skip - use original URL
+            if (data.status === "skip" && data.reason === "svg") {
+              continue;
+            }
+
+            // Images with hash are updated via SSE; without hash update immediately
             if (!hasHash && data.thumbUrl) {
               img.src = data.thumbUrl;
             }
-          })
-          .catch((err) => {
+          } catch (err) {
             if (debug) console.error("[MFE] Thumb generation failed:", err);
-          });
-      });
+          }
+        }
+      };
+
+      const workerCount = Math.min(maxConcurrent, orderedImgs.length);
+      for (let i = 0; i < workerCount; i += 1) {
+        runOne();
+      }
     });
   }
 

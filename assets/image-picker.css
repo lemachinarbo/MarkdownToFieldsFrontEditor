@@ -248,6 +248,35 @@
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   background: #f8fafc;
   border: 1.5px solid transparent;
+  contain: layout style paint;
+}
+
+.mfe-gallery-item-wrapper {
+  position: relative;
+  width: 100%;
+  padding-top: 66.67%;
+}
+
+.mfe-gallery-item-wrapper img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: linear-gradient(90deg, #e8e8e8 0%, #f0f0f0 50%, #e8e8e8 100%);
+  background-size: 200% 100%;
+  animation: skeleton-load 1.5s ease-in-out infinite;
+}
+
+@keyframes skeleton-load {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
 
 .mfe-gallery-item:hover {
@@ -258,13 +287,6 @@
 .mfe-gallery-item.is-selected {
   border-color: #2563eb;
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
-}
-
-.mfe-gallery-item img {
-  width: 100%;
-  height: auto;
-  display: block;
-  display: block;
 }
 
 .mfe-picker-loading,

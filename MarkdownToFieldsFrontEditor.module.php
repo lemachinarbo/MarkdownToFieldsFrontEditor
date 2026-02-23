@@ -14,7 +14,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
             'summary' => 'Frontend editor for MarkdownToFields.',
-            'version' =>  '0.5.6',
+            'version' =>  '0.5.7',
             'autoload' => true,
             'singular' => true,
             'requires' => ['MarkdownToFields'],
@@ -146,7 +146,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $clearThumbs = wire('modules')->get('InputfieldSubmit');
         $clearThumbs->name = 'mfeClearThumbCache';
         $clearThumbs->value = 'Clear thumbnail cache';
-        $clearThumbs->description = 'Deletes /site/images/_thumbs/index.json and cached thumbs.';
+        $clearThumbs->description = 'Deletes /site/assets/cache/MFE/thumbs/index.json and cached thumbs.';
         $clearThumbs->columnWidth = 100;
         $thumbFieldset->add($clearThumbs);
 
@@ -311,8 +311,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'toolbarButtons' => $toolbarButtons,
             'languages' => $langList,
             'currentLanguage' => $currentLangName,
-            'imageBaseUrl' => rtrim((string)$this->wire()->config->urls->site, '/') . '/images/',
-            'pageFilesBaseUrl' => rtrim((string)$this->wire()->config->urls->files, '/') . '/' . (int)$page->id . '/',
+            'pageId' => (int)$page->id,
+            'imageBaseUrl' => $this->resolveConfiguredImageBaseUrl($page),
+            'pageFilesBaseUrl' => $this->resolvePageFilesBaseUrl($page),
             'buildStamp' => $version,
             'sectionsIndex' => $sectionsIndex,
             'fieldsIndex' => $fieldsIndex,
@@ -681,6 +682,27 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             exit;
         }
 
+        // Thumb delivery endpoint (GET) - serves cached thumbnails
+        if ($input->get->text('action') === 'deliverThumb') {
+            $thumbName = $input->get->text('thumb');
+            if (!$thumbName || !preg_match('/^[a-z0-9\-_.]+\.[a-z0-9]{64}\.jpg$/i', $thumbName)) {
+                header('HTTP/1.1 400 Bad Request');
+                exit;
+            }
+            $cachePath = rtrim((string)$this->wire()->config->paths->cache, '/') . '/';
+            $thumbPath = $cachePath . 'MFE/thumbs/' . $thumbName;
+
+            if (!is_file($thumbPath) || !is_readable($thumbPath)) {
+                header('HTTP/1.1 404 Not Found');
+                exit;
+            }
+            header('Content-Type: image/jpeg');
+            header('Content-Length: ' . filesize($thumbPath));
+            header('Cache-Control: public, max-age=31536000');
+            readfile($thumbPath);
+            exit;
+        }
+
         // SSE thumb stream endpoint
         if ($input->get->text('action') === 'thumbStream') {
             $user = $this->wire()->user;
@@ -688,6 +710,10 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 header('HTTP/1.1 403 Forbidden');
                 echo 'Forbidden';
                 exit;
+            }
+
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                session_write_close();
             }
 
             $thumbsParam = $input->get->text('thumbs');
@@ -718,8 +744,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 }
             }
 
-            $sitePath = $this->wire()->config->paths->site;
-            $thumbDir = rtrim($sitePath, '/') . '/images/_thumbs/';
+            try {
+                $thumbDir = $this->ensureThumbDir();
+            } catch (\RuntimeException $e) {
+                header('HTTP/1.1 400 Bad Request');
+                echo $e->getMessage();
+                exit;
+            }
             $remaining = $thumbNames;
             $timeout = 30;
             $start = time();
@@ -730,8 +761,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 foreach ($toCheck as $name) {
                     $path = $thumbDir . $name;
                     if (is_file($path)) {
-                        $siteUrl = rtrim($this->wire()->config->urls->site, '/');
-                        $url = $siteUrl . '/images/_thumbs/' . $name;
+                        // Serve thumbnail through PHP endpoint to bypass .htaccess restrictions
+                        $url = '?markdownFrontEditorSave=1&action=deliverThumb&thumb=' . urlencode($name);
                         echo "event: ready\n";
                         echo 'data: ' . json_encode(['thumbName' => $name, 'thumbUrl' => $url]) . "\n\n";
                         if (function_exists('ob_flush')) {
@@ -769,8 +800,16 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $imagePath = $input->post->text('imagePath');
             $relativePath = $input->post->text('relativePath');
             $hash = $input->post->text('hash');
+            $pageId = (int)$input->post->pageId;
             if (!$imagePath) {
                 $this->sendJsonError('Missing imagePath', 400);
+            }
+            if (!$pageId) {
+                $this->sendJsonError('Missing pageId', 400);
+            }
+
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                session_write_close();
             }
 
             if (!is_file($imagePath) || !is_readable($imagePath)) {
@@ -797,14 +836,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 if ($relativePath !== '') {
                     $this->saveHashToIndex($relativePath, $hash);
                 }
-                $this->logDebug(sprintf(
-                    "THUMB_GENERATE_HASH_COMPUTED_AND_STORED imagePath='%s' hash='%s'",
-                    $imagePath,
-                    $hash
-                ));
             }
 
-            $thumbPath = $this->thumbPath($basename, $hash);
+            try {
+                $thumbPath = $this->thumbPath($basename, $hash, $imagePath);
+            } catch (\Throwable $e) {
+                $this->sendJsonError($e->getMessage(), 400);
+            }
             if (is_file($thumbPath)) {
                 header('Content-Type: application/json');
                 echo json_encode([
@@ -815,49 +853,35 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 exit;
             }
 
-            $img = null;
-            if ($ext === 'jpg' || $ext === 'jpeg') {
-                $img = @imagecreatefromjpeg($imagePath);
-            } elseif ($ext === 'png') {
-                $img = @imagecreatefrompng($imagePath);
-            } elseif ($ext === 'gif') {
-                $img = @imagecreatefromgif($imagePath);
-            } elseif ($ext === 'webp') {
-                $img = @imagecreatefromwebp($imagePath);
+            $thumbSource = $relativePath !== '' ? $relativePath : $imagePath;
+            try {
+                $pwVariationPath = $this->buildProcessWireThumbVariation($pageId, $thumbSource, 500);
+                $this->ensureThumbDir($imagePath);
+                $saved = @copy($pwVariationPath, $thumbPath);
+                if (is_file($pwVariationPath) && basename($pwVariationPath) !== basename($thumbPath)) {
+                    @unlink($pwVariationPath);
+                }
+            } catch (\Throwable $e) {
+                if ($this->debug) {
+                    $this->wire()->log->save('markdown-front-edit', sprintf(
+                        "THUMB_IMPORT_FAILED pageId=%d thumbSource='%s' imagePath='%s' relativePath='%s' class='%s' message='%s'",
+                        $pageId,
+                        str_replace(["\n", "\r"], ' ', (string)$thumbSource),
+                        str_replace(["\n", "\r"], ' ', (string)$imagePath),
+                        str_replace(["\n", "\r"], ' ', (string)$relativePath),
+                        get_class($e),
+                        str_replace(["\n", "\r"], ' ', (string)$e->getMessage())
+                    ));
+                }
+                $this->sendJsonError($e->getMessage(), 500);
             }
 
-            if (!$img) {
-                $this->sendJsonError('Failed to load image', 500);
-            }
-
-            $origW = imagesx($img);
-            $origH = imagesy($img);
-            $maxDim = 300;
-            if ($origW > $origH) {
-                $newW = $maxDim;
-                $newH = (int)(($origH / $origW) * $maxDim);
-            } else {
-                $newH = $maxDim;
-                $newW = (int)(($origW / $origH) * $maxDim);
-            }
-
-            $thumb = imagecreatetruecolor($newW, $newH);
-            imagecopyresampled($thumb, $img, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
-            imagedestroy($img);
-
-            $this->ensureThumbDir();
-            $saved = imagejpeg($thumb, $thumbPath, 70);
-            imagedestroy($thumb);
-
-            if (!$saved) {
+            if (!$saved || !is_file($thumbPath)) {
                 $this->sendJsonError('Failed to save thumb', 500);
             }
 
-            $this->logDebug(sprintf(
-                "THUMB_GENERATE_CREATED thumbPath='%s' size=%d bytes",
-                $thumbPath,
-                filesize($thumbPath)
-            ));
+            // Ensure thumbnail is readable by the web server
+            @chmod($thumbPath, 0644);
 
             header('Content-Type: application/json');
             echo json_encode([
@@ -920,48 +944,15 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             if(!$page->id) $this->sendJsonError('Page not found', 404);
 
             // Get image source paths (config override first, then module config)
-            $imageSourcePaths = [];
-            $cfg = $this->wire()->config->MarkdownToFields ?? [];
-            $paths = $cfg['imageSourcePaths'] ?? [];
-            if (is_string($paths)) {
-                $imageSourcePaths = array_filter(array_map('trim', explode(',', $paths)));
-            } elseif (is_array($paths)) {
-                $imageSourcePaths = $paths;
-            }
-
-            if (empty($imageSourcePaths)) {
-                $mdConfig = $this->wire()->modules->get('MarkdownToFields');
-                if ($mdConfig && isset($mdConfig->imageSourcePaths)) {
-                    $paths = $mdConfig->imageSourcePaths;
-                    if (is_string($paths)) {
-                        $imageSourcePaths = array_filter(array_map('trim', explode(',', $paths)));
-                    } elseif (is_array($paths)) {
-                        $imageSourcePaths = $paths;
-                    }
-                }
-            }
-
-            // Default to site/images/ if not configured
-            if (empty($imageSourcePaths)) {
-                $imageSourcePaths = [$this->wire()->config->paths->site . 'images/'];
+            try {
+                $imageSourcePaths = $this->getConfiguredImageSourcePaths();
+            } catch (\RuntimeException $e) {
+                $this->sendJsonError($e->getMessage(), 400);
             }
 
             $images = [];
             $missingDirs = [];
             $allowedExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
-            $warnedOutsideRoot = false;
-
-            $cfg = $this->wire()->config;
-            $sitePath = rtrim((string)($cfg->paths->site ?? ''), '/') . '/';
-            $siteImages = $sitePath . 'images/';
-            $siteUrl = rtrim((string)($cfg->urls->site ?? '/'), '/') . '/';
-            $projectRoot = rtrim((string)($cfg->paths->projectRoot ?? ''), '/') . '/';
-            $projectSiteImages = $projectRoot !== '/' ? $projectRoot . 'src/site/images/' : '';
-            $rootPath = rtrim((string)($cfg->paths->root ?? ''), '/') . '/';
-
-            // Normalize trailing slash for reliable comparisons
-            $siteImagesNorm = rtrim($siteImages, '/') . '/';
-            $projectSiteImagesNorm = $projectSiteImages ? rtrim($projectSiteImages, '/') . '/' : '';
 
             foreach ($imageSourcePaths as $sourcePath) {
                 $fullPath = $sourcePath;
@@ -992,8 +983,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                     $filename = $file->getFilename();
                     $fullFilename = str_replace('\\', '/', $file->getPathname());
                     
-                    // Skip files inside _thumbs directory (disposable cache)
-                    if (strpos($fullFilename, '/images/_thumbs/') !== false) {
+                    // Skip files inside thumbnail cache directories
+                    if (strpos($fullFilename, '/_thumbs/') !== false) {
                         continue;
                     }
                     
@@ -1002,19 +993,12 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                     
                     $relativeSourcePath = ltrim(substr($fullFilename, strlen($fullPathNorm)), '/');
                     $relativeSourcePath = str_replace('\\', '/', $relativeSourcePath);
-
-                    if ($fullPathNorm === $siteImagesNorm || ($projectSiteImagesNorm && $fullPathNorm === $projectSiteImagesNorm)) {
-                        $url = $siteUrl . 'images/' . $relativeSourcePath;
-                    } elseif ($sitePath && str_starts_with($fullPathNorm, $sitePath)) {
-                        $relativePath = ltrim(substr($fullPathNorm, strlen($sitePath)), '/');
-                        $url = $siteUrl . rtrim($relativePath, '/') . '/' . $relativeSourcePath;
-                    } else {
-                        if (!$warnedOutsideRoot && $rootPath && !str_starts_with($fullPathNorm, $rootPath)) {
-                            $warnedOutsideRoot = true;
-                        }
-                        $relativePath = $rootPath ? str_replace($rootPath, '/', $fullPathNorm) : $fullPathNorm;
-                        $url = rtrim($relativePath, '/') . '/' . $relativeSourcePath;
+                    try {
+                        $sourceBaseUrl = $this->sourcePathToPublicBaseUrl($fullPathNorm);
+                    } catch (\RuntimeException $e) {
+                        $this->sendJsonError($e->getMessage(), 400);
                     }
+                    $url = rtrim($sourceBaseUrl, '/') . '/' . $relativeSourcePath;
 
                     // Check mfe-owned hash index (lazy cache)
                     $hash = null;
@@ -1036,9 +1020,10 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                     } elseif ($hash) {
                         $name = pathinfo($filename, PATHINFO_FILENAME);
                         $thumbName = $name . '.' . $hash . '.jpg';
-                        $thumbPath = $sitePath . 'images/_thumbs/' . $thumbName;
+                        $thumbPath = $this->ensureThumbDir($fullFilename) . $thumbName;
                         if (is_file($thumbPath)) {
-                            $thumbUrl = $siteUrl . '/images/_thumbs/' . $thumbName;
+                            // Serve thumbnail through PHP endpoint to bypass .htaccess restrictions
+                            $thumbUrl = '?markdownFrontEditorSave=1&action=deliverThumb&thumb=' . urlencode($thumbName);
                         } else {
                             $thumbPending = true;
                         }
@@ -1054,6 +1039,14 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         'size' => $file->getSize(),
                         'fullPath' => $fullFilename,
                     ];
+                    
+                    // Get display dimensions (EXIF-aware) for aspect ratio placeholder
+                    $imgDims = $this->getImageDisplayDimensions($fullFilename);
+                    if ($imgDims) {
+                        $imageItem['width'] = $imgDims['width'];
+                        $imageItem['height'] = $imgDims['height'];
+                    }
+                    
                     if ($hash) {
                         $imageItem['hash'] = $hash;
                     }
@@ -3682,14 +3675,83 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
     // Thumbnail system (mfe-only)
     // ─────────────────────────────────────────────────────────────────────────
 
-    protected function ensureThumbDir(): string {
-        $sitePath = $this->wire()->config->paths->site;
-        $thumbDir = rtrim($sitePath, '/') . '/images/_thumbs/';
+    protected function getMarkdownToFieldsSetting(string $key) {
+        $cfg = $this->wire()->config->MarkdownToFields ?? [];
+        if (is_array($cfg) && array_key_exists($key, $cfg)) {
+            return $cfg[$key];
+        }
+
+        $mdModule = $this->wire()->modules->get('MarkdownToFields');
+        if ($mdModule && isset($mdModule->{$key})) {
+            return $mdModule->{$key};
+        }
+
+        return null;
+    }
+
+    protected function getConfiguredImageSourcePaths(): array {
+        $paths = $this->getMarkdownToFieldsSetting('imageSourcePaths');
+        $imageSourcePaths = [];
+
+        if (is_string($paths)) {
+            $imageSourcePaths = array_filter(array_map('trim', explode(',', $paths)));
+        } elseif (is_array($paths)) {
+            $imageSourcePaths = $paths;
+        }
+
+        if (empty($imageSourcePaths)) {
+            throw new \RuntimeException('MarkdownToFields.imageSourcePaths is required for image picker operations.');
+        }
+
+        return array_values(array_filter(array_map(static fn($p) => rtrim((string)$p, '/') . '/', $imageSourcePaths)));
+    }
+
+    protected function resolveThumbSourcePath(string $imagePath = ''): string {
+        $sources = $this->getConfiguredImageSourcePaths();
+        if (empty($sources)) {
+            throw new \RuntimeException('No image source paths configured.');
+        }
+        if ($imagePath !== '') {
+            $normalizedImagePath = str_replace('\\', '/', $imagePath);
+            foreach ($sources as $source) {
+                if (str_starts_with($normalizedImagePath, $source)) {
+                    return $source;
+                }
+            }
+            throw new \RuntimeException('Image path is outside configured imageSourcePaths.');
+        }
+        return $sources[0];
+    }
+
+    protected function sourcePathToPublicBaseUrl(string $sourcePath): string {
+        $cfg = $this->wire()->config;
+        $sitePath = rtrim((string)$cfg->paths->site, '/') . '/';
+        $siteUrl = rtrim((string)$cfg->urls->site, '/') . '/';
+        $rootPath = rtrim((string)$cfg->paths->root, '/') . '/';
+
+        $fullPathNorm = rtrim((string)$sourcePath, '/') . '/';
+
+        if (str_starts_with($fullPathNorm, $sitePath)) {
+            $relativePath = ltrim(substr($fullPathNorm, strlen($sitePath)), '/');
+            return $siteUrl . rtrim($relativePath, '/') . '/';
+        }
+        if (str_starts_with($fullPathNorm, $rootPath)) {
+            $relativePath = ltrim(substr($fullPathNorm, strlen($rootPath)), '/');
+            return '/' . trim($relativePath, '/') . '/';
+        }
+        throw new \RuntimeException('Configured image source path is outside ProcessWire site/root paths: ' . $fullPathNorm);
+    }
+
+    protected function ensureThumbDir(string $imagePath = ''): string {
+        $cachePath = rtrim((string)$this->wire()->config->paths->cache, '/') . '/';
+        $thumbDir = $cachePath . 'MFE/thumbs/';
         if (!is_dir($thumbDir)) {
             if (!mkdir($thumbDir, 0755, true)) {
                 throw new \RuntimeException("Failed to create thumb directory: {$thumbDir}");
             }
         }
+        // Ensure directory is readable/writable
+        @chmod($thumbDir, 0755);
         return $thumbDir;
     }
 
@@ -3700,16 +3762,115 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return hash_file('sha256', $path);
     }
 
-    protected function thumbPath(string $basename, string $hash): string {
-        $thumbDir = $this->ensureThumbDir();
+    protected function buildProcessWireThumbVariation(int $pageId, string $sourceImagePath, int $maxDim): string {
+        $resolvedPath = $this->resolveSourceImageAbsolutePath($sourceImagePath);
+        $thumbDir = $this->ensureThumbDir($resolvedPath);
+        $tempPath = $thumbDir . 'tmp-' . sha1($resolvedPath . microtime(true)) . '.jpg';
+
+        $resource = $this->loadImageResourceForThumb($resolvedPath);
+        if (!$resource) {
+            throw new \RuntimeException('Failed to load source image for thumbnail generation.');
+        }
+
+        if (!@imagejpeg($resource, $tempPath, 90)) {
+            @imagedestroy($resource);
+            throw new \RuntimeException('Failed to create temporary thumbnail source image.');
+        }
+        @imagedestroy($resource);
+
+        $sizer = $this->wire(new \ProcessWire\ImageSizer($tempPath, [
+            'upscaling' => false,
+        ]));
+        $ok = $sizer->resize($maxDim, 0);
+        if (!$ok || !is_file($tempPath)) {
+            @unlink($tempPath);
+            throw new \RuntimeException('ProcessWire ImageSizer failed to generate thumbnail variation.');
+        }
+
+        return $tempPath;
+    }
+
+    protected function resolveSourceImageAbsolutePath(string $sourceImagePath): string {
+        $candidate = str_replace('\\', '/', trim($sourceImagePath));
+        if ($candidate !== '' && str_starts_with($candidate, '/') && is_file($candidate) && is_readable($candidate)) {
+            return $candidate;
+        }
+
+        foreach ($this->getConfiguredImageSourcePaths() as $sourceBase) {
+            $full = rtrim($sourceBase, '/') . '/' . ltrim($candidate, '/');
+            if (is_file($full) && is_readable($full)) {
+                return str_replace('\\', '/', $full);
+            }
+        }
+
+        throw new \RuntimeException('Failed to resolve source image path for thumbnail generation.');
+    }
+
+    protected function loadImageResourceForThumb(string $path) {
+        $ext = strtolower((string)pathinfo($path, PATHINFO_EXTENSION));
+        if ($ext === 'jpg' || $ext === 'jpeg') return @imagecreatefromjpeg($path);
+        if ($ext === 'png') return @imagecreatefrompng($path);
+        if ($ext === 'gif') return @imagecreatefromgif($path);
+        if ($ext === 'webp') return @imagecreatefromwebp($path);
+        return null;
+    }
+
+    protected function thumbPath(string $basename, string $hash, string $imagePath = ''): string {
+        $thumbDir = $this->ensureThumbDir($imagePath);
         $name = pathinfo($basename, PATHINFO_FILENAME);
         return $thumbDir . $name . '.' . $hash . '.jpg';
     }
 
+    protected function getImageDisplayDimensions(string $fullFilename): ?array {
+        $imgDims = @getimagesize($fullFilename);
+        if (!$imgDims || !is_array($imgDims) || count($imgDims) < 2) {
+            return null;
+        }
+
+        $width = (int)$imgDims[0];
+        $height = (int)$imgDims[1];
+
+        $ext = strtolower((string)pathinfo($fullFilename, PATHINFO_EXTENSION));
+        $canHaveOrientation = in_array($ext, ['jpg', 'jpeg', 'tif', 'tiff'], true);
+        if ($canHaveOrientation && function_exists('exif_read_data')) {
+            $exif = @exif_read_data($fullFilename);
+            $orientation = (int)($exif['Orientation'] ?? 1);
+            if (in_array($orientation, [5, 6, 7, 8], true)) {
+                $tmp = $width;
+                $width = $height;
+                $height = $tmp;
+            }
+        }
+
+        return [
+            'width' => $width,
+            'height' => $height,
+        ];
+    }
+
     protected function thumbUrl(string $basename, string $hash): string {
-        $siteUrl = rtrim($this->wire()->config->urls->site, '/');
         $name = pathinfo($basename, PATHINFO_FILENAME);
-        return $siteUrl . '/images/_thumbs/' . $name . '.' . $hash . '.jpg';
+        $thumbName = $name . '.' . $hash . '.jpg';
+        // Serve thumbnail through PHP endpoint to bypass .htaccess restrictions
+        return '?markdownFrontEditorSave=1&action=deliverThumb&thumb=' . urlencode($thumbName);
+    }
+
+    protected function resolveConfiguredImageBaseUrl(\ProcessWire\Page $page): string {
+        $raw = trim((string)($this->getMarkdownToFieldsSetting('imageBaseUrl') ?? ''));
+
+        if ($raw === '') {
+            throw new \RuntimeException('MarkdownToFields.imageBaseUrl is required for frontend editor image operations.');
+        }
+
+        if (strpos($raw, '{pageId}') !== false) {
+            $raw = str_replace('{pageId}', (string)((int)$page->id), $raw);
+        }
+
+        return str_ends_with($raw, '/') ? $raw : ($raw . '/');
+    }
+
+    protected function resolvePageFilesBaseUrl(\ProcessWire\Page $page): string {
+        return rtrim((string)$this->wire()->config->urls->files, '/') . '/' . (int)$page->id . '/';
     }
 
     protected function clearThumbCache(): int {

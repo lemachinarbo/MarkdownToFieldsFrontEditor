@@ -16,10 +16,12 @@ export function getMetaAttr(el, name) {
 
 export function getImageBaseUrl() {
   const fromConfig = window.MarkdownFrontEditorConfig?.imageBaseUrl;
-  const base =
-    typeof fromConfig === "string" && fromConfig.trim() !== ""
-      ? fromConfig
-      : "/";
+  if (typeof fromConfig !== "string" || fromConfig.trim() === "") {
+    throw new Error(
+      "MarkdownFrontEditorConfig.imageBaseUrl is required for image operations.",
+    );
+  }
+  const base = fromConfig;
   return base.endsWith("/") ? base : `${base}/`;
 }
 
