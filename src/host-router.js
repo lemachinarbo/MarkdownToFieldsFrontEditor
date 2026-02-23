@@ -4,7 +4,39 @@ export function openFullscreenForTarget(target) {
   if (!api || typeof api.openForElement !== "function") {
     return false;
   }
-  api.openForElement(target);
+
+  if (!isInlineOpen()) {
+    api.openForElement(target);
+    return true;
+  }
+
+  requestCloseInline({
+    saveOnClose: false,
+    promptOnClose: true,
+    keepToolbar: false,
+    persistDraft: false,
+  }).then((closed) => {
+    if (!closed) return;
+    api.openForElement(target);
+  });
+
+  return true;
+}
+
+export function openInlineForTarget(target) {
+  if (!target) return false;
+
+  const inlineApi = window.MarkdownFrontEditorInline;
+  if (!inlineApi || typeof inlineApi.openForElement !== "function") {
+    return false;
+  }
+
+  if (isFullscreenOpen()) {
+    const closed = requestCloseFullscreen();
+    if (!closed) return false;
+  }
+
+  inlineApi.openForElement(target);
   return true;
 }
 

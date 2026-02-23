@@ -1,6 +1,10 @@
 # Changelog
 
-## V0.5.8
+
+## V0.6
+Made opening editors consistent: inline and fullscreen now use one shared router path.
+  - Removed duplicate double-click logic from editors. The router now handles switching.
+ - Fixed a bug where inline UI could stay visible when fullscreen opened.
 * Fixed an issue where ~~strikethrough~~ text sometimes showed raw `~~` after switching views. Now it stays formatted correctly.
 * Tightened parser logic so special markers only load when supported, preventing random mis-parsing.
 - Update draft retrieval logic.

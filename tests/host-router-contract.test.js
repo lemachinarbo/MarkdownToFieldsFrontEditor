@@ -1,5 +1,6 @@
 import {
   openFullscreenForTarget,
+  openInlineForTarget,
   isFullscreenOpen,
   requestCloseFullscreen,
   isInlineOpen,
@@ -34,6 +35,37 @@ describe("Host router contract", () => {
     expect(openForElement).toHaveBeenCalledWith(target);
   });
 
+  test("openFullscreenForTarget closes inline first when inline is open", async () => {
+    const target = { id: "x" };
+    let inlineOpen = true;
+    const inlineClose = jest.fn(() => {
+      inlineOpen = false;
+      return true;
+    });
+    const openForElement = jest.fn();
+
+    global.window.MarkdownFrontEditor = {
+      openForElement,
+      isOpen: jest.fn(() => false),
+    };
+    global.window.MarkdownFrontEditorInline = {
+      isOpen: jest.fn(() => inlineOpen),
+      close: inlineClose,
+    };
+
+    expect(openFullscreenForTarget(target)).toBe(true);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(inlineClose).toHaveBeenCalledWith({
+      saveOnClose: false,
+      promptOnClose: true,
+      keepToolbar: false,
+      persistDraft: false,
+    });
+    expect(openForElement).toHaveBeenCalledWith(target);
+  });
+
   test("requestCloseFullscreen calls close and rechecks isOpen", () => {
     let open = true;
     const close = jest.fn(() => {
@@ -55,5 +87,28 @@ describe("Host router contract", () => {
     expect(isInlineOpen()).toBe(true);
     expect(await requestCloseInline({ promptOnClose: true })).toBe(false);
     expect(close).toHaveBeenCalledWith({ promptOnClose: true });
+  });
+
+  test("openInlineForTarget closes fullscreen first", () => {
+    let fullscreenOpen = true;
+    const close = jest.fn(() => {
+      fullscreenOpen = false;
+    });
+    const openForElement = jest.fn();
+
+    global.window.MarkdownFrontEditor = {
+      close,
+      isOpen: jest.fn(() => fullscreenOpen),
+    };
+    global.window.MarkdownFrontEditorInline = {
+      isOpen: jest.fn(() => false),
+      openForElement,
+      close: jest.fn(() => true),
+    };
+
+    const target = { id: "inline-x" };
+    expect(openInlineForTarget(target)).toBe(true);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(openForElement).toHaveBeenCalledWith(target);
   });
 });

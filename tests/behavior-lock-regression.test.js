@@ -480,8 +480,9 @@ describe("Behavior lock: markdown + editor parity", () => {
     expect(inlineSource.includes('from "./editor-fullscreen.js"')).toBe(false);
     expect(inlineSource.includes('from "./host-router.js"')).toBe(true);
     expect(inlineSource.includes("openFullscreenForTarget(")).toBe(true);
+    expect(inlineSource.includes("openInlineForTarget(")).toBe(true);
     expect(inlineSource.includes(".mfe-window-close-btn")).toBe(false);
-    expect(inlineSource.includes("requestCloseFullscreen(")).toBe(true);
+    expect(inlineSource.includes("requestCloseFullscreen(")).toBe(false);
     expect(inlineSource.includes("isFullscreenOpen(")).toBe(true);
     expect(
       inlineSource.includes('classList.contains("mfe-view-fullscreen")'),
@@ -549,7 +550,8 @@ describe("Behavior lock: markdown + editor parity", () => {
       fullscreenSource.includes("openFullscreenEditorForElement(target)"),
     ).toBe(true);
     expect(fullscreenSource.includes('from "./host-router.js"')).toBe(true);
-    expect(fullscreenSource.includes("requestCloseInline(")).toBe(true);
+    expect(fullscreenSource.includes("openFullscreenForTarget(")).toBe(true);
+    expect(fullscreenSource.includes("requestCloseInline(")).toBe(false);
     expect(fullscreenSource.includes("isInlineOpen(")).toBe(true);
     expect(fullscreenSource.includes("isFullscreenOpen(")).toBe(true);
     expect(fullscreenSource.includes(".mfe-inline-toolbar")).toBe(false);

@@ -39,8 +39,8 @@ import { createToolbarButtons } from "./editor-toolbar.js";
 import { renderToolbarButtons } from "./editor-toolbar-renderer.js";
 import {
   openFullscreenForTarget,
+  openInlineForTarget,
   isFullscreenOpen,
-  requestCloseFullscreen,
 } from "./host-router.js";
 import {
   setInlineShellOpen,
@@ -1141,13 +1141,6 @@ async function openInlineEditorFromPayload(payload) {
   const el = payload.element;
   if (activeTarget === el && activeEditor) return;
 
-  if (isFullscreenOpen()) {
-    const closed = requestCloseFullscreen();
-    if (!closed) {
-      return;
-    }
-  }
-
   if (activeEditor) {
     const closed = await closeInlineEditor({
       saveOnClose: false,
@@ -1280,6 +1273,31 @@ function closeInlineEditor({
   persistDraft = false,
 } = {}) {
   if (!activeEditor || !activeTarget) {
+    if (toolbarEl) {
+      toolbarEl.remove();
+    }
+    toolbarEl = null;
+    toolbarStatusEl = null;
+    toolbarCloseBtn = null;
+
+    document.querySelectorAll(".mfe-inline-active").forEach((el) => {
+      const finalHtml = originalHtml.get(el) || "";
+      el.innerHTML = finalHtml;
+      el.classList.remove("mfe-inline-active");
+    });
+
+    activeEditor = null;
+    activeTarget = null;
+    activeFieldName = null;
+    activeFieldType = null;
+    activeFieldScope = "field";
+    activeFieldSection = "";
+    activeFieldSubsection = "";
+    activeFieldId = null;
+    activeScopeKey = "";
+    activeSession = null;
+    dirty = false;
+    isClosingInlineEditor = false;
     return Promise.resolve(true);
   }
 
@@ -1381,6 +1399,9 @@ function initInlineEditor() {
     isOpen() {
       return Boolean(activeEditor && activeTarget);
     },
+    openForElement(target) {
+      return openInlineEditor(target);
+    },
     close(options = {}) {
       return closeInlineEditor(options);
     },
@@ -1444,7 +1465,7 @@ function initInlineEditor() {
       }
 
       if (action.action === "inline") {
-        openInlineEditor(action.target);
+        openInlineForTarget(action.target);
       }
     };
 

@@ -82,8 +82,8 @@ import {
 } from "./fullscreen-shell.js";
 import { isInlineShellOpen } from "./inline-shell.js";
 import {
+  openFullscreenForTarget,
   isInlineOpen,
-  requestCloseInline,
   isFullscreenOpen,
 } from "./host-router.js";
 import {
@@ -2481,6 +2481,8 @@ function initEditors() {
   document.querySelectorAll(".fe-editable").forEach((el) => {
     if (el.dataset.mfeDblclickBound === "1") return;
     el.addEventListener("dblclick", (e) => {
+      if (isInlineOpen()) return;
+
       // Prevent default browser selection
       e.preventDefault();
       e.stopPropagation();
@@ -2488,7 +2490,7 @@ function initEditors() {
       const parentEditable = el.parentElement?.closest(".fe-editable");
       const target = e.shiftKey && parentEditable ? parentEditable : el;
 
-      openFullscreenEditorForElement(target);
+      openFullscreenForTarget(target);
     });
     el.dataset.mfeDblclickBound = "1";
   });
@@ -3446,21 +3448,6 @@ export function openFullscreenEditorForElement(target) {
   // Check if this target is already being edited inline
   // If so, user is just trying to refocus inline editor, not switch to fullscreen
   if (target.classList.contains("mfe-inline-active")) {
-    return;
-  }
-
-  if (isInlineOpen()) {
-    requestCloseInline({
-      saveOnClose: false,
-      promptOnClose: true,
-      keepToolbar: true,
-      persistDraft: true,
-    }).then((closed) => {
-      if (!closed) {
-        return;
-      }
-      openFullscreenEditorForElement(target);
-    });
     return;
   }
 
