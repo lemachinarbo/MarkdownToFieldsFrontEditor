@@ -43,6 +43,7 @@ import {
   SubscriptMark,
   createMfeImageExtension,
 } from "./editor-tiptap-extensions.js";
+import { createDocumentBoundaryExtension } from "./document-boundary-extension.js";
 import {
   getMetaAttr,
   getImageBaseUrl,
@@ -75,6 +76,26 @@ import {
   syncEditableMarkdownAttributesFromFieldsIndex as syncFieldsIndexToEditableAttrs,
 } from "./sync-by-key.js";
 import { openWindow, closeWindow, updateWindowById } from "./window-manager.js";
+import {
+  setFullscreenShellOpen,
+  setDocumentModeShellOpen,
+} from "./fullscreen-shell.js";
+import { isInlineShellOpen } from "./inline-shell.js";
+import {
+  isInlineOpen,
+  requestCloseInline,
+  isFullscreenOpen,
+} from "./host-router.js";
+import {
+  createScope,
+  createView,
+  createHost,
+  resolveSession,
+} from "./session-resolver.js";
+import {
+  attachToolbarToMenubarInner,
+  resolveOverlayMenubarInner,
+} from "./editor-menubar.js";
 
 let activeEditor = null;
 let primaryEditor = null;
@@ -87,6 +108,10 @@ let editorShell = null;
 let editorContainer = null;
 let overlayEl = null;
 let splitPane = null;
+let splitRegion = null;
+let splitHandle = null;
+let splitResizeCleanup = null;
+let splitSecondarySizePercent = 46;
 let saveStatusEl = null;
 let refreshToolbarState = null;
 let primaryDirty = false;
@@ -100,6 +125,12 @@ let activeFieldSubsection = "";
 let activeFieldId = null;
 let activeRawMarkdown = null;
 let activeDisplayMarkdown = null;
+let activeSession = null;
+let scopedModeMarkdown = null;
+let scopedModeTarget = null;
+let documentDraftMarkdown = "";
+let documentLeadingFrontmatter = "";
+let editorViewMode = "scoped";
 let suppressNextCloseConfirm = false;
 const primaryDraftsByFieldId = new Map();
 const originalMarkdownByFieldId = new Map();
@@ -139,6 +170,7 @@ function runWithoutDirtyTracking(fn) {
 }
 
 function hasActivePrimaryDraft() {
+  if (isDocumentScopeActive() && documentDraftMarkdown !== "") return true;
   if (activeFieldId && primaryDraftsByFieldId.has(activeFieldId)) return true;
   const scopedKey = getActiveScopedHtmlKey();
   if (scopedKey && draftMarkdownByScopedKey.has(scopedKey)) return true;
@@ -209,6 +241,11 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
   if (data.fieldsIndex) {
     window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
     window.MarkdownFrontEditorConfig.fieldsIndex = data.fieldsIndex;
+  }
+  if (data.documentMarkdownB64) {
+    window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
+    window.MarkdownFrontEditorConfig.documentMarkdownB64 =
+      data.documentMarkdownB64;
   }
   const sections = Array.isArray(
     window.MarkdownFrontEditorConfig?.sectionsIndex,
@@ -424,9 +461,11 @@ async function savePendingDrafts() {
     if (!parsed) continue;
     const resolvedScope = parsed.scope || "field";
     const outboundMarkdown =
-      resolvedScope === "field"
-        ? stripMfeMarkersForFieldScope(markdown || "")
-        : markdown || "";
+      resolvedScope === "document"
+        ? composeDocumentMarkdownForSave(markdown || "")
+        : resolvedScope === "field"
+          ? stripMfeMarkersForFieldScope(markdown || "")
+          : markdown || "";
     const normalizedOutboundMarkdown = trimTrailingLineBreaks(outboundMarkdown);
     const formData = new FormData();
     formData.append("markdown", normalizedOutboundMarkdown);
@@ -1043,7 +1082,7 @@ async function requestRenderedFragmentsDatastar({
     }
     if (isNestedScopeReplaceRisk) {
       if (strictSectionReplace) {
-        const hasInlineOpen = window.mfeInlineEditorActive === true;
+        const hasInlineOpen = isInlineOpen();
         const hasFullscreenUnsaved = hasPendingUnsavedChanges();
         const hasDescendantDrafts = hasDescendantScopedDrafts(patch.key);
         const canStrictReplace =
@@ -1177,6 +1216,21 @@ function confirmDiscardUnsavedChanges() {
 
 async function keepPendingChangesBeforeSwitch() {
   if (!activeFieldId || !primaryEditor) return true;
+  if (isDocumentScopeActive()) {
+    const markdown = getMarkdownFromEditor(primaryEditor);
+    const base = getDocumentConfigMarkdown();
+    if (
+      normalizeComparableMarkdown(markdown) ===
+      normalizeComparableMarkdown(base)
+    ) {
+      documentDraftMarkdown = "";
+      primaryDirty = false;
+      syncDirtyStatusForActiveField();
+      return true;
+    }
+    documentDraftMarkdown = markdown;
+    return true;
+  }
   const currentScopedKey = getActiveScopedHtmlKey();
   const oldMarkdown = activeRawMarkdown || "";
   const markdown = getMarkdownFromEditor(primaryEditor);
@@ -1229,6 +1283,9 @@ function createEditorInstance(element, fieldType, fieldName) {
     (message, options) => statusManager.setError(message, options),
   );
   const ImageExtension = createMfeImageExtension(getImageBaseUrl);
+  const DocumentBoundaryExtension = createDocumentBoundaryExtension(
+    () => editorViewMode,
+  );
   const editor = new Editor({
     element,
     extensions: [
@@ -1247,6 +1304,7 @@ function createEditorInstance(element, fieldType, fieldName) {
       }),
       ImageExtension,
       InlineHtmlLabelExtension,
+      DocumentBoundaryExtension,
       ...(restrictToSingleBlock ? [SingleBlockEnterToastExtension] : []),
       HeadingSingleLineExtension,
       // EscapeKeyExtension, - DEPRECATED: WindowManager now handles global Escape
@@ -1277,11 +1335,12 @@ function createEditorInstance(element, fieldType, fieldName) {
     }
     if (editor === primaryEditor) {
       primaryDirty = true;
-      if (activeFieldId) {
-        primaryDraftsByFieldId.set(
-          activeFieldId,
-          getMarkdownFromEditor(editor),
-        );
+      const markdown = getMarkdownFromEditor(editor);
+      if (isDocumentScopeActive()) {
+        documentDraftMarkdown = markdown;
+      } else if (activeFieldId) {
+        primaryDraftsByFieldId.set(activeFieldId, markdown);
+        scopedModeMarkdown = markdown;
       }
       if (activeFieldId) {
         statusManager.markDirty(activeFieldId);
@@ -1386,28 +1445,129 @@ function toggleSplit() {
   }
 }
 
-function toggleMarkers() {
-  document.body.classList.toggle("mfe-hide-markers");
+function toggleOutlineView() {
+  applyEditorViewMode(editorViewMode === "document" ? "scoped" : "document");
+}
+
+function openDocumentOutlineView() {
+  if (!activeTarget) return;
+
+  if (!isDocumentScopeActive()) {
+    const pageId = activeTarget.getAttribute("data-page") || "0";
+    const markdown = getDocumentSourceMarkdown();
+    const virtual = document.createElement("div");
+    virtual.className = "fe-editable md-edit mfe-virtual";
+    virtual.setAttribute("data-page", pageId);
+    virtual.setAttribute("data-md-scope", "document");
+    virtual.setAttribute("data-mfe-scope", "document");
+    virtual.setAttribute("data-md-name", "document");
+    virtual.setAttribute("data-mfe-name", "document");
+    virtual.setAttribute("data-field-type", "container");
+    virtual.setAttribute("data-markdown-b64", encodeMarkdownBase64(markdown));
+    navigatingViaBreadcrumb = true;
+    try {
+      openFullscreenEditorForElement(virtual);
+    } finally {
+      navigatingViaBreadcrumb = false;
+    }
+  }
+
+  if (editorViewMode !== "document") {
+    applyEditorViewMode("document");
+  }
+}
+
+function normalizeLangValue(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+function applySplitSecondarySize(percent) {
+  const numeric = Number(percent);
+  if (!Number.isFinite(numeric)) return;
+  splitSecondarySizePercent = Math.max(30, Math.min(70, numeric));
+  if (editorShell?.style?.setProperty) {
+    editorShell.style.setProperty(
+      "--mfe-split-secondary-size",
+      `${splitSecondarySizePercent}%`,
+    );
+  }
+}
+
+function setupSplitResizeHandle() {
+  if (!splitHandle || !editorShell || splitResizeCleanup) return;
+
+  let dragging = false;
+  const onPointerMove = (event) => {
+    if (!dragging || !editorShell) return;
+    const rect = editorShell.getBoundingClientRect();
+    if (!rect.width) return;
+    const handleWidth = splitHandle?.getBoundingClientRect?.().width || 14;
+    const pointerX = Number(event.clientX || 0) - rect.left;
+    const minPrimaryPx = 320;
+    const minSecondaryPx = 320;
+    const minPct = ((minSecondaryPx + handleWidth) / rect.width) * 100;
+    const maxPct =
+      100 - ((minPrimaryPx + handleWidth) / Math.max(1, rect.width)) * 100;
+    const rawSecondaryPct = ((rect.width - pointerX) / rect.width) * 100;
+    const clamped = Math.max(minPct, Math.min(maxPct, rawSecondaryPct));
+    applySplitSecondarySize(clamped);
+  };
+
+  const stopDragging = () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove("mfe-split-resizing");
+  };
+
+  const startDragging = (event) => {
+    event.preventDefault();
+    dragging = true;
+    document.body.classList.add("mfe-split-resizing");
+  };
+
+  splitHandle.addEventListener("pointerdown", startDragging);
+  window.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", stopDragging);
+  window.addEventListener("blur", stopDragging);
+
+  splitResizeCleanup = () => {
+    splitHandle?.removeEventListener("pointerdown", startDragging);
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", stopDragging);
+    window.removeEventListener("blur", stopDragging);
+    splitResizeCleanup = null;
+    document.body.classList.remove("mfe-split-resizing");
+  };
 }
 
 function openSplit() {
   if (!editorShell || secondaryEditor) return;
   const { langs, current } = getLanguagesConfig();
-  const normalizeLangValue = (value) =>
-    String(value || "")
-      .trim()
-      .toLowerCase();
-  const currentNormalized = normalizeLangValue(current);
+  const currentName = normalizeLangValue(current);
   const seen = new Set();
-  const otherLangs = langs.filter((lang) => {
+  const otherLangs = (Array.isArray(langs) ? langs : []).filter((lang) => {
     const name = normalizeLangValue(lang?.name);
     if (!name || seen.has(name)) return false;
     seen.add(name);
-    if (!currentNormalized) return true;
-    return name !== currentNormalized;
+    return name !== currentName;
   });
 
   if (otherLangs.length === 0) return;
+
+  editorShell.classList.add("mfe-editor-shell--split");
+  applySplitSecondarySize(splitSecondarySizePercent);
+
+  splitRegion = document.createElement("div");
+  splitRegion.className = "mfe-editor-split-region";
+
+  splitHandle = document.createElement("button");
+  splitHandle.type = "button";
+  splitHandle.className = "mfe-editor-split-handle";
+  splitHandle.setAttribute("aria-label", "Resize language split panes");
+  splitHandle.innerHTML =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M8 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M8 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M8 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /></svg>';
 
   splitPane = document.createElement("div");
   splitPane.className = "mfe-editor-pane mfe-editor-pane--secondary";
@@ -1439,7 +1599,10 @@ function openSplit() {
 
   splitPane.appendChild(header);
   splitPane.appendChild(body);
-  editorShell.appendChild(splitPane);
+  splitRegion.appendChild(splitHandle);
+  splitRegion.appendChild(splitPane);
+  editorShell.appendChild(splitRegion);
+  setupSplitResizeHandle();
 
   secondaryEditor = createEditorInstance(
     body,
@@ -1476,14 +1639,20 @@ function openSplit() {
 }
 
 function closeSplit() {
+  if (typeof splitResizeCleanup === "function") {
+    splitResizeCleanup();
+  }
   if (secondaryEditor) {
     secondaryEditor.destroy();
     secondaryEditor = null;
   }
-  if (splitPane) {
-    splitPane.remove();
-    splitPane = null;
+  if (splitRegion) {
+    splitRegion.remove();
+    splitRegion = null;
   }
+  splitPane = null;
+  splitHandle = null;
+  editorShell?.classList?.remove("mfe-editor-shell--split");
   secondaryLang = "";
   activeEditor = primaryEditor;
   if (typeof refreshToolbarState === "function") {
@@ -1495,9 +1664,21 @@ function setSecondaryLanguage(lang) {
   if (!secondaryEditor) return;
   secondaryLang = lang;
   const markdown = translationsCache?.[lang] ?? "";
-  const html = renderMarkdownToHtml(markdown || "");
   runWithoutDirtyTracking(() => {
-    secondaryEditor.commands.setContent(html, false);
+    let doc;
+    try {
+      doc = parseMarkdownToDoc(markdown || "", secondaryEditor.schema);
+    } catch (error) {
+      const message = String(error?.message || "").toLowerCase();
+      if (message.includes("mfe_marker")) {
+        const html = renderMarkdownToHtml(markdown || "");
+        secondaryEditor.commands.setContent(html, false);
+        return;
+      }
+      const fallbackMarkdown = stripMfeMarkersForFieldScope(markdown || "");
+      doc = parseMarkdownToDoc(fallbackMarkdown, secondaryEditor.schema);
+    }
+    secondaryEditor.commands.setContent(doc.toJSON(), false);
   });
   if (shouldWarnForExtraContent(activeFieldType, activeFieldName)) {
     stripTrailingEmptyParagraph(secondaryEditor);
@@ -1602,16 +1783,14 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
     breadcrumbClickHandler: handleBreadcrumbClick,
     className: "mfe-editor-window",
     background: "white",
-    onMount: (overlay, windowInstance) => {
-      // Attach toolbar to the menu bar after window is created
-      const menuBarInner = overlay.querySelector("[data-mfe-menubar-inner]");
-      if (menuBarInner && toolbar) {
-        menuBarInner.appendChild(toolbar);
-      }
+    onMount: (overlay) => {
+      const menuBarInner = resolveOverlayMenubarInner(overlay);
+      attachToolbarToMenubarInner(menuBarInner, toolbar);
     },
   });
   overlayEl = win.dom;
-  document.body.classList.add("mfe-view-fullscreen");
+  setFullscreenShellOpen(true);
+  applyEditorViewMode(editorViewMode);
 
   // Setup keyboard shortcuts
   setupKeyboardShortcuts();
@@ -1621,6 +1800,9 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
 }
 
 function cleanupEditorOnly() {
+  if (typeof splitResizeCleanup === "function") {
+    splitResizeCleanup();
+  }
   if (secondaryEditor) {
     secondaryEditor.destroy();
     secondaryEditor = null;
@@ -1638,7 +1820,7 @@ function cleanupEditorOnly() {
     keydownHandler = null;
   }
 
-  document.body.classList.remove("mfe-view-fullscreen");
+  setFullscreenShellOpen(false);
   statusManager.reset();
 
   saveCallback = null;
@@ -1649,16 +1831,25 @@ function cleanupEditorOnly() {
   activeFieldSection = "";
   activeFieldSubsection = "";
   activeFieldId = null;
+  activeSession = null;
   activeRawMarkdown = null;
   activeDisplayMarkdown = null;
+  scopedModeMarkdown = null;
+  scopedModeTarget = null;
+  documentDraftMarkdown = "";
+  documentLeadingFrontmatter = "";
+  editorViewMode = "scoped";
   translationsCache = null;
   secondaryLang = "";
   editorShell = null;
   editorContainer = null;
   overlayEl = null;
   splitPane = null;
+  splitRegion = null;
+  splitHandle = null;
   breadcrumbsEl = null;
   navigatingViaBreadcrumb = false;
+  setDocumentModeShellOpen(false);
 }
 
 /**
@@ -1760,12 +1951,27 @@ function createToolbar() {
     getEditor: () => activeEditor,
     onSave: saveAllEditors,
     onToggleSplit: toggleSplit,
-    onToggleMarkers: toggleMarkers,
+    onOpenDocumentView: openDocumentOutlineView,
+    isDocumentView: () => isDocumentScopeActive() && isOutlineViewActive(),
+    onToggleOutlineView: toggleOutlineView,
+    isOutlineView: () => isOutlineViewActive(),
   });
 
-  const configButtons =
+  const baseConfigButtons =
     window.MarkdownFrontEditorConfig?.toolbarButtons ||
-    "bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,code,codeblock,clear,|,split,markers";
+    "bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,code,codeblock,clear,|,split,document,outline";
+  const normalizedConfigButtons = String(baseConfigButtons || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => (entry === "markers" ? "outline" : entry));
+  if (!normalizedConfigButtons.includes("document")) {
+    normalizedConfigButtons.push("document");
+  }
+  if (!normalizedConfigButtons.includes("outline")) {
+    normalizedConfigButtons.push("outline");
+  }
+  const configButtons = normalizedConfigButtons.join(",");
   const { statusEl, refreshButtons } = renderToolbarButtons({
     toolbar,
     buttons,
@@ -1956,7 +2162,16 @@ function buildBreadcrumbParts() {
   const source = breadcrumbAnchor || active;
   const { scope, name, section, subsection, type, isContainer } = source;
 
-  const parts = [];
+  const parts = [
+    {
+      label: "Document",
+      target: "document",
+      section,
+      subsection,
+      name,
+      contentId: "document:root",
+    },
+  ];
   if (section) {
     parts.push({
       label: `Section: ${section}`,
@@ -2047,6 +2262,7 @@ function buildBreadcrumbItems() {
 }
 
 function getBreadcrumbsCurrentTarget() {
+  if (isDocumentScopeActive()) return "document";
   if (activeFieldScope === "section") return "section";
   if (activeFieldScope === "subsection") return "subsection";
   if (activeFieldType === "container") return "container";
@@ -2084,8 +2300,8 @@ function renderBreadcrumbs() {
       return;
     }
 
-    const link = document.createElement("button");
-    link.type = "button";
+    const link = document.createElement("a");
+    link.setAttribute("href", "#");
     link.className = "mfe-breadcrumb-link";
     link.textContent = part.label;
     link.setAttribute("data-breadcrumb-target", part.target);
@@ -2190,6 +2406,140 @@ function getActiveScopedHtmlKey() {
 function encodeMarkdownBase64(markdown) {
   const value = markdown || "";
   return btoa(unescape(encodeURIComponent(value)));
+}
+
+function splitLeadingFrontmatter(markdown) {
+  const text = typeof markdown === "string" ? markdown : "";
+  const match = text.match(
+    /^\uFEFF?---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)(?:\r?\n|$)/,
+  );
+  if (!match) {
+    return {
+      frontmatter: "",
+      body: text,
+    };
+  }
+  return {
+    frontmatter: match[0],
+    body: text.slice(match[0].length),
+  };
+}
+
+function hasLeadingFrontmatter(markdown) {
+  return /^\uFEFF?---\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)(?:\r?\n|$)/.test(
+    typeof markdown === "string" ? markdown : "",
+  );
+}
+
+function composeDocumentMarkdownForSave(markdown) {
+  const body = trimTrailingLineBreaks(
+    typeof markdown === "string" ? markdown : "",
+  );
+  if (!documentLeadingFrontmatter) return body;
+  if (hasLeadingFrontmatter(body)) return body;
+  if (!body) return documentLeadingFrontmatter;
+  return `${documentLeadingFrontmatter}${body}`;
+}
+
+function isOutlineViewActive() {
+  return editorViewMode === "document";
+}
+
+function isDocumentScopeActive() {
+  return (activeFieldScope || "") === "document";
+}
+
+function getDocumentConfigMarkdown() {
+  const b64 = window.MarkdownFrontEditorConfig?.documentMarkdownB64 || "";
+  const raw = decodeMaybeB64(b64);
+  const split = splitLeadingFrontmatter(raw);
+  documentLeadingFrontmatter = split.frontmatter;
+  return split.body;
+}
+
+function getDocumentSourceMarkdown() {
+  if (
+    typeof documentDraftMarkdown === "string" &&
+    documentDraftMarkdown !== ""
+  ) {
+    return documentDraftMarkdown;
+  }
+  return getDocumentConfigMarkdown();
+}
+
+function refreshEditorDecorations(editor) {
+  if (!editor?.view?.dispatch || !editor?.state?.tr) return;
+  const tr = editor.state.tr.setMeta("mfe-document-mode-refresh", Date.now());
+  editor.view.dispatch(tr);
+}
+
+function refreshAllEditorDecorations() {
+  refreshEditorDecorations(primaryEditor);
+  refreshEditorDecorations(secondaryEditor);
+}
+
+function updateDocumentModeBodyClass() {
+  setDocumentModeShellOpen(isOutlineViewActive());
+}
+
+function setPrimaryEditorMarkdown(markdown) {
+  if (!primaryEditor) return;
+  const text = trimTrailingLineBreaks(
+    typeof markdown === "string" ? markdown : "",
+  );
+  const selection = primaryEditor.state.selection;
+  runWithoutDirtyTracking(() => {
+    try {
+      const doc = parseMarkdownToDoc(text, primaryEditor.schema);
+      primaryEditor.commands.setContent(doc.toJSON(), false);
+    } catch (_e) {
+      const html = renderMarkdownToHtml(text);
+      primaryEditor.commands.setContent(html, false);
+    }
+  });
+  try {
+    primaryEditor.commands.setTextSelection(selection);
+  } catch (_e) {}
+}
+
+function applyEditorViewMode(mode) {
+  editorViewMode = mode === "document" ? "document" : "scoped";
+  updateDocumentModeBodyClass();
+  refreshAllEditorDecorations();
+  updateWindowById("mfe-editor", {
+    breadcrumbItems: buildBreadcrumbItems(),
+    breadcrumbClickHandler: handleBreadcrumbClick,
+  });
+  if (typeof refreshToolbarState === "function") {
+    refreshToolbarState();
+  }
+}
+
+function toggleDocumentMode() {
+  if (!primaryEditor || !activeTarget) return;
+
+  if (editorViewMode !== "document") {
+    scopedModeMarkdown = getMarkdownFromEditor(primaryEditor);
+    scopedModeTarget = activeTarget;
+    const pageId = activeTarget.getAttribute("data-page") || "0";
+    const markdown = getDocumentSourceMarkdown();
+    const virtual = document.createElement("div");
+    virtual.className = "fe-editable md-edit mfe-virtual";
+    virtual.setAttribute("data-page", pageId);
+    virtual.setAttribute("data-md-scope", "document");
+    virtual.setAttribute("data-mfe-scope", "document");
+    virtual.setAttribute("data-md-name", "document");
+    virtual.setAttribute("data-mfe-name", "document");
+    virtual.setAttribute("data-field-type", "container");
+    virtual.setAttribute("data-markdown-b64", encodeMarkdownBase64(markdown));
+    openFullscreenEditorForElement(virtual);
+    return;
+  }
+
+  documentDraftMarkdown = getMarkdownFromEditor(primaryEditor);
+  if (scopedModeTarget) {
+    openFullscreenEditorForElement(scopedModeTarget);
+  }
 }
 
 function decodeMaybeB64(value) {
@@ -2414,6 +2764,29 @@ async function handleBreadcrumbClick(e) {
     return;
   }
 
+  if (type === "document") {
+    const pageId = activeTarget.getAttribute("data-page") || "0";
+    const markdown = getDocumentSourceMarkdown();
+    const virtual = document.createElement("div");
+    virtual.className = "fe-editable md-edit mfe-virtual";
+    virtual.setAttribute("data-page", pageId);
+    virtual.setAttribute("data-md-scope", "document");
+    virtual.setAttribute("data-mfe-scope", "document");
+    virtual.setAttribute("data-md-name", "document");
+    virtual.setAttribute("data-mfe-name", "document");
+    virtual.setAttribute("data-field-type", "container");
+    virtual.setAttribute("data-markdown-b64", encodeMarkdownBase64(markdown));
+    const ok = await keepPendingChangesBeforeSwitch();
+    if (!ok) return;
+    navigatingViaBreadcrumb = true;
+    try {
+      openFullscreenEditorForElement(virtual);
+    } finally {
+      navigatingViaBreadcrumb = false;
+    }
+    return;
+  }
+
   const index = buildContentIndex();
   const hierarchy = getActiveHierarchy();
   const sectionName =
@@ -2559,8 +2932,24 @@ function openFullscreenEditorFromPayload(payload) {
   const scopedDraftMarkdown = nextScopedKey
     ? draftMarkdownByScopedKey.get(nextScopedKey) || null
     : null;
-  const effectiveMarkdown =
+  const sourceMarkdown =
     scopedDraftMarkdown ?? draftMarkdown ?? markdownContent;
+  let effectiveMarkdown = sourceMarkdown;
+  const isDocumentScope = fieldScope === "document";
+  const nextViewMode = "scoped";
+  if (isDocumentScope && !scopedDraftMarkdown && !draftMarkdown) {
+    const split = splitLeadingFrontmatter(sourceMarkdown);
+    if (split.frontmatter) {
+      documentLeadingFrontmatter = split.frontmatter;
+    }
+    effectiveMarkdown = split.body;
+  }
+  editorViewMode = nextViewMode;
+  if (isDocumentScope) {
+    documentDraftMarkdown = effectiveMarkdown;
+  } else {
+    scopedModeMarkdown = effectiveMarkdown;
+  }
   activeRawMarkdown = effectiveMarkdown;
   activeDisplayMarkdown = effectiveMarkdown;
 
@@ -2577,6 +2966,18 @@ function openFullscreenEditorFromPayload(payload) {
     fieldSubsection,
     fieldName,
   );
+  activeSession = resolveSession({
+    scope: createScope({
+      kind: fieldScope,
+      pageId,
+      section: fieldSection,
+      subsection: fieldSubsection,
+      name: fieldName,
+      fieldType,
+    }),
+    view: createView({ kind: "rich" }),
+    host: createHost({ kind: "fullscreen" }),
+  });
   translationsCache = translationsCacheByFieldId.get(activeFieldId) || null;
   secondaryLang = "";
 
@@ -2597,8 +2998,10 @@ function openFullscreenEditorFromPayload(payload) {
       activeFieldSubsection || fieldSubsection || "";
     const currentPageId =
       activeTarget?.getAttribute("data-page") || pageId || "0";
-    const outboundMarkdown =
-      currentFieldScope === "field"
+    const documentMode = isDocumentScopeActive();
+    const outboundMarkdown = documentMode
+      ? composeDocumentMarkdownForSave(finalMarkdown)
+      : currentFieldScope === "field"
         ? stripMfeMarkersForFieldScope(finalMarkdown)
         : finalMarkdown;
     const normalizedOutboundMarkdown = trimTrailingLineBreaks(outboundMarkdown);
@@ -2606,16 +3009,18 @@ function openFullscreenEditorFromPayload(payload) {
       const { current } = getLanguagesConfig();
       const formData = new FormData();
       formData.append("markdown", normalizedOutboundMarkdown);
-      formData.append("mdName", currentFieldName);
-      formData.append("mdScope", currentFieldScope);
-      if (currentFieldSection) {
+      formData.append("mdName", documentMode ? "document" : currentFieldName);
+      formData.append("mdScope", documentMode ? "document" : currentFieldScope);
+      if (!documentMode && currentFieldSection) {
         formData.append("mdSection", currentFieldSection);
       }
-      if (currentFieldSubsection) {
+      if (!documentMode && currentFieldSubsection) {
         formData.append("mdSubsection", currentFieldSubsection);
       }
       formData.append("pageId", currentPageId);
-      formData.append("fieldId", activeFieldId);
+      if (!documentMode && activeFieldId) {
+        formData.append("fieldId", activeFieldId);
+      }
       if (current) {
         formData.append("lang", current);
       }
@@ -2635,6 +3040,14 @@ function openFullscreenEditorFromPayload(payload) {
         })
         .then((data) => {
           if (data.status) {
+            if (documentMode) {
+              const cfg = window.MarkdownFrontEditorConfig || {};
+              cfg.documentMarkdownB64 =
+                data.documentMarkdownB64 ||
+                encodeMarkdownBase64(normalizedOutboundMarkdown);
+              window.MarkdownFrontEditorConfig = cfg;
+              documentDraftMarkdown = "";
+            }
             Promise.resolve(
               handlePrimarySaveResponse(data, finalMarkdown, {
                 updateActiveEditor: true,
@@ -2659,7 +3072,7 @@ function openFullscreenEditorFromPayload(payload) {
     });
   };
 
-  if (document.body.classList.contains("mfe-view-inline")) {
+  if (isInlineShellOpen()) {
     const overlay = document.querySelector(".mfe-hover-overlay");
     if (overlay) overlay.style.display = "none";
   }
@@ -2721,8 +3134,24 @@ function replaceActiveEditor(payload) {
   const scopedDraftMarkdown = nextScopedKey
     ? draftMarkdownByScopedKey.get(nextScopedKey) || null
     : null;
-  const effectiveMarkdown =
+  const sourceMarkdown =
     scopedDraftMarkdown ?? draftMarkdown ?? markdownContent;
+  let effectiveMarkdown = sourceMarkdown;
+  const isDocumentScope = fieldScope === "document";
+  const nextViewMode = "scoped";
+  if (isDocumentScope && !scopedDraftMarkdown && !draftMarkdown) {
+    const split = splitLeadingFrontmatter(sourceMarkdown);
+    if (split.frontmatter) {
+      documentLeadingFrontmatter = split.frontmatter;
+    }
+    effectiveMarkdown = split.body;
+  }
+  editorViewMode = nextViewMode;
+  if (isDocumentScope) {
+    documentDraftMarkdown = effectiveMarkdown;
+  } else {
+    scopedModeMarkdown = effectiveMarkdown;
+  }
   activeEditor = primaryEditor;
   if (typeof refreshToolbarState === "function") {
     refreshToolbarState();
@@ -2740,6 +3169,18 @@ function replaceActiveEditor(payload) {
     fieldSubsection,
     fieldName,
   );
+  activeSession = resolveSession({
+    scope: createScope({
+      kind: fieldScope,
+      pageId,
+      section: fieldSection,
+      subsection: fieldSubsection,
+      name: fieldName,
+      fieldType,
+    }),
+    view: createView({ kind: "rich" }),
+    host: createHost({ kind: "fullscreen" }),
+  });
   activeRawMarkdown = effectiveMarkdown;
   activeDisplayMarkdown = effectiveMarkdown;
   translationsCache = translationsCacheByFieldId.get(activeFieldId) || null;
@@ -2752,7 +3193,15 @@ function replaceActiveEditor(payload) {
 
   const html = renderMarkdownToHtml(effectiveMarkdown || "");
   runWithoutDirtyTracking(() => {
-    primaryEditor.commands.setContent(html, false);
+    try {
+      const doc = parseMarkdownToDoc(
+        effectiveMarkdown || "",
+        primaryEditor.schema,
+      );
+      primaryEditor.commands.setContent(doc.toJSON(), false);
+    } catch (_e) {
+      primaryEditor.commands.setContent(html, false);
+    }
   });
   if (shouldWarnForExtraContent(fieldType, fieldName)) {
     stripTrailingEmptyParagraph(primaryEditor);
@@ -2776,6 +3225,7 @@ function replaceActiveEditor(payload) {
     breadcrumbItems: buildBreadcrumbItems(),
     breadcrumbClickHandler: handleBreadcrumbClick,
   });
+  applyEditorViewMode(editorViewMode);
 
   setTimeout(() => primaryEditor?.view?.focus(), 0);
   return true;
@@ -2833,39 +3283,31 @@ export function openFullscreenEditorForElement(target) {
     return;
   }
 
-  // Check if inline editor is open on a DIFFERENT element
-  const inlineEditorElement = document.querySelector(".mfe-inline-editor");
-  const inlineActive = window.mfeInlineEditorActive;
-  if (inlineEditorElement && inlineActive) {
-    // Close inline editor - its close handler will prompt about unsaved changes if needed
-    const closeBtn = document
-      .querySelector(".mfe-inline-toolbar")
-      ?.querySelector(".mfe-inline-close");
-    if (closeBtn) closeBtn.click();
-    // Wait for close to complete, then verify it actually closed
-    setTimeout(() => {
-      const stillOpen =
-        document.querySelector(".mfe-inline-editor") &&
-        window.mfeInlineEditorActive;
-      if (stillOpen) {
-        return; // User canceled unsaved changes dialog, respect their choice
+  if (isInlineOpen()) {
+    requestCloseInline({
+      saveOnClose: false,
+      promptOnClose: true,
+      keepToolbar: true,
+      persistDraft: true,
+    }).then((closed) => {
+      if (!closed) {
+        return;
       }
       openFullscreenEditorForElement(target);
-    }, 100);
+    });
     return;
   }
 
   const forceNewWindow =
-    payload.fieldScope === "section" || payload.fieldScope === "subsection";
+    payload.fieldScope === "section" ||
+    payload.fieldScope === "subsection" ||
+    payload.fieldScope === "document";
   if (forceNewWindow) {
     return openFullscreenEditorFromPayload(payload);
   }
   // If an editor is already open, swap content in place instead of opening a new window
   const hasOpenWindow =
-    document.body.classList.contains("mfe-view-fullscreen") &&
-    overlayEl &&
-    overlayEl.isConnected &&
-    primaryEditor;
+    isFullscreenOpen() && overlayEl && overlayEl.isConnected && primaryEditor;
   if (hasOpenWindow && replaceActiveEditor(payload)) {
     return;
   }
@@ -2997,6 +3439,10 @@ window.MarkdownFrontEditor = {
   // Initialize new editor via initEditor (which uses WindowManager)
   edit(markdownContent, onSave, fieldType = "tag") {
     initEditor(markdownContent, onSave, fieldType);
+  },
+
+  openForElement(target) {
+    openFullscreenEditorForElement(target);
   },
 
   close() {

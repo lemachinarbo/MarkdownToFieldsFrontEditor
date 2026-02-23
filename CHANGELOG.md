@@ -1,9 +1,15 @@
 # Changelog
 
+
 ## V0.5.6
-- Refactored duplicated inline/fullscreen editor code into shared helpers.
-- Moved shared TipTap extensions into one module to keep inline/fullscreen in sync.
-- Fixed fenced code blocks gaining extra blank lines after repeated fullscreen save/rehydrate cycles.
+
+- New **Document mode** with root editing and clearer scope boundaries.
+  - Fullscreen and inline editors now share the same menu system and layout logic.
+  - New Split view draggable divider.
+  - Breadcrumbs redesigned for consistency and clearer navigation.
+  - Toast notifications centralized into the window system.
+  - Improved multilingual state handling.
+  - Unified TipTap extensions across editor modes.
 
 ## V0.5.5
 - Image picker is faster thanks to thumbnail caching.

@@ -11,6 +11,83 @@
 import { createWindowTemplate } from "./window-template.js";
 
 let windowStack = [];
+let toastEl = null;
+let toastTimer = null;
+
+function clearToastTimer() {
+  if (toastTimer) {
+    window.clearTimeout(toastTimer);
+    toastTimer = null;
+  }
+}
+
+function getToastHost() {
+  const topWindow = windowStack[windowStack.length - 1];
+  return topWindow?.dom || document.body;
+}
+
+function ensureToastElement() {
+  const host = getToastHost();
+  if (!toastEl) {
+    toastEl = document.createElement("div");
+    toastEl.className = "mfe-toast";
+    toastEl.setAttribute("data-mfe-window-toast", "true");
+    host.appendChild(toastEl);
+    return toastEl;
+  }
+  if (toastEl.parentNode !== host) {
+    host.appendChild(toastEl);
+  }
+  return toastEl;
+}
+
+function reparentToastToActiveHost() {
+  if (!toastEl) return;
+  const host = getToastHost();
+  if (toastEl.parentNode !== host) {
+    host.appendChild(toastEl);
+  }
+}
+
+export function hideWindowToast() {
+  clearToastTimer();
+  if (toastEl) {
+    toastEl.classList.remove("mfe-toast-visible");
+  }
+}
+
+export function destroyWindowToast() {
+  hideWindowToast();
+  if (toastEl) {
+    toastEl.remove();
+    toastEl = null;
+  }
+}
+
+export function showWindowToast(
+  message,
+  kind = "error",
+  { persistent = false, timeout = 3200 } = {},
+) {
+  const text = String(message || "").trim();
+  if (!text) return;
+  const element = ensureToastElement();
+  element.classList.remove("mfe-toast-error", "mfe-toast-visible");
+  if (kind === "error") {
+    element.classList.add("mfe-toast-error");
+  }
+  element.textContent = text;
+  element.classList.add("mfe-toast-visible");
+  clearToastTimer();
+  if (!persistent) {
+    toastTimer = window.setTimeout(() => {
+      if (toastEl) {
+        toastEl.classList.remove("mfe-toast-visible");
+      }
+      toastTimer = null;
+    }, timeout);
+  }
+}
 
 /**
  * Get current window breadcrumb path based on stack state
@@ -60,6 +137,18 @@ function updateBreadcrumbs() {
       })),
     ];
 
+    const hasWindowLabels = windowLabels.length > 0;
+    const stateCurrentIndex = items
+      .map((item, idx) => ({ item, idx }))
+      .filter((entry) => entry.item.state === "current")
+      .map((entry) => entry.idx)
+      .pop();
+    const activeIndex = hasWindowLabels
+      ? items.length - 1
+      : typeof stateCurrentIndex === "number"
+        ? stateCurrentIndex
+        : items.length - 1;
+
     items.forEach((item, itemIndex) => {
       if (itemIndex > 0) {
         const separator = document.createElement("span");
@@ -71,31 +160,31 @@ function updateBreadcrumbs() {
       const isLast = itemIndex === items.length - 1;
       const isLink = item.source === "base" && item.state === "link";
       const isWindowLink = item.source === "window" && !isLast;
-      // Base items with "current" state should become links if not last
-      const isBaseCurrentButNotLast =
-        item.source === "base" && item.state === "current" && !isLast;
+      const isBaseCurrentButNotActive =
+        item.source === "base" &&
+        item.state === "current" &&
+        itemIndex !== activeIndex;
 
       const crumb = document.createElement(
-        isLink || isWindowLink || isBaseCurrentButNotLast ? "button" : "span",
+        isLink || isWindowLink || isBaseCurrentButNotActive ? "a" : "span",
       );
       crumb.className = "mfe-breadcrumb-item";
       crumb.textContent = item.label;
+      if (crumb.tagName === "A") {
+        crumb.setAttribute("href", "#");
+      }
 
-      // Mark as current if: base item with "current" state AND isLast, OR window item AND isLast
-      if (
-        (item.state === "current" && isLast) ||
-        (item.source === "window" && isLast)
-      ) {
+      if (itemIndex === activeIndex) {
         crumb.classList.add("mfe-breadcrumb-current");
       }
       if (item.state === "disabled") {
         crumb.classList.add("mfe-breadcrumb-disabled");
       }
-      if (isLink || isWindowLink || isBaseCurrentButNotLast) {
+      if (isLink || isWindowLink || isBaseCurrentButNotActive) {
         crumb.classList.add("mfe-breadcrumb-clickable", "mfe-breadcrumb-link");
       }
 
-      if ((isLink || isBaseCurrentButNotLast) && baseClickHandler) {
+      if ((isLink || isBaseCurrentButNotActive) && baseClickHandler) {
         crumb.setAttribute("data-breadcrumb-target", item.target || "");
         if (item.contentId) {
           crumb.setAttribute("data-breadcrumb-id", item.contentId);
@@ -215,6 +304,7 @@ export function openWindow({
 
   windowStack.push(windowInstance);
   updateBreadcrumbs();
+  reparentToastToActiveHost();
 
   if (onMount) onMount(overlay, windowInstance);
 
@@ -251,6 +341,7 @@ export function closeTopWindow() {
     // Update breadcrumbs for remaining windows
     updateBreadcrumbs();
   }
+  reparentToastToActiveHost();
 }
 
 /**
@@ -280,6 +371,7 @@ export function closeWindow(winOrId) {
   } else {
     updateBreadcrumbs();
   }
+  reparentToastToActiveHost();
 }
 
 export function updateWindowById(id, updates = {}) {

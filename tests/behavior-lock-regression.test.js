@@ -11,11 +11,18 @@ import {
   scopedKeyFromFieldId,
 } from "../src/draft-utils.js";
 import { scopedHtmlKeyFromMeta } from "../src/sync-by-key.js";
+import {
+  createScope,
+  createView,
+  createHost,
+  resolveSession,
+} from "../src/session-resolver.js";
 
 const ROOT = path.resolve(process.cwd());
 const INLINE_PATH = path.join(ROOT, "src/editor-inline.js");
 const FULLSCREEN_PATH = path.join(ROOT, "src/editor-fullscreen.js");
 const SHARED_EXACT_PATH = path.join(ROOT, "src/editor-shared-helpers.js");
+const HOST_ROUTER_PATH = path.join(ROOT, "src/host-router.js");
 
 function readSource(filePath) {
   return fs.readFileSync(filePath, "utf8");
@@ -237,6 +244,7 @@ describe("Behavior lock: markdown + editor parity", () => {
   let inlineSource;
   let fullscreenSource;
   let sharedSource;
+  let hostRouterSource;
 
   beforeEach(() => {
     global.window = {
@@ -252,6 +260,7 @@ describe("Behavior lock: markdown + editor parity", () => {
     inlineSource = readSource(INLINE_PATH);
     fullscreenSource = readSource(FULLSCREEN_PATH);
     sharedSource = readSource(SHARED_EXACT_PATH);
+    hostRouterSource = readSource(HOST_ROUTER_PATH);
   });
 
   afterEach(() => {
@@ -458,5 +467,119 @@ describe("Behavior lock: markdown + editor parity", () => {
         ),
       ),
     }).toMatchSnapshot();
+  });
+
+  test("deterministic html map resolution lock", () => {
+    expect(inlineSource.includes('endsWith(":" +')).toBe(false);
+    expect(inlineSource.includes('startsWith(fieldKey + ":")')).toBe(false);
+    expect(inlineSource.includes("htmlMap[elName]")).toBe(false);
+    expect(inlineSource.includes("buildDeterministicTargetKeyMap")).toBe(true);
+  });
+
+  test("host boundary lock: inline does not import fullscreen directly", () => {
+    expect(inlineSource.includes('from "./editor-fullscreen.js"')).toBe(false);
+    expect(inlineSource.includes('from "./host-router.js"')).toBe(true);
+    expect(inlineSource.includes("openFullscreenForTarget(")).toBe(true);
+    expect(inlineSource.includes(".mfe-window-close-btn")).toBe(false);
+    expect(inlineSource.includes("requestCloseFullscreen(")).toBe(true);
+    expect(inlineSource.includes("isFullscreenOpen(")).toBe(true);
+    expect(
+      inlineSource.includes('classList.contains("mfe-view-fullscreen")'),
+    ).toBe(false);
+    expect(inlineSource.includes("mfeInlineEditorActive")).toBe(false);
+    expect(inlineSource.includes("MarkdownFrontEditorInline")).toBe(true);
+    expect(inlineSource.includes('from "./inline-shell.js"')).toBe(true);
+    expect(inlineSource.includes("setInlineShellOpen(")).toBe(true);
+    expect(inlineSource.includes("setInlineDebugShell(")).toBe(true);
+    expect(inlineSource.includes("setInlineLabelStyle(")).toBe(true);
+    expect(inlineSource.includes('classList.add("mfe-view-inline")')).toBe(
+      false,
+    );
+    expect(inlineSource.includes('classList.add("mfe-debug-sections")')).toBe(
+      false,
+    );
+    expect(inlineSource.includes('classList.add("mfe-debug-labels")')).toBe(
+      false,
+    );
+    expect(inlineSource.includes('setAttribute("data-mfe-label-style"')).toBe(
+      false,
+    );
+  });
+
+  test("scope-keyed draft writes lock", () => {
+    const source = normalizeFnBody(readSource(INLINE_PATH));
+    expect(source.includes("draftMarkdownByField.set(activeScopeKey")).toBe(
+      true,
+    );
+    expect(source.includes("draftMarkdownByField.set(activeFieldId")).toBe(
+      false,
+    );
+    expect(source.includes("draftByField.set(activeScopeKey")).toBe(true);
+  });
+
+  test("session resolver immutability contract", () => {
+    const scope = createScope({
+      kind: "field",
+      pageId: "123",
+      section: "hero",
+      subsection: "intro",
+      name: "title",
+      fieldType: "tag",
+    });
+    const view = createView({ kind: "rich" });
+    const host = createHost({ kind: "inline" });
+    const session = resolveSession({ scope, view, host });
+
+    expect(Object.isFrozen(scope)).toBe(true);
+    expect(Object.isFrozen(session)).toBe(true);
+    expect(session.metadata.scopeKey).toBe("subsection:hero:intro:title");
+    expect(session.commands.savePayload("alpha")).toEqual({
+      markdown: "alpha",
+      pageId: "123",
+      mdScope: "field",
+      mdSection: "hero",
+      mdSubsection: "intro",
+      mdName: "title",
+    });
+  });
+
+  test("fullscreen API exposes host entrypoint", () => {
+    expect(fullscreenSource.includes("openForElement(target)")).toBe(true);
+    expect(
+      fullscreenSource.includes("openFullscreenEditorForElement(target)"),
+    ).toBe(true);
+    expect(fullscreenSource.includes('from "./host-router.js"')).toBe(true);
+    expect(fullscreenSource.includes("requestCloseInline(")).toBe(true);
+    expect(fullscreenSource.includes("isInlineOpen(")).toBe(true);
+    expect(fullscreenSource.includes("isFullscreenOpen(")).toBe(true);
+    expect(fullscreenSource.includes(".mfe-inline-toolbar")).toBe(false);
+    expect(fullscreenSource.includes("mfeInlineEditorActive")).toBe(false);
+    expect(
+      fullscreenSource.includes('classList.add("mfe-view-fullscreen")'),
+    ).toBe(false);
+    expect(
+      fullscreenSource.includes('classList.remove("mfe-view-fullscreen")'),
+    ).toBe(false);
+    expect(
+      fullscreenSource.includes('classList.add("mfe-document-mode")'),
+    ).toBe(false);
+    expect(
+      fullscreenSource.includes('classList.remove("mfe-document-mode")'),
+    ).toBe(false);
+    expect(fullscreenSource.includes('from "./fullscreen-shell.js"')).toBe(
+      true,
+    );
+    expect(fullscreenSource.includes("setFullscreenShellOpen(")).toBe(true);
+    expect(fullscreenSource.includes("setDocumentModeShellOpen(")).toBe(true);
+    expect(fullscreenSource.includes("isInlineShellOpen(")).toBe(true);
+    expect(
+      fullscreenSource.includes('classList.contains("mfe-view-inline")'),
+    ).toBe(false);
+  });
+
+  test("host router uses API state contracts", () => {
+    expect(hostRouterSource.includes("document.body?.classList")).toBe(false);
+    expect(hostRouterSource.includes("MarkdownFrontEditor")).toBe(true);
+    expect(hostRouterSource.includes("isOpen")).toBe(true);
   });
 });
