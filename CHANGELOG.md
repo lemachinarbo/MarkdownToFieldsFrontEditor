@@ -2,6 +2,7 @@
 
 ## V0.5.7.3
 - Fix thumbnail generation with EXIF orientation caching
+- Fix PHP notice from indirect modification of overloaded `WireData` property (`exifOrientationCache`) by using explicit read/modify/write cache assignment.
 
 ## V0.5.7
 - Fixed image thumbnail delivery**: Thumbnails now serve through ProcessWire cache using an endpoint.

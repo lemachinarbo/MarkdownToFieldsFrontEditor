@@ -3879,21 +3879,18 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
     }
 
     protected function cacheImageExifOrientation(string $relativePath, string $fullPath): void {
-        if (!isset($this->exifOrientationCache)) {
-            $this->exifOrientationCache = [];
-        }
-        
+        $cache = (array)($this->exifOrientationCache ?? []);
+
         $exif = @exif_read_data($fullPath);
         if ($exif && isset($exif['Orientation'])) {
-            $this->exifOrientationCache[$relativePath] = (int)$exif['Orientation'];
+            $cache[$relativePath] = (int)$exif['Orientation'];
+            $this->exifOrientationCache = $cache;
         }
     }
 
     protected function getCachedExifOrientation(string $relativePath): ?int {
-        if (!isset($this->exifOrientationCache)) {
-            return null;
-        }
-        return $this->exifOrientationCache[$relativePath] ?? null;
+        $cache = (array)($this->exifOrientationCache ?? []);
+        return isset($cache[$relativePath]) ? (int)$cache[$relativePath] : null;
     }
 
     protected function thumbPath(string $basename, string $hash, string $imagePath = ''): string {
