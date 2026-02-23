@@ -1,7 +1,9 @@
 # Changelog
 
-## V0.5.7
+## V0.5.7.3
+- Fix thumbnail generation with EXIF orientation caching
 
+## V0.5.7
 - Fixed image thumbnail delivery**: Thumbnails now serve through ProcessWire cache using an endpoint.
 
 ## V0.5.6

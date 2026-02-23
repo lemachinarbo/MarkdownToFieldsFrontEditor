@@ -14,7 +14,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
             'summary' => 'Frontend editor for MarkdownToFields.',
-            'version' =>  '0.5.7',
+            'version' =>  '0.5.7.3',
             'autoload' => true,
             'singular' => true,
             'requires' => ['MarkdownToFields'],
@@ -855,7 +855,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
             $thumbSource = $relativePath !== '' ? $relativePath : $imagePath;
             try {
-                $pwVariationPath = $this->buildProcessWireThumbVariation($pageId, $thumbSource, 500);
+                $pwVariationPath = $this->buildProcessWireThumbVariation($pageId, $thumbSource, 500, $relativePath);
                 $this->ensureThumbDir($imagePath);
                 $saved = @copy($pwVariationPath, $thumbPath);
                 if (is_file($pwVariationPath) && basename($pwVariationPath) !== basename($thumbPath)) {
@@ -1040,11 +1040,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                         'fullPath' => $fullFilename,
                     ];
                     
-                    // Get display dimensions (EXIF-aware) for aspect ratio placeholder
+                    // Get display dimensions (EXIF-aware) for aspect ratio placeholder and cache EXIF orientation
                     $imgDims = $this->getImageDisplayDimensions($fullFilename);
                     if ($imgDims) {
                         $imageItem['width'] = $imgDims['width'];
                         $imageItem['height'] = $imgDims['height'];
+                        // Cache EXIF orientation for thumbnail generation (avoid re-reading)
+                        $this->cacheImageExifOrientation($relativeSourcePath, $fullFilename);
                     }
                     
                     if ($hash) {
@@ -3762,12 +3764,12 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return hash_file('sha256', $path);
     }
 
-    protected function buildProcessWireThumbVariation(int $pageId, string $sourceImagePath, int $maxDim): string {
+    protected function buildProcessWireThumbVariation(int $pageId, string $sourceImagePath, int $maxDim, string $relativePath = ''): string {
         $resolvedPath = $this->resolveSourceImageAbsolutePath($sourceImagePath);
         $thumbDir = $this->ensureThumbDir($resolvedPath);
         $tempPath = $thumbDir . 'tmp-' . sha1($resolvedPath . microtime(true)) . '.jpg';
 
-        $resource = $this->loadImageResourceForThumb($resolvedPath);
+        $resource = $this->loadImageResourceForThumb($resolvedPath, $relativePath);
         if (!$resource) {
             throw new \RuntimeException('Failed to load source image for thumbnail generation.');
         }
@@ -3806,13 +3808,92 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         throw new \RuntimeException('Failed to resolve source image path for thumbnail generation.');
     }
 
-    protected function loadImageResourceForThumb(string $path) {
+    protected function loadImageResourceForThumb(string $path, string $relativePath = '') {
         $ext = strtolower((string)pathinfo($path, PATHINFO_EXTENSION));
-        if ($ext === 'jpg' || $ext === 'jpeg') return @imagecreatefromjpeg($path);
-        if ($ext === 'png') return @imagecreatefrompng($path);
-        if ($ext === 'gif') return @imagecreatefromgif($path);
-        if ($ext === 'webp') return @imagecreatefromwebp($path);
-        return null;
+        $resource = null;
+        if ($ext === 'jpg' || $ext === 'jpeg') {
+            $resource = @imagecreatefromjpeg($path);
+        } elseif ($ext === 'png') {
+            $resource = @imagecreatefrompng($path);
+        } elseif ($ext === 'gif') {
+            $resource = @imagecreatefromgif($path);
+        } elseif ($ext === 'webp') {
+            $resource = @imagecreatefromwebp($path);
+        }
+        
+        if (!$resource) {
+            return null;
+        }
+        
+        // Apply EXIF rotation for JPEG/TIFF images (uses cache if available)
+        $canHaveOrientation = in_array($ext, ['jpg', 'jpeg', 'tif', 'tiff'], true);
+        if ($canHaveOrientation && function_exists('exif_read_data')) {
+            $resource = $this->applyExifRotationToResource($resource, $path, $relativePath);
+        }
+        
+        return $resource;
+    }
+
+    protected function applyExifRotationToResource($resource, string $path, string $relativePath = '') {
+        // Try to get cached orientation first (set during picker load)
+        $orientation = null;
+        if ($relativePath !== '') {
+            $orientation = $this->getCachedExifOrientation($relativePath);
+        }
+        
+        // If not cached, read from file
+        if ($orientation === null) {
+            $exif = @exif_read_data($path);
+            if (!$exif || !isset($exif['Orientation'])) {
+                return $resource;
+            }
+            $orientation = (int)$exif['Orientation'];
+        }
+        
+        $angle = 0;
+        
+        switch ($orientation) {
+            case 3: $angle = 180; break;
+            case 6: $angle = 270; break;
+            case 8: $angle = 90; break;
+            case 2:
+            case 4:
+            case 5:
+            case 7:
+                // Flipping not supported by basic imagerotate, skip
+                return $resource;
+            default: return $resource;
+        }
+        
+        if ($angle === 0) {
+            return $resource;
+        }
+        
+        $rotated = @imagerotate($resource, $angle, 0);
+        if ($rotated) {
+            @imagedestroy($resource);
+            return $rotated;
+        }
+        
+        return $resource;
+    }
+
+    protected function cacheImageExifOrientation(string $relativePath, string $fullPath): void {
+        if (!isset($this->exifOrientationCache)) {
+            $this->exifOrientationCache = [];
+        }
+        
+        $exif = @exif_read_data($fullPath);
+        if ($exif && isset($exif['Orientation'])) {
+            $this->exifOrientationCache[$relativePath] = (int)$exif['Orientation'];
+        }
+    }
+
+    protected function getCachedExifOrientation(string $relativePath): ?int {
+        if (!isset($this->exifOrientationCache)) {
+            return null;
+        }
+        return $this->exifOrientationCache[$relativePath] ?? null;
     }
 
     protected function thumbPath(string $basename, string $hash, string $imagePath = ''): string {
