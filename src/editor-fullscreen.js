@@ -142,6 +142,7 @@ let lastCompileReport = null;
 let patchCycleCounter = 0;
 let mountWatchObserver = null;
 let mountWatchDebounceTimer = null;
+let documentCacheWriteDepth = 0;
 
 function debugWarn(...args) {
   if (!isDevMode()) return;
@@ -158,6 +159,122 @@ function debugTable(rows) {
   if (!console.table) return;
   if (!Array.isArray(rows) || !rows.length) return;
   console.table(rows);
+}
+
+function resolveOutboundMarkdownForSave({ markdown, scope }) {
+  const raw = typeof markdown === "string" ? markdown : "";
+  if (scope === "document") {
+    return composeDocumentMarkdownForSave(raw);
+  }
+  if (scope === "field") {
+    return stripMfeMarkersForFieldScope(raw);
+  }
+  return raw;
+}
+
+function buildSaveRequestContext({
+  markdown,
+  pageId,
+  scope,
+  name,
+  section,
+  subsection,
+  fieldId,
+  lang,
+  csrf,
+}) {
+  const resolvedScope = String(scope || "field");
+  const normalizedMarkdown = trimTrailingLineBreaks(
+    resolveOutboundMarkdownForSave({
+      markdown,
+      scope: resolvedScope,
+    }),
+  );
+  const formData = new FormData();
+  formData.append("markdown", normalizedMarkdown);
+  formData.append("mdName", resolvedScope === "document" ? "document" : name);
+  formData.append("mdScope", resolvedScope);
+  if (resolvedScope !== "document" && section) {
+    formData.append("mdSection", section);
+  }
+  if (resolvedScope !== "document" && subsection) {
+    formData.append("mdSubsection", subsection);
+  }
+  formData.append("pageId", pageId || "0");
+  if (resolvedScope !== "document" && fieldId) {
+    formData.append("fieldId", fieldId);
+  }
+  if (lang) {
+    formData.append("lang", lang);
+  }
+  if (csrf) {
+    formData.append(csrf.name, csrf.value);
+  }
+  return {
+    formData,
+    normalizedMarkdown,
+    resolvedScope,
+  };
+}
+
+function writeDocumentMarkdownCache({ markdownB64 }) {
+  if (!markdownB64) return false;
+  if (documentCacheWriteDepth > 0) {
+    debugWarn("[mfe:document-cache] re-entrant write prevented", {
+      depth: documentCacheWriteDepth,
+    });
+    return false;
+  }
+  documentCacheWriteDepth += 1;
+  try {
+    const cfg = window.MarkdownFrontEditorConfig || {};
+    cfg.documentMarkdownB64 = markdownB64;
+    window.MarkdownFrontEditorConfig = cfg;
+    return true;
+  } finally {
+    documentCacheWriteDepth = Math.max(0, documentCacheWriteDepth - 1);
+  }
+}
+
+function createVirtualDocumentTarget({ pageId, markdown }) {
+  const virtual = document.createElement("div");
+  virtual.className = "fe-editable md-edit mfe-virtual";
+  virtual.setAttribute("data-page", pageId || "0");
+  virtual.setAttribute("data-md-scope", "document");
+  virtual.setAttribute("data-mfe-scope", "document");
+  virtual.setAttribute("data-md-name", "document");
+  virtual.setAttribute("data-mfe-name", "document");
+  virtual.setAttribute("data-field-type", "container");
+  virtual.setAttribute(
+    "data-markdown-b64",
+    encodeMarkdownBase64(markdown || ""),
+  );
+  return virtual;
+}
+
+function deriveEffectiveMarkdownForPayload({
+  fieldScope,
+  sourceMarkdown,
+  hasScopedDraft,
+  hasFieldDraft,
+}) {
+  const isDocumentScope = fieldScope === "document";
+  let effectiveMarkdown = sourceMarkdown;
+  if (isDocumentScope && !hasScopedDraft && !hasFieldDraft) {
+    const split = splitLeadingFrontmatter(sourceMarkdown);
+    if (split.frontmatter) {
+      documentLeadingFrontmatter = split.frontmatter;
+    }
+    effectiveMarkdown = split.body;
+  }
+  return {
+    isDocumentScope,
+    effectiveMarkdown,
+  };
+}
+
+function shouldForceNewWindowForScope(scope) {
+  return scope === "section" || scope === "subsection" || scope === "document";
 }
 
 function runWithoutDirtyTracking(fn) {
@@ -187,7 +304,7 @@ function syncDirtyStatusForActiveField() {
 }
 
 async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
-  const { updateActiveEditor = true } = options;
+  const { updateActiveEditor = true, documentCacheFallbackB64 = "" } = options;
   const activeScopedKey = getActiveScopedHtmlKey();
   const htmlMap =
     data.fragments ||
@@ -242,10 +359,9 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
     window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
     window.MarkdownFrontEditorConfig.fieldsIndex = data.fieldsIndex;
   }
-  if (data.documentMarkdownB64) {
-    window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
-    window.MarkdownFrontEditorConfig.documentMarkdownB64 =
-      data.documentMarkdownB64;
+  const nextDocumentB64 = data.documentMarkdownB64 || documentCacheFallbackB64;
+  if (nextDocumentB64) {
+    writeDocumentMarkdownCache({ markdownB64: nextDocumentB64 });
   }
   const sections = Array.isArray(
     window.MarkdownFrontEditorConfig?.sectionsIndex,
@@ -459,24 +575,17 @@ async function savePendingDrafts() {
 
     const parsed = parseFieldId(fieldId);
     if (!parsed) continue;
-    const resolvedScope = parsed.scope || "field";
-    const outboundMarkdown =
-      resolvedScope === "document"
-        ? composeDocumentMarkdownForSave(markdown || "")
-        : resolvedScope === "field"
-          ? stripMfeMarkersForFieldScope(markdown || "")
-          : markdown || "";
-    const normalizedOutboundMarkdown = trimTrailingLineBreaks(outboundMarkdown);
-    const formData = new FormData();
-    formData.append("markdown", normalizedOutboundMarkdown);
-    formData.append("mdName", parsed.name);
-    formData.append("mdScope", resolvedScope);
-    if (parsed.section) formData.append("mdSection", parsed.section);
-    if (parsed.subsection) formData.append("mdSubsection", parsed.subsection);
-    formData.append("pageId", parsed.pageId || "0");
-    formData.append("fieldId", parsed.fieldId);
-    if (current) formData.append("lang", current);
-    if (csrf) formData.append(csrf.name, csrf.value);
+    const { formData } = buildSaveRequestContext({
+      markdown,
+      pageId: parsed.pageId || "0",
+      scope: parsed.scope || "field",
+      name: parsed.name,
+      section: parsed.section,
+      subsection: parsed.subsection,
+      fieldId: parsed.fieldId,
+      lang: current,
+      csrf,
+    });
 
     const res = await fetch(getSaveUrl(), {
       method: "POST",
@@ -1455,15 +1564,7 @@ function openDocumentOutlineView() {
   if (!isDocumentScopeActive()) {
     const pageId = activeTarget.getAttribute("data-page") || "0";
     const markdown = getDocumentSourceMarkdown();
-    const virtual = document.createElement("div");
-    virtual.className = "fe-editable md-edit mfe-virtual";
-    virtual.setAttribute("data-page", pageId);
-    virtual.setAttribute("data-md-scope", "document");
-    virtual.setAttribute("data-mfe-scope", "document");
-    virtual.setAttribute("data-md-name", "document");
-    virtual.setAttribute("data-mfe-name", "document");
-    virtual.setAttribute("data-field-type", "container");
-    virtual.setAttribute("data-markdown-b64", encodeMarkdownBase64(markdown));
+    const virtual = createVirtualDocumentTarget({ pageId, markdown });
     navigatingViaBreadcrumb = true;
     try {
       openFullscreenEditorForElement(virtual);
@@ -1849,7 +1950,7 @@ function cleanupEditorOnly() {
   splitHandle = null;
   breadcrumbsEl = null;
   navigatingViaBreadcrumb = false;
-  setDocumentModeShellOpen(false);
+  updateDocumentModeBodyClass();
 }
 
 /**
@@ -1952,6 +2053,11 @@ function createToolbar() {
     onSave: saveAllEditors,
     onToggleSplit: toggleSplit,
     onOpenDocumentView: openDocumentOutlineView,
+    canOpenDocumentView: () => {
+      const scopeKind =
+        activeSession?.metadata?.scopeKind || activeFieldScope || "field";
+      return scopeKind !== "document";
+    },
     isDocumentView: () => isDocumentScopeActive() && isOutlineViewActive(),
     onToggleOutlineView: toggleOutlineView,
     isOutlineView: () => isOutlineViewActive(),
@@ -2524,15 +2630,7 @@ function toggleDocumentMode() {
     scopedModeTarget = activeTarget;
     const pageId = activeTarget.getAttribute("data-page") || "0";
     const markdown = getDocumentSourceMarkdown();
-    const virtual = document.createElement("div");
-    virtual.className = "fe-editable md-edit mfe-virtual";
-    virtual.setAttribute("data-page", pageId);
-    virtual.setAttribute("data-md-scope", "document");
-    virtual.setAttribute("data-mfe-scope", "document");
-    virtual.setAttribute("data-md-name", "document");
-    virtual.setAttribute("data-mfe-name", "document");
-    virtual.setAttribute("data-field-type", "container");
-    virtual.setAttribute("data-markdown-b64", encodeMarkdownBase64(markdown));
+    const virtual = createVirtualDocumentTarget({ pageId, markdown });
     openFullscreenEditorForElement(virtual);
     return;
   }
@@ -2859,15 +2957,7 @@ async function handleBreadcrumbClick(e) {
   if (type === "document") {
     const pageId = activeTarget.getAttribute("data-page") || "0";
     const markdown = getDocumentSourceMarkdown();
-    const virtual = document.createElement("div");
-    virtual.className = "fe-editable md-edit mfe-virtual";
-    virtual.setAttribute("data-page", pageId);
-    virtual.setAttribute("data-md-scope", "document");
-    virtual.setAttribute("data-mfe-scope", "document");
-    virtual.setAttribute("data-md-name", "document");
-    virtual.setAttribute("data-mfe-name", "document");
-    virtual.setAttribute("data-field-type", "container");
-    virtual.setAttribute("data-markdown-b64", encodeMarkdownBase64(markdown));
+    const virtual = createVirtualDocumentTarget({ pageId, markdown });
     const ok = await keepPendingChangesBeforeSwitch();
     if (!ok) return;
     navigatingViaBreadcrumb = true;
@@ -3026,16 +3116,14 @@ function openFullscreenEditorFromPayload(payload) {
     : null;
   const sourceMarkdown =
     scopedDraftMarkdown ?? draftMarkdown ?? markdownContent;
-  let effectiveMarkdown = sourceMarkdown;
-  const isDocumentScope = fieldScope === "document";
+  const { isDocumentScope, effectiveMarkdown } =
+    deriveEffectiveMarkdownForPayload({
+      fieldScope,
+      sourceMarkdown,
+      hasScopedDraft: Boolean(scopedDraftMarkdown),
+      hasFieldDraft: Boolean(draftMarkdown),
+    });
   const nextViewMode = "scoped";
-  if (isDocumentScope && !scopedDraftMarkdown && !draftMarkdown) {
-    const split = splitLeadingFrontmatter(sourceMarkdown);
-    if (split.frontmatter) {
-      documentLeadingFrontmatter = split.frontmatter;
-    }
-    effectiveMarkdown = split.body;
-  }
   editorViewMode = nextViewMode;
   if (isDocumentScope) {
     documentDraftMarkdown = effectiveMarkdown;
@@ -3091,34 +3179,25 @@ function openFullscreenEditorFromPayload(payload) {
     const currentPageId =
       activeTarget?.getAttribute("data-page") || pageId || "0";
     const documentMode = isDocumentScopeActive();
-    const outboundMarkdown = documentMode
-      ? composeDocumentMarkdownForSave(finalMarkdown)
-      : currentFieldScope === "field"
-        ? stripMfeMarkersForFieldScope(finalMarkdown)
-        : finalMarkdown;
-    const normalizedOutboundMarkdown = trimTrailingLineBreaks(outboundMarkdown);
+    const { formData, normalizedMarkdown } = buildSaveRequestContext({
+      markdown: finalMarkdown,
+      pageId: currentPageId,
+      scope: documentMode ? "document" : currentFieldScope,
+      name: documentMode ? "document" : currentFieldName,
+      section: documentMode ? "" : currentFieldSection,
+      subsection: documentMode ? "" : currentFieldSubsection,
+      fieldId: documentMode ? "" : activeFieldId,
+      lang: getLanguagesConfig().current,
+      csrf: null,
+    });
     fetchCsrfToken().then((csrf) => {
-      const { current } = getLanguagesConfig();
-      const formData = new FormData();
-      formData.append("markdown", normalizedOutboundMarkdown);
-      formData.append("mdName", documentMode ? "document" : currentFieldName);
-      formData.append("mdScope", documentMode ? "document" : currentFieldScope);
-      if (!documentMode && currentFieldSection) {
-        formData.append("mdSection", currentFieldSection);
-      }
-      if (!documentMode && currentFieldSubsection) {
-        formData.append("mdSubsection", currentFieldSubsection);
-      }
-      formData.append("pageId", currentPageId);
-      if (!documentMode && activeFieldId) {
-        formData.append("fieldId", activeFieldId);
-      }
-      if (current) {
-        formData.append("lang", current);
-      }
-
       if (csrf) {
         formData.append(csrf.name, csrf.value);
+      }
+
+      const lastCommandLang = getLanguagesConfig().current;
+      if (lastCommandLang && !formData.has("lang")) {
+        formData.append("lang", lastCommandLang);
       }
 
       fetch(getSaveUrl(), {
@@ -3133,16 +3212,14 @@ function openFullscreenEditorFromPayload(payload) {
         .then((data) => {
           if (data.status) {
             if (documentMode) {
-              const cfg = window.MarkdownFrontEditorConfig || {};
-              cfg.documentMarkdownB64 =
-                data.documentMarkdownB64 ||
-                encodeMarkdownBase64(normalizedOutboundMarkdown);
-              window.MarkdownFrontEditorConfig = cfg;
               documentDraftMarkdown = "";
             }
             Promise.resolve(
               handlePrimarySaveResponse(data, finalMarkdown, {
                 updateActiveEditor: true,
+                documentCacheFallbackB64: documentMode
+                  ? encodeMarkdownBase64(normalizedMarkdown)
+                  : "",
               }),
             )
               .then(() => {
@@ -3228,16 +3305,14 @@ function replaceActiveEditor(payload) {
     : null;
   const sourceMarkdown =
     scopedDraftMarkdown ?? draftMarkdown ?? markdownContent;
-  let effectiveMarkdown = sourceMarkdown;
-  const isDocumentScope = fieldScope === "document";
+  const { isDocumentScope, effectiveMarkdown } =
+    deriveEffectiveMarkdownForPayload({
+      fieldScope,
+      sourceMarkdown,
+      hasScopedDraft: Boolean(scopedDraftMarkdown),
+      hasFieldDraft: Boolean(draftMarkdown),
+    });
   const nextViewMode = "scoped";
-  if (isDocumentScope && !scopedDraftMarkdown && !draftMarkdown) {
-    const split = splitLeadingFrontmatter(sourceMarkdown);
-    if (split.frontmatter) {
-      documentLeadingFrontmatter = split.frontmatter;
-    }
-    effectiveMarkdown = split.body;
-  }
   editorViewMode = nextViewMode;
   if (isDocumentScope) {
     documentDraftMarkdown = effectiveMarkdown;
@@ -3284,6 +3359,7 @@ function replaceActiveEditor(payload) {
   }
 
   const html = renderMarkdownToHtml(effectiveMarkdown || "");
+  const previousSelection = primaryEditor.state.selection;
   runWithoutDirtyTracking(() => {
     try {
       const doc = parseMarkdownToDoc(
@@ -3295,6 +3371,9 @@ function replaceActiveEditor(payload) {
       primaryEditor.commands.setContent(html, false);
     }
   });
+  try {
+    primaryEditor.commands.setTextSelection(previousSelection);
+  } catch (_e) {}
   if (shouldWarnForExtraContent(fieldType, fieldName)) {
     stripTrailingEmptyParagraph(primaryEditor);
   }
@@ -3385,10 +3464,7 @@ export function openFullscreenEditorForElement(target) {
     return;
   }
 
-  const forceNewWindow =
-    payload.fieldScope === "section" ||
-    payload.fieldScope === "subsection" ||
-    payload.fieldScope === "document";
+  const forceNewWindow = shouldForceNewWindowForScope(payload.fieldScope);
   if (forceNewWindow) {
     return openFullscreenEditorFromPayload(payload);
   }

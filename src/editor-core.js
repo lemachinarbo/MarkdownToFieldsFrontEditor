@@ -124,6 +124,7 @@ function createFreshMarkdownItInstance() {
 
   // Configure for source preservation
   md.set({ html: false, breaks: false });
+  md.enable("strikethrough");
 
   return md;
 }
@@ -191,13 +192,17 @@ export function createMarkdownParser(schema) {
     softbreak: { node: "hardBreak" },
     em: { mark: "italic" },
     strong: { mark: "bold" },
+    s: { mark: "strike" },
     link: defaultMarkdownParser.tokens.link,
     image: defaultMarkdownParser.tokens.image,
-    mfe_marker: {
+  };
+
+  if (schema.nodes.mfeMarker) {
+    tokens.mfe_marker = {
       block: "mfeMarker",
       getAttrs: (tok) => ({ name: tok.meta?.name || "" }),
-    },
-  };
+    };
+  }
 
   if (!schema.nodes.codeBlock) {
     delete tokens.code_block;
@@ -205,6 +210,9 @@ export function createMarkdownParser(schema) {
   }
   if (!schema.nodes.image) {
     delete tokens.image;
+  }
+  if (!schema.marks?.strike) {
+    delete tokens.s;
   }
 
   return new MarkdownParser(schema, markdownIt, tokens);

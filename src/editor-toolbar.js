@@ -8,6 +8,7 @@ export function createToolbarButtons({
   onSave,
   onToggleSplit,
   onOpenDocumentView,
+  canOpenDocumentView,
   isDocumentView,
   onToggleOutlineView,
   isOutlineView,
@@ -273,6 +274,11 @@ export function createToolbarButtons({
         </svg>
       `,
       action: () => {
+        const allowed =
+          typeof canOpenDocumentView === "function"
+            ? Boolean(canOpenDocumentView())
+            : true;
+        if (!allowed) return;
         if (typeof onOpenDocumentView === "function") {
           onOpenDocumentView();
         }

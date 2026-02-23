@@ -1,7 +1,12 @@
 # Changelog
 
 ## V0.5.8
+* Fixed an issue where ~~strikethrough~~ text sometimes showed raw `~~` after switching views. Now it stays formatted correctly.
+* Tightened parser logic so special markers only load when supported, preventing random mis-parsing.
 - Update draft retrieval logic.
+* Expanded tests to ensure formatting and images stay correct when moving between editor scopes.
+
+
 
 ## V0.5.7.3
 - Fix thumbnail generation with EXIF orientation caching
