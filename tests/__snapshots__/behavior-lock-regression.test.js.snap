@@ -27,14 +27,14 @@ exports[`Behavior lock: markdown + editor parity field resolution + id format co
 exports[`Behavior lock: markdown + editor parity image insertion flow signatures stay unchanged 1`] = `
 {
   "fullscreenImageFlow": "function openImagePicker(initialData = null, imagePos = null) { const editor = activeEditor || primaryEditor; if (!editor) return; createImagePicker({ initialData, onSelect: (imageData) => { // imageData is { filename, url, alt, _resolveWarning? } const editor = activeEditor || primaryEditor; if (!editor) return; // Show soft warning if image resolution failed (deferred to render time) if (imageData._resolveWarning) { statusManager.setError(imageData._resolveWarning); } let shouldReplaceSelectedImage = false; if (typeof imagePos === "number") { const imageNode = editor.state.doc.nodeAt(imagePos); if (imageNode && imageNode.type.name === "image") { const tr = editor.state.tr.setSelection( NodeSelection.create(editor.state.doc, imagePos), ); editor.view.dispatch(tr); shouldReplaceSelectedImage = true; } } if (!shouldReplaceSelectedImage) { const { selection } = editor.state; shouldReplaceSelectedImage = selection.node && selection.node.type.name === "image"; } if (shouldReplaceSelectedImage) { editor .chain() .focus() .updateAttributes("image", { src: imageData.url, alt: imageData.alt || "", originalFilename: imageData.filename, }) .run(); } else { editor .chain() .focus() .setImage({ src: imageData.url, alt: imageData.alt || "", originalFilename: imageData.filename, }) .run(); } // Mark as dirty if (editor === primaryEditor) { primaryDirty = true; const scopedKey = getActiveScopedHtmlKey(); if (scopedKey) { draftMarkdownByScopedKey.set( scopedKey, getMarkdownFromEditor(editor), ); } if (activeFieldId) { statusManager.markDirty(activeFieldId); } } if (editor === secondaryEditor && secondaryLang) { dirtyTranslations.set(secondaryLang, true); } }, onClose: () => { // Refocus editor after picker closes setTimeout(() => editor.view.focus(), 0); }, }); }",
-  "inlineImageFlow": "function openImagePickerInline(initialData = null, imagePos = null) { if (!activeEditor) return; createImagePicker({ initialData, onSelect: (imageData) => { // imageData is { filename, url, alt, _resolveWarning? } if (!activeEditor) return; // Show soft warning if image resolution failed (deferred to render time) if (imageData._resolveWarning) { setError(imageData._resolveWarning); } let shouldReplaceSelectedImage = false; if (typeof imagePos === "number") { const imageNode = activeEditor.state.doc.nodeAt(imagePos); if (imageNode && imageNode.type.name === "image") { const tr = activeEditor.state.tr.setSelection( NodeSelection.create(activeEditor.state.doc, imagePos), ); activeEditor.view.dispatch(tr); shouldReplaceSelectedImage = true; } } if (!shouldReplaceSelectedImage) { const { selection } = activeEditor.state; shouldReplaceSelectedImage = selection.node && selection.node.type.name === "image"; } if (shouldReplaceSelectedImage) { activeEditor .chain() .focus() .updateAttributes("image", { src: imageData.url, alt: imageData.alt || "", originalFilename: imageData.filename, }) .run(); } else { activeEditor .chain() .focus() .setImage({ src: imageData.url, alt: imageData.alt || "", originalFilename: imageData.filename, }) .run(); } // Mark as dirty dirty = true; if (activeFieldId) { markDirty(activeFieldId); const markdown = decodeHtmlEntitiesInFences( getMarkdownFromEditor(activeEditor), ); draftMarkdownByField.set(activeFieldId, markdown); } }, onClose: () => { // Refocus editor after picker closes setTimeout(() => activeEditor?.view?.focus(), 0); }, }); }",
+  "inlineImageFlow": "function openImagePickerInline(initialData = null, imagePos = null) { if (!activeEditor) return; createImagePicker({ initialData, onSelect: (imageData) => { // imageData is { filename, url, alt, _resolveWarning? } if (!activeEditor) return; // Show soft warning if image resolution failed (deferred to render time) if (imageData._resolveWarning) { setError(imageData._resolveWarning); } let shouldReplaceSelectedImage = false; if (typeof imagePos === "number") { const imageNode = activeEditor.state.doc.nodeAt(imagePos); if (imageNode && imageNode.type.name === "image") { const tr = activeEditor.state.tr.setSelection( NodeSelection.create(activeEditor.state.doc, imagePos), ); activeEditor.view.dispatch(tr); shouldReplaceSelectedImage = true; } } if (!shouldReplaceSelectedImage) { const { selection } = activeEditor.state; shouldReplaceSelectedImage = selection.node && selection.node.type.name === "image"; } if (shouldReplaceSelectedImage) { activeEditor .chain() .focus() .updateAttributes("image", { src: imageData.url, alt: imageData.alt || "", originalFilename: imageData.filename, }) .run(); } else { activeEditor .chain() .focus() .setImage({ src: imageData.url, alt: imageData.alt || "", originalFilename: imageData.filename, }) .run(); } // Mark as dirty dirty = true; if (activeFieldId) { markDirty(activeFieldId); } if (activeScopeKey) { const markdown = decodeHtmlEntitiesInFences( getMarkdownFromEditor(activeEditor), ); draftMarkdownByField.set(activeScopeKey, markdown); } }, onClose: () => { // Refocus editor after picker closes setTimeout(() => activeEditor?.view?.focus(), 0); }, }); }",
 }
 `;
 
 exports[`Behavior lock: markdown + editor parity inline vs fullscreen exact duplicate blocks remain equivalent 1`] = `
 {
-  "createEditorInstanceFullscreen": "function createEditorInstance(element, fieldType, fieldName) { const restrictToSingleBlock = shouldWarnForExtraContent(fieldType, fieldName); const starterKitOptions = { codeBlock: false, link: false, underline: false, ...(restrictToSingleBlock ? { document: false } : {}), }; const lowlight = createLowlight(common); const SingleBlockEnterToastExtension = createSingleBlockEnterToastExtension( (message, options) => statusManager.setError(message, options), ); const ImageExtension = createMfeImageExtension(getImageBaseUrl); const DocumentBoundaryExtension = createDocumentBoundaryExtension( () => editorViewMode, ); const editor = new Editor({ element, extensions: [ StarterKit.configure(starterKitOptions), ...(restrictToSingleBlock ? [SingleBlockDocumentExtension] : []), UnderlineMark, SuperscriptMark, SubscriptMark, Marker, CodeBlockLowlight.configure({ lowlight, }), Link.configure({ openOnClick: false, linkOnPaste: true, }), ImageExtension, InlineHtmlLabelExtension, DocumentBoundaryExtension, ...(restrictToSingleBlock ? [SingleBlockEnterToastExtension] : []), HeadingSingleLineExtension, // EscapeKeyExtension, - DEPRECATED: WindowManager now handles global Escape ], content: "", editorProps: { attributes: { class: "prose prose-sm focus:outline-none mfe-editor", spellcheck: "false", }, }, }); applyFieldAttributes(editor, fieldType, fieldName); editor.on("focus", () => { activeEditor = editor; if (typeof refreshToolbarState === "function") { refreshToolbarState(); } }); editor.on("update", () => { if (suppressDirtyTracking > 0) return; highlightExtraContent(editor); if (shouldWarnForExtraContent(fieldType, fieldName)) { stripTrailingEmptyParagraph(editor); } if (editor === primaryEditor) { primaryDirty = true; const markdown = getMarkdownFromEditor(editor); if (editorViewMode === "document") { documentDraftMarkdown = markdown; } else if (activeFieldId) { primaryDraftsByFieldId.set(activeFieldId, markdown); scopedModeMarkdown = markdown; } if (activeFieldId) { statusManager.markDirty(activeFieldId); } } if (editor === secondaryEditor && secondaryLang) { dirtyTranslations.set(secondaryLang, true); translationsCache = translationsCache || {}; translationsCache[secondaryLang] = getMarkdownFromEditor(editor); if (activeFieldId) { translationsCacheByFieldId.set(activeFieldId, translationsCache); } } }); editor.view.dom.addEventListener("keydown", (e) => { if (e.key !== "Tab") return; if (!primaryEditor || !secondaryEditor) return; e.preventDefault(); if (e.shiftKey) { primaryEditor.view.focus(); } else { secondaryEditor.view.focus(); } }); return editor; }",
-  "createEditorInstanceInline": "function createEditorInstance(host, fieldType, fieldName) { const restrictToSingleBlock = shouldWarnForExtraContent(fieldType, fieldName); const starterKitOptions = { codeBlock: false, link: false, underline: false, ...(restrictToSingleBlock ? { document: false } : {}), }; const lowlight = createLowlight(common); const SingleBlockEnterToastExtension = createSingleBlockEnterToastExtension(setError); const ImageExtension = createMfeImageExtension(getImageBaseUrl); const editor = new Editor({ element: host, extensions: [ StarterKit.configure(starterKitOptions), ...(restrictToSingleBlock ? [SingleBlockDocumentExtension] : []), UnderlineMark, SuperscriptMark, SubscriptMark, Marker, CodeBlockLowlight.configure({ lowlight, }), Link.configure({ openOnClick: false, linkOnPaste: true, }), ImageExtension, InlineHtmlLabelExtension, ...(restrictToSingleBlock ? [SingleBlockEnterToastExtension] : []), HeadingSingleLineExtension, EscapeKeyExtension, ], content: "", editorProps: { attributes: { class: "mfe-inline-editor", spellcheck: "false", }, }, }); applyFieldAttributes(editor, fieldType, fieldName); editor.on("focus", () => { activeEditor = editor; }); editor.on("update", () => { if (suppressUpdates) return; highlightExtraContent(editor); if (shouldWarnForExtraContent(fieldType, fieldName)) { stripTrailingEmptyParagraph(editor); } dirty = true; if (activeFieldId) { markDirty(activeFieldId); draftByField.set(activeFieldId, editor.getJSON()); const markdown = decodeHtmlEntitiesInFences( getMarkdownFromEditor(editor), ); draftMarkdownByField.set(activeFieldId, markdown); } }); return editor; }",
+  "createEditorInstanceFullscreen": "function createEditorInstance(element, fieldType, fieldName) { const restrictToSingleBlock = shouldWarnForExtraContent(fieldType, fieldName); const starterKitOptions = { codeBlock: false, link: false, underline: false, ...(restrictToSingleBlock ? { document: false } : {}), }; const lowlight = createLowlight(common); const SingleBlockEnterToastExtension = createSingleBlockEnterToastExtension( (message, options) => statusManager.setError(message, options), ); const ImageExtension = createMfeImageExtension(getImageBaseUrl); const DocumentBoundaryExtension = createDocumentBoundaryExtension( () => editorViewMode, ); const editor = new Editor({ element, extensions: [ StarterKit.configure(starterKitOptions), ...(restrictToSingleBlock ? [SingleBlockDocumentExtension] : []), UnderlineMark, SuperscriptMark, SubscriptMark, Marker, CodeBlockLowlight.configure({ lowlight, }), Link.configure({ openOnClick: false, linkOnPaste: true, }), ImageExtension, InlineHtmlLabelExtension, DocumentBoundaryExtension, ...(restrictToSingleBlock ? [SingleBlockEnterToastExtension] : []), HeadingSingleLineExtension, // EscapeKeyExtension, - DEPRECATED: WindowManager now handles global Escape ], content: "", editorProps: { attributes: { class: "prose prose-sm focus:outline-none mfe-editor", spellcheck: "false", }, }, }); applyFieldAttributes(editor, fieldType, fieldName); editor.on("focus", () => { activeEditor = editor; if (typeof refreshToolbarState === "function") { refreshToolbarState(); } }); editor.on("update", () => { if (suppressDirtyTracking > 0) return; highlightExtraContent(editor); if (shouldWarnForExtraContent(fieldType, fieldName)) { stripTrailingEmptyParagraph(editor); } if (editor === primaryEditor) { primaryDirty = true; const markdown = getMarkdownFromEditor(editor); if (isDocumentScopeActive()) { documentDraftMarkdown = markdown; } else if (activeFieldId) { primaryDraftsByFieldId.set(activeFieldId, markdown); scopedModeMarkdown = markdown; } if (activeFieldId) { statusManager.markDirty(activeFieldId); } } if (editor === secondaryEditor && secondaryLang) { dirtyTranslations.set(secondaryLang, true); translationsCache = translationsCache || {}; translationsCache[secondaryLang] = getMarkdownFromEditor(editor); if (activeFieldId) { translationsCacheByFieldId.set(activeFieldId, translationsCache); } } }); editor.view.dom.addEventListener("keydown", (e) => { if (e.key !== "Tab") return; if (!primaryEditor || !secondaryEditor) return; e.preventDefault(); if (e.shiftKey) { primaryEditor.view.focus(); } else { secondaryEditor.view.focus(); } }); return editor; }",
+  "createEditorInstanceInline": "function createEditorInstance(host, fieldType, fieldName) { const restrictToSingleBlock = shouldWarnForExtraContent(fieldType, fieldName); const starterKitOptions = { codeBlock: false, link: false, underline: false, ...(restrictToSingleBlock ? { document: false } : {}), }; const lowlight = createLowlight(common); const SingleBlockEnterToastExtension = createSingleBlockEnterToastExtension(setError); const ImageExtension = createMfeImageExtension(getImageBaseUrl); const editor = new Editor({ element: host, extensions: [ StarterKit.configure(starterKitOptions), ...(restrictToSingleBlock ? [SingleBlockDocumentExtension] : []), UnderlineMark, SuperscriptMark, SubscriptMark, Marker, CodeBlockLowlight.configure({ lowlight, }), Link.configure({ openOnClick: false, linkOnPaste: true, }), ImageExtension, InlineHtmlLabelExtension, ...(restrictToSingleBlock ? [SingleBlockEnterToastExtension] : []), HeadingSingleLineExtension, EscapeKeyExtension, ], content: "", editorProps: { attributes: { class: "mfe-inline-editor", spellcheck: "false", }, }, }); applyFieldAttributes(editor, fieldType, fieldName); editor.on("focus", () => { activeEditor = editor; }); editor.on("update", () => { if (suppressUpdates) return; highlightExtraContent(editor); if (shouldWarnForExtraContent(fieldType, fieldName)) { stripTrailingEmptyParagraph(editor); } dirty = true; if (activeFieldId) { markDirty(activeFieldId); } if (activeScopeKey) { draftByField.set(activeScopeKey, editor.getJSON()); const markdown = decodeHtmlEntitiesInFences( getMarkdownFromEditor(editor), ); draftMarkdownByField.set(activeScopeKey, markdown); } }); return editor; }",
   "fullscreenUsageAnchors": [
     {
       "name": "setOriginalBlockCount",
@@ -181,27 +181,27 @@ exports[`Behavior lock: markdown + editor parity save pipeline DOM mutation sign
     },
     {
       "code": "activeEditor.commands.setContent(html, false);",
-      "line": 75,
+      "line": 67,
       "token": "setContent(",
     },
     {
       "code": "target.innerHTML = html;",
-      "line": 80,
+      "line": 72,
       "token": "innerHTML =",
     },
     {
       "code": "target.dataset.markdown = markdown;",
-      "line": 87,
+      "line": 80,
       "token": "dataset.markdown",
     },
     {
       "code": "target.dataset.markdownB64 = btoa(",
-      "line": 88,
+      "line": 81,
       "token": "dataset.markdown",
     },
     {
       "code": "target.dataset.markdownB64 = btoa(",
-      "line": 88,
+      "line": 81,
       "token": "dataset.markdownB64",
     },
   ],
@@ -223,37 +223,37 @@ exports[`Behavior lock: markdown + editor parity save pipeline DOM mutation sign
     },
     {
       "code": "activeEditor.commands.setContent(html, false);",
-      "line": 107,
+      "line": 97,
       "token": "setContent(",
     },
     {
       "code": "el.innerHTML = html;",
-      "line": 112,
+      "line": 102,
       "token": "innerHTML =",
     },
     {
       "code": "activeEditor.commands.setContent(primaryHtml, false);",
-      "line": 120,
+      "line": 109,
       "token": "setContent(",
     },
     {
       "code": "target.innerHTML = primaryHtml;",
-      "line": 125,
+      "line": 114,
       "token": "innerHTML =",
     },
     {
       "code": "target.dataset.markdown = finalMarkdown;",
-      "line": 129,
+      "line": 118,
       "token": "dataset.markdown",
     },
     {
       "code": "target.dataset.markdownB64 = btoa(",
-      "line": 130,
+      "line": 119,
       "token": "dataset.markdown",
     },
     {
       "code": "target.dataset.markdownB64 = btoa(",
-      "line": 130,
+      "line": 119,
       "token": "dataset.markdownB64",
     },
   ],

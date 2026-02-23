@@ -37,9 +37,29 @@ import {
 import { Marker } from "./marker-extension.js";
 import { createToolbarButtons } from "./editor-toolbar.js";
 import { renderToolbarButtons } from "./editor-toolbar-renderer.js";
-import { openFullscreenEditorForElement } from "./editor-fullscreen.js";
+import {
+  openFullscreenForTarget,
+  isFullscreenOpen,
+  requestCloseFullscreen,
+} from "./host-router.js";
+import {
+  setInlineShellOpen,
+  setInlineDebugShell,
+  setInlineLabelStyle,
+} from "./inline-shell.js";
 import { createOverlayEngine } from "./overlay-engine.js";
 import { resolveDblclickAction } from "./scope-resolver.js";
+import { scopedHtmlKeyFromMeta } from "./sync-by-key.js";
+import {
+  createScope,
+  createView,
+  createHost,
+  resolveSession,
+} from "./session-resolver.js";
+import {
+  createMenubarShell,
+  attachToolbarToMenubarInner,
+} from "./editor-menubar.js";
 import {
   getSectionEntry,
   getSubsectionEntry,
@@ -66,6 +86,8 @@ let activeFieldName = null;
 let activeFieldType = null;
 let activeFieldScope = "field";
 let activeFieldSection = "";
+let activeFieldSubsection = "";
+let activeScopeKey = "";
 let isClosingInlineEditor = false;
 let toolbarEl = null;
 let toolbarStatusEl = null;
@@ -90,8 +112,10 @@ const originalBlockCounts = new WeakMap();
 const originalHtml = new WeakMap();
 const originalMarkdownByField = new Map();
 let activeFieldId = null;
+let activeSession = null;
 const draftByField = new Map();
 const draftMarkdownByField = new Map();
+const scopeMetaByKey = new Map();
 let suppressUpdates = false;
 const fieldElements = new Map();
 
@@ -493,6 +517,32 @@ function parseFieldId(fieldId) {
   };
 }
 
+function buildScopeKey({ scope, section, subsection, name }) {
+  return scopedHtmlKeyFromMeta(
+    scope || "field",
+    section || "",
+    subsection || "",
+    name || "",
+  );
+}
+
+function buildDeterministicTargetKeyMap() {
+  const out = new Map();
+  for (const [fieldId, el] of fieldElements.entries()) {
+    if (!fieldId || !el) continue;
+    out.set(fieldId, el);
+    const scope = getMetaAttr(el, "scope") || "field";
+    const section = getMetaAttr(el, "section") || "";
+    const subsection = getMetaAttr(el, "subsection") || "";
+    const name = getMetaAttr(el, "name") || "";
+    const scopeKey = buildScopeKey({ scope, section, subsection, name });
+    if (scopeKey) {
+      out.set(scopeKey, el);
+    }
+  }
+  return out;
+}
+
 function renderDraftHtml(editor) {
   if (!editor) return "";
   const html = editor.getHTML();
@@ -663,11 +713,13 @@ function createEditorInstance(host, fieldType, fieldName) {
     dirty = true;
     if (activeFieldId) {
       markDirty(activeFieldId);
-      draftByField.set(activeFieldId, editor.getJSON());
+    }
+    if (activeScopeKey) {
+      draftByField.set(activeScopeKey, editor.getJSON());
       const markdown = decodeHtmlEntitiesInFences(
         getMarkdownFromEditor(editor),
       );
-      draftMarkdownByField.set(activeFieldId, markdown);
+      draftMarkdownByField.set(activeScopeKey, markdown);
     }
   });
 
@@ -743,50 +795,39 @@ function saveField(fieldId, markdown) {
       if (data.html || data.htmlMap) {
         const htmlMap =
           data.htmlMap || (typeof data.html === "object" ? data.html : {});
+        const targetsByKey = buildDeterministicTargetKeyMap();
+        const resolvedScopeForMatch =
+          getMetaAttr(target, "scope") || scope || "field";
+        const activeTargetScopeKey = buildScopeKey({
+          scope: resolvedScopeForMatch,
+          section: section || "",
+          subsection: getMetaAttr(target, "subsection") || "",
+          name: fieldName,
+        });
         const primaryHtml =
           typeof data.html === "string"
             ? data.html
-            : htmlMap[fieldId] || htmlMap[mdName];
+            : htmlMap[fieldId] ||
+              (activeTargetScopeKey
+                ? htmlMap[activeTargetScopeKey]
+                : undefined);
 
-        // 1. Update ALL .fe-editable elements on the page that match something in the map
         let activeTargetMatched = false;
-        document.querySelectorAll(".fe-editable").forEach((el) => {
-          const elName = getMetaAttr(el, "name");
-          const elScope = getMetaAttr(el, "scope") || "field";
-          const elSection = getMetaAttr(el, "section") || "";
-          const elPageId = el.getAttribute("data-page");
-          const elId = `${elPageId}:${elScope}:${elSection}:${elName}`;
+        Object.entries(htmlMap).forEach(([key, html]) => {
+          if (!html || typeof html !== "string") return;
+          const el = targetsByKey.get(key);
+          if (!el) return;
+          originalHtml.set(el, html);
+          if (el === activeTarget) activeTargetMatched = true;
 
-          let html =
-            htmlMap[elId] ||
-            htmlMap[elName] ||
-            htmlMap[`${elScope}:${elName}`] ||
-            htmlMap[`${elScope}:${elSection}:${elName}`];
-
-          // Fuzzy match for scoped keys
-          if (!html) {
-            for (const [key, value] of Object.entries(htmlMap)) {
-              if (elId.endsWith(":" + key)) {
-                html = value;
-                break;
-              }
-            }
-          }
-
-          if (html) {
-            originalHtml.set(el, html);
-            if (el === activeTarget) activeTargetMatched = true;
-
-            // If this is the active editor, update TipTap state
-            if (el === activeTarget && activeEditor) {
-              const selection = activeEditor.state.selection;
-              activeEditor.commands.setContent(html, false);
-              try {
-                activeEditor.commands.setTextSelection(selection);
-              } catch (e) {}
-            } else {
-              el.innerHTML = html;
-            }
+          if (el === activeTarget && activeEditor) {
+            const selection = activeEditor.state.selection;
+            activeEditor.commands.setContent(html, false);
+            try {
+              activeEditor.commands.setTextSelection(selection);
+            } catch (e) {}
+          } else {
+            el.innerHTML = html;
           }
         });
         if (!activeTargetMatched && target && primaryHtml) {
@@ -807,8 +848,10 @@ function saveField(fieldId, markdown) {
         unescape(encodeURIComponent(finalMarkdown)),
       );
       clearDirty(fieldId);
-      draftByField.delete(fieldId);
-      draftMarkdownByField.delete(fieldId);
+      if (activeTargetScopeKey) {
+        draftByField.delete(activeTargetScopeKey);
+        draftMarkdownByField.delete(activeTargetScopeKey);
+      }
     });
 }
 
@@ -818,11 +861,11 @@ function saveAllDrafts({ showStatus = true } = {}) {
     return Promise.resolve();
   }
 
-  if (draftMarkdownByField.size === 0 && activeEditor && activeFieldId) {
+  if (draftMarkdownByField.size === 0 && activeEditor && activeScopeKey) {
     const markdown = decodeHtmlEntitiesInFences(
       getMarkdownFromEditor(activeEditor),
     );
-    draftMarkdownByField.set(activeFieldId, markdown);
+    draftMarkdownByField.set(activeScopeKey, markdown);
   }
   if (draftMarkdownByField.size === 0) {
     if (showStatus) setNoChanges();
@@ -831,16 +874,20 @@ function saveAllDrafts({ showStatus = true } = {}) {
 
   const entries = Array.from(draftMarkdownByField.entries());
   const grouped = new Map();
-  entries.forEach(([fieldId, markdown]) => {
-    const { pageId, name, scope, section } = parseFieldId(fieldId);
+  entries.forEach(([scopeKey, markdown]) => {
+    const meta = scopeMetaByKey.get(scopeKey);
+    if (!meta) return;
+    const { pageId, name, scope, section, subsection, fieldId } = meta;
     if (!pageId || !name) return;
     if (!grouped.has(pageId)) grouped.set(pageId, []);
     const normalizedMarkdown = trimTrailingLineBreaks(markdown);
     grouped.get(pageId).push({
-      key: fieldId,
+      key: scopeKey,
+      fieldId,
       name,
       scope: scope || "field",
       section: section || "",
+      subsection: subsection || "",
       markdown: normalizedMarkdown,
     });
   });
@@ -908,25 +955,17 @@ function saveBatch(pageId, fields) {
 
       const htmlMap =
         data.htmlMap || (typeof data.html === "object" ? data.html : {});
+      const targetsByKey = buildDeterministicTargetKeyMap();
       Object.entries(htmlMap).forEach(([fieldKey, html]) => {
-        // Try to match by fieldId (full) or fieldKey (name)
-        let fieldId = fieldKey;
-        if (!fieldElements.has(fieldId)) {
-          // Fuzzy match: check if any fieldId ends with :fieldKey
-          for (const [id, _] of fieldElements) {
-            if (
-              id === fieldKey ||
-              id.endsWith(":" + fieldKey) ||
-              id.startsWith(fieldKey + ":")
-            ) {
-              fieldId = id;
-              break;
-            }
-          }
-        }
-
-        const target = fieldElements.get(fieldId);
+        const target = targetsByKey.get(fieldKey);
         if (!target) return;
+        const scope = getMetaAttr(target, "scope") || "field";
+        const section = getMetaAttr(target, "section") || "";
+        const subsection = getMetaAttr(target, "subsection") || "";
+        const name = getMetaAttr(target, "name") || "";
+        const scopeKey = buildScopeKey({ scope, section, subsection, name });
+        const meta = scopeMetaByKey.get(scopeKey);
+        const fieldId = meta?.fieldId || "";
 
         // Always update the stored original HTML and dataset
         if (html && typeof html === "string") {
@@ -944,7 +983,8 @@ function saveBatch(pageId, fields) {
           }
         }
 
-        const fieldData = fieldsByKey.get(fieldId);
+        const fieldData =
+          fieldsByKey.get(scopeKey) || fieldsByKey.get(fieldKey);
         if (fieldData?.markdown) {
           const markdown = fieldData.markdown;
           target.dataset.markdown = markdown;
@@ -952,9 +992,13 @@ function saveBatch(pageId, fields) {
             unescape(encodeURIComponent(markdown)),
           );
         }
-        clearDirty(fieldId);
-        draftByField.delete(fieldId);
-        draftMarkdownByField.delete(fieldId);
+        if (fieldId) {
+          clearDirty(fieldId);
+        }
+        if (scopeKey) {
+          draftByField.delete(scopeKey);
+          draftMarkdownByField.delete(scopeKey);
+        }
       });
     });
 }
@@ -1019,10 +1063,12 @@ function openImagePickerInline(initialData = null, imagePos = null) {
       dirty = true;
       if (activeFieldId) {
         markDirty(activeFieldId);
+      }
+      if (activeScopeKey) {
         const markdown = decodeHtmlEntitiesInFences(
           getMarkdownFromEditor(activeEditor),
         );
-        draftMarkdownByField.set(activeFieldId, markdown);
+        draftMarkdownByField.set(activeScopeKey, markdown);
       }
     },
     onClose: () => {
@@ -1047,14 +1093,20 @@ function createInlineToolbar() {
   if (toolbarEl) {
     return;
   }
+  const { menubar, menubarInner } = createMenubarShell({
+    className: "mfe-inline-menubar",
+    top: "12px",
+  });
+
   const toolbar = document.createElement("div");
-  toolbar.className = "mfe-inline-toolbar";
+  toolbar.className = "mfe-toolbar mfe-inline-toolbar";
 
   const buttons = createToolbarButtons({
     getEditor: () => activeEditor,
     onSave: () => saveAllDrafts({ showStatus: true }),
     onToggleSplit: null,
-    onToggleMarkers: null,
+    onToggleOutlineView: null,
+    isOutlineView: null,
   });
 
   const configButtons =
@@ -1082,9 +1134,10 @@ function createInlineToolbar() {
   });
 
   toolbar.appendChild(closeBtn);
+  attachToolbarToMenubarInner(menubarInner, toolbar);
 
-  document.body.appendChild(toolbar);
-  toolbarEl = toolbar;
+  document.body.appendChild(menubar);
+  toolbarEl = menubar;
   toolbarCloseBtn = closeBtn;
 }
 
@@ -1093,19 +1146,10 @@ async function openInlineEditorFromPayload(payload) {
   const el = payload.element;
   if (activeTarget === el && activeEditor) return;
 
-  // Check if fullscreen editor is open
-  const fullscreenOpen = document.body.classList.contains(
-    "mfe-view-fullscreen",
-  );
-  if (fullscreenOpen) {
-    // Close fullscreen editor - its close handler will prompt about unsaved changes if needed
-    const closeBtn = document.querySelector(".mfe-window-close-btn");
-    if (closeBtn) closeBtn.click();
-    // Wait for close to complete, then verify it actually closed
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    const stillOpen = document.body.classList.contains("mfe-view-fullscreen");
-    if (stillOpen) {
-      return; // User canceled unsaved changes dialog, respect their choice
+  if (isFullscreenOpen()) {
+    const closed = requestCloseFullscreen();
+    if (!closed) {
+      return;
     }
   }
 
@@ -1125,6 +1169,7 @@ async function openInlineEditorFromPayload(payload) {
     fieldType,
     fieldScope,
     fieldSection,
+    fieldSubsection,
     pageId,
   } = payload;
 
@@ -1133,13 +1178,40 @@ async function openInlineEditorFromPayload(payload) {
   activeFieldType = fieldType;
   activeFieldScope = fieldScope;
   activeFieldSection = fieldSection;
+  activeFieldSubsection = fieldSubsection || "";
   activeFieldId = buildFieldId({
     pageId,
     scope: fieldScope,
     section: fieldSection,
     name: fieldName,
   });
+  activeScopeKey = buildScopeKey({
+    scope: fieldScope,
+    section: fieldSection,
+    subsection: fieldSubsection || "",
+    name: fieldName,
+  });
+  scopeMetaByKey.set(activeScopeKey, {
+    fieldId: activeFieldId,
+    pageId,
+    scope: fieldScope,
+    section: fieldSection,
+    subsection: fieldSubsection || "",
+    name: fieldName,
+  });
   fieldElements.set(activeFieldId, el);
+
+  const scope = createScope({
+    kind: fieldScope,
+    pageId,
+    section: fieldSection,
+    subsection: fieldSubsection || "",
+    name: fieldName,
+    fieldType,
+  });
+  const view = createView({ kind: "rich" });
+  const hostContext = createHost({ kind: "inline" });
+  activeSession = resolveSession({ scope, view, host: hostContext });
 
   if (!originalHtml.has(el)) {
     originalHtml.set(el, el.innerHTML);
@@ -1155,7 +1227,7 @@ async function openInlineEditorFromPayload(payload) {
   activeEditor = createEditorInstance(host, fieldType, fieldName);
 
   suppressUpdates = true;
-  const draftJson = draftByField.get(activeFieldId);
+  const draftJson = activeScopeKey ? draftByField.get(activeScopeKey) : null;
   if (draftJson) {
     activeEditor.commands.setContent(draftJson, false);
     dirty = true;
@@ -1165,7 +1237,9 @@ async function openInlineEditorFromPayload(payload) {
     activeEditor.commands.setContent(html, false);
     dirty = false;
     clearDirty(activeFieldId);
-    draftMarkdownByField.delete(activeFieldId);
+    if (activeScopeKey) {
+      draftMarkdownByField.delete(activeScopeKey);
+    }
     // Store original markdown for losslessness validation
     originalMarkdownByField.set(activeFieldId, markdownContent || "");
   }
@@ -1183,8 +1257,6 @@ async function openInlineEditorFromPayload(payload) {
 
   createInlineToolbar();
 
-  window.mfeInlineEditorActive = true;
-
   const editor = activeEditor;
   setTimeout(() => editor?.view?.focus(), 0);
 }
@@ -1200,6 +1272,7 @@ async function openInlineEditor(el) {
     fieldType: el.getAttribute("data-field-type") || "tag",
     fieldScope: getMetaAttr(el, "scope") || "field",
     fieldSection: getMetaAttr(el, "section") || "",
+    fieldSubsection: getMetaAttr(el, "subsection") || "",
     pageId: el.getAttribute("data-page") || "0",
   };
   return openInlineEditorFromPayload(payload);
@@ -1220,12 +1293,11 @@ function closeInlineEditor({
   }
 
   isClosingInlineEditor = true;
-  window.mfeInlineEditorActive = false;
 
   const target = activeTarget;
-  const fieldId = activeFieldId;
+  const scopeKey = activeScopeKey;
   const editorForDraft = activeEditor;
-  const hasDraft = fieldId ? draftByField.has(fieldId) : false;
+  const hasDraft = scopeKey ? draftByField.has(scopeKey) : false;
 
   const cleanup = () => {
     if (activeEditor) {
@@ -1237,7 +1309,10 @@ function closeInlineEditor({
     activeFieldType = null;
     activeFieldScope = "field";
     activeFieldSection = "";
+    activeFieldSubsection = "";
     activeFieldId = null;
+    activeScopeKey = "";
+    activeSession = null;
     dirty = false;
     isClosingInlineEditor = false;
 
@@ -1263,21 +1338,22 @@ function closeInlineEditor({
   if (promptOnClose && !confirmDiscardChanges()) {
     // User canceled, restore state
     isClosingInlineEditor = false;
-    window.mfeInlineEditorActive = true;
     return Promise.resolve(false);
   }
 
-  if (persistDraft && fieldId && editorForDraft) {
+  if (persistDraft && scopeKey && editorForDraft) {
     const markdown = decodeHtmlEntitiesInFences(
       getMarkdownFromEditor(editorForDraft),
     );
-    draftMarkdownByField.set(fieldId, markdown);
+    draftMarkdownByField.set(scopeKey, markdown);
   }
 
   if (!saveOnClose && promptOnClose) {
     draftByField.forEach((_, key) => {
-      clearDirty(key);
-      const el = fieldElements.get(key);
+      const meta = scopeMetaByKey.get(key);
+      if (!meta?.fieldId) return;
+      clearDirty(meta.fieldId);
+      const el = fieldElements.get(meta.fieldId);
       if (el) {
         const finalHtml = originalHtml.get(el) || "";
         el.innerHTML = finalHtml;
@@ -1305,19 +1381,26 @@ function closeInlineEditor({
 }
 
 function initInlineEditor() {
-  document.body.classList.add("mfe-view-inline");
+  setInlineShellOpen(true);
+  window.MarkdownFrontEditorInline = {
+    isOpen() {
+      return Boolean(activeEditor && activeTarget);
+    },
+    close(options = {}) {
+      return closeInlineEditor(options);
+    },
+  };
   const cfg = window.MarkdownFrontEditorConfig || {};
   if (cfg.debugShowSections) {
-    document.body.classList.add("mfe-debug-sections");
     debugLabels = true;
-    document.body.classList.add("mfe-debug-labels");
+    setInlineDebugShell({ showSections: true, showLabels: true });
   }
   if (cfg.debugShowLabels) {
-    document.body.classList.add("mfe-debug-labels");
+    setInlineDebugShell({ showLabels: true });
     debugLabels = true;
   }
   const labelStyle = cfg.labelStyle || "outside";
-  document.body.setAttribute("data-mfe-label-style", labelStyle);
+  setInlineLabelStyle(labelStyle);
 
   const editables = Array.from(document.querySelectorAll(".fe-editable"));
   editables.forEach((el) => {
@@ -1332,7 +1415,7 @@ function initInlineEditor() {
 
   if (!dblclickHandler) {
     dblclickHandler = (e) => {
-      if (document.body.classList.contains("mfe-view-fullscreen")) {
+      if (isFullscreenOpen()) {
         return;
       }
       clearPendingLinkNavigation();
@@ -1361,7 +1444,7 @@ function initInlineEditor() {
       }
 
       if (action.action === "fullscreen") {
-        openFullscreenEditorForElement(action.target);
+        openFullscreenForTarget(action.target);
         return;
       }
 

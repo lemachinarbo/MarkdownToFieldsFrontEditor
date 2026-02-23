@@ -14,7 +14,6 @@ It is NOT a standalone module. It only works **together** with MarkdownToFields.
 - Changes save to markdown and preview live on the page
 
  
-
 https://github.com/user-attachments/assets/fa348df1-37ef-468d-ad05-027dccdef357
 
 
@@ -36,13 +35,53 @@ Compare and update content in different languages (uses ProcessWire languages).
 
 Click breadcrumbs to edit parent sections, subsections oor container fields.
 
-### In Markdown we trust
-
-The editor respects your markdown text and formatting. For example, if you markdown has a `<br>` we never transform it into a new line, we keep it as is. 
 
 ### Image picker
 
 Double click images to open the image picker and select a new one from your MarkdownToFields image folder. The markdown will be updated with the new image path.
+
+## How MFE Works
+
+The editor is built around a simple idea: everything comes from one Markdown document, and it treats that source with care. 
+Your Markdown content and format must stay exactly as you wrote it.
+
+This editor works in 4 layers:
+
+### Document
+
+The Markdown file is the original content.
+What you see in the editor or on the page is always a representation of that same document.
+
+### Scope
+
+Scope is just *which part* of the document you’re editing. The scope is provided by MarkdownToFields, and it can be:
+
+* whole document
+* a section
+* a subsection
+* a field
+
+Changing scope doesn’t change content. It only changes what portion the user is focused on.
+
+### Views
+
+Views control **how content is shown**, not what it is:
+
+* **Raw** → Markdown text
+* **Rich** → visual editor
+* **Outline** → shows boundaries and labels
+* **Map** → shows structure as a tree
+
+Switching views never modifies the content.
+
+### Context
+
+Context is where users edit:
+
+* **Inline** WYSIWYG editor on top of your frontend (LIMITED for now)
+* **Fullscreen** An editor window
+
+Context only changes where you edit, not how editing works.
 
 ## Install
 
@@ -183,10 +222,12 @@ Extra copies should use `data-mfe-source` so they mirror the same saved content.
 In the module config you can define which buttons to show in the toolbar when editing. You can choose from a variety of options, including:
 
 - **Toolbar Buttons**: comma list like:
-  `bold,italic,strike,paragraph,|,h1,h2,h3,|,ul,ol,blockquote,|,link,unlink,|,code,codeblock,clear,|,split`
+  `bold,italic,strike,paragraph,|,h1,h2,h3,|,ul,ol,blockquote,|,link,unlink,|,code,codeblock,clear,|,split,document,outline`
 
 Notes:
 - `|` adds a separator.
+- `document` opens full document view and enables outline mode.
+- `outline` toggles outline boundaries/labels for the current editor scope.
 - `save` is always shown at the end.
 
 

@@ -26,7 +26,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
      */
     public static function getDefaultData() {
         return [
-            'toolbarButtons' => 'bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split,markers',
+            'toolbarButtons' => 'bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split,document,outline',
             'allowedImageExtensions' => 'jpg,jpeg,png,gif,webp,svg',
             'strictSectionReplace' => true,
             'debug' => false,
@@ -60,8 +60,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $f = wire('modules')->get('InputfieldText');
         $f->name = 'toolbarButtons';
         $f->label = 'Toolbar Buttons';
-        $f->description = 'Comma-separated list of toolbar buttons to show. Use "|" as a separator. Available: bold, italic, strike, code, codeblock, paragraph, h1-h6, ul, ol, blockquote, link, unlink, image, clear, split, markers. Save is always shown at the end.';
-        $f->notes = 'Defaults: bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split,markers';
+        $f->description = 'Comma-separated list of toolbar buttons to show. Use "|" as a separator. Available: bold, italic, strike, code, codeblock, paragraph, h1-h6, ul, ol, blockquote, link, unlink, image, clear, split, document, outline. Save is always shown at the end.';
+        $f->notes = 'Defaults: bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split,document,outline';
         $f->value = !empty($data['toolbarButtons']) ? $data['toolbarButtons'] : $defaults['toolbarButtons'];
         $f->columnWidth = 100;
         $inputfields->add($f);
@@ -255,22 +255,43 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $languages = $this->wire()->languages;
         $currentLangName = (string)$currentLangCode;
         if ($languages) {
+            $currentUserLanguage = ($user && isset($user->language) && $user->language)
+                ? $user->language
+                : null;
+            $defaultLanguage = $languages->getDefault();
+            if ($currentLangName === '' && $currentUserLanguage && isset($currentUserLanguage->id)) {
+                $currentLangName = $this->resolveLanguageStorageCode($currentUserLanguage);
+            } elseif ($currentLangName === '' && $defaultLanguage && isset($defaultLanguage->id)) {
+                $currentLangName = $this->resolveLanguageStorageCode($defaultLanguage);
+            }
             foreach ($languages as $lang) {
+                $storageCode = $this->resolveLanguageStorageCode($lang);
                 $langList[] = [
-                    'name' => $lang->name,
+                    'name' => $storageCode,
                     'title' => (string)($lang->title ?: $lang->name),
                     'isDefault' => (bool)$lang->isDefault(),
+                    'isCurrent' => false,
                 ];
             }
-            $resolvedCurrent = $this->resolveLanguagePageByRequestCode($page, $currentLangCode);
-            if ($resolvedCurrent) {
-                $currentLangName = (string)$resolvedCurrent->name;
+            $langNames = array_map(static fn($item) => (string)($item['name'] ?? ''), $langList);
+            if (!in_array($currentLangName, $langNames, true)) {
+                if ($defaultLanguage && isset($defaultLanguage->id)) {
+                    $currentLangName = $this->resolveLanguageStorageCode($defaultLanguage);
+                }
+                if (!in_array($currentLangName, $langNames, true)) {
+                    $currentLangName = (string)($langList[0]['name'] ?? 'default');
+                }
             }
+            foreach ($langList as &$item) {
+                $item['isCurrent'] = ((string)$item['name'] === $currentLangName);
+            }
+            unset($item);
         } else {
             $langList[] = [
                 'name' => 'default',
                 'title' => 'Default',
                 'isDefault' => true,
+                'isCurrent' => true,
             ];
         }
         $modulePath = $config->paths($this->className());
@@ -645,7 +666,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
             $results = [];
             foreach ($langItems as $lang) {
-                $langCode = $lang ? $lang->name : 'default';
+                $langCode = $lang ? $this->resolveLanguageStorageCode($lang) : 'default';
                 try {
                     $content = $page->loadContent(null, $lang ? $lang->name : null);
                     $found = $this->findScopedMarkdown($content, $mdScope, $mdName, $mdSection ?? '');
@@ -1077,8 +1098,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
             $langCode = $input->post->text('lang');
             if ($langCode !== '') {
-                $languages = $this->wire()->languages;
-                if ($languages && !$languages->get($langCode)) {
+                $resolvedLang = $this->resolveLanguagePageByRequestCode(null, $langCode);
+                if (!$resolvedLang) {
                     $this->sendJsonError('Invalid language', 400);
                 }
             }
@@ -1274,8 +1295,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         $langCode = $input->post->text('lang');
         if ($langCode !== '') {
-            $languages = $this->wire()->languages;
-            if ($languages && !$languages->get($langCode)) {
+            $resolvedLang = $this->resolveLanguagePageByRequestCode(null, $langCode);
+            if (!$resolvedLang) {
                 $this->sendJsonError('Invalid language', 400);
             }
         }
@@ -2202,12 +2223,27 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
     protected function resolveRequestLanguageCode(\ProcessWire\Page $page, string $langCode): string {
         if ($langCode !== '') {
+            $resolvedLang = $this->resolveLanguagePageByRequestCode($page, $langCode);
+            if ($resolvedLang) {
+                return $this->resolveLanguageStorageCode($resolvedLang);
+            }
             return $langCode;
         }
         return (string)\ProcessWire\MarkdownLanguageResolver::getLanguageCode($page);
     }
 
-    protected function resolveLanguagePageByRequestCode(\ProcessWire\Page $page, string $langCode): ?\ProcessWire\Language {
+    protected function resolveLanguageStorageCode(\ProcessWire\Language $lang): string {
+        $code = '';
+        if (method_exists($lang, 'get')) {
+            $code = trim((string)$lang->get('code'));
+        }
+        if ($code !== '') {
+            return $code;
+        }
+        return (string)$lang->name;
+    }
+
+    protected function resolveLanguagePageByRequestCode(?\ProcessWire\Page $page, string $langCode): ?\ProcessWire\Language {
         if ($langCode === '') {
             return null;
         }
@@ -2220,6 +2256,12 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $direct = $languages->get($langCode);
         if ($direct && (int)$direct->id > 0) {
             return $direct;
+        }
+
+        foreach ($languages as $lang) {
+            if ($this->resolveLanguageStorageCode($lang) === $langCode) {
+                return $lang;
+            }
         }
         return null;
     }

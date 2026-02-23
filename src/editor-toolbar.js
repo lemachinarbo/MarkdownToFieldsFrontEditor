@@ -7,9 +7,10 @@ export function createToolbarButtons({
   getEditor,
   onSave,
   onToggleSplit,
-  onToggleMarkers,
-  onToggleDocumentMode,
-  isDocumentMode,
+  onOpenDocumentView,
+  isDocumentView,
+  onToggleOutlineView,
+  isOutlineView,
 }) {
   const getActiveEditor = () =>
     typeof getEditor === "function" ? getEditor() : null;
@@ -263,35 +264,41 @@ export function createToolbarButtons({
     },
     {
       key: "document",
-      label: "DOC",
-      action: () => {
-        if (typeof onToggleDocumentMode === "function") {
-          onToggleDocumentMode();
-        }
-      },
-      isActive: () =>
-        typeof isDocumentMode === "function"
-          ? Boolean(isDocumentMode())
-          : false,
-      title: "Toggle Document mode",
-    },
-    {
-      key: "markers",
       label: `
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-source-code">
           <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
-          <path d="M7.149 7.144a.498 .498 0 0 0 .351 .856a.498 .498 0 0 0 .341 -.135" />
-          <path d="M3.883 3.875a2.99 2.99 0 0 0 -.883 2.125v5.172a2 2 0 0 0 .586 1.414l7.71 7.71a2.41 2.41 0 0 0 3.408 0l2.796 -2.796m2.005 -2.005l.79 -.79a2.41 2.41 0 0 0 0 -3.41l-7.71 -7.71a2 2 0 0 0 -1.412 -.585h-4.173" />
-          <path d="M3 3l18 18" />
+          <path d="M14.5 4h2.5a3 3 0 0 1 3 3v10a3 3 0 0 1 -3 3h-10a3 3 0 0 1 -3 -3v-5" />
+          <path d="M6 5l-2 2l2 2" />
+          <path d="M10 9l2 -2l-2 -2" />
         </svg>
       `,
       action: () => {
-        if (typeof onToggleMarkers === "function") {
-          onToggleMarkers();
+        if (typeof onOpenDocumentView === "function") {
+          onOpenDocumentView();
         }
       },
-      isActive: () => document.body.classList.contains("mfe-hide-markers"),
-      title: "Toggle markers",
+      isActive: () =>
+        typeof isDocumentView === "function"
+          ? Boolean(isDocumentView())
+          : false,
+      title: "Open document in outline view",
+    },
+    {
+      key: "outline",
+      label: `
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-label">
+          <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+          <path d="M16.52 7h-10.52a2 2 0 0 0 -2 2v6a2 2 0 0 0 2 2h10.52a1 1 0 0 0 .78 -.375l3.7 -4.625l-3.7 -4.625a1 1 0 0 0 -.78 -.375" />
+        </svg>
+      `,
+      action: () => {
+        if (typeof onToggleOutlineView === "function") {
+          onToggleOutlineView();
+        }
+      },
+      isActive: () =>
+        typeof isOutlineView === "function" ? Boolean(isOutlineView()) : false,
+      title: "Toggle outline view",
     },
     {
       key: "save",

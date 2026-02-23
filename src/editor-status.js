@@ -1,10 +1,14 @@
+import {
+  showWindowToast,
+  hideWindowToast,
+  destroyWindowToast,
+} from "./window-manager.js";
+
 function createManager() {
   let statusEl = null;
   let dirtyFields = new Set();
   let lastExplicit = null;
   let hideTimer = null;
-  let toastEl = null;
-  let toastTimer = null;
 
   function clearStatusTimer() {
     if (hideTimer) {
@@ -13,43 +17,14 @@ function createManager() {
     }
   }
 
-  function clearToastTimer() {
-    if (toastTimer) {
-      window.clearTimeout(toastTimer);
-      toastTimer = null;
-    }
-  }
-
   function hideToast() {
-    clearToastTimer();
-    if (toastEl) {
-      toastEl.classList.remove("mfe-toast-visible");
-    }
+    hideWindowToast();
   }
 
   function showToast(message, kind = "error", { persistent = false } = {}) {
     const text = String(message || "").trim();
     if (!text) return;
-    if (!toastEl) {
-      toastEl = document.createElement("div");
-      toastEl.className = "mfe-toast";
-      document.body.appendChild(toastEl);
-    }
-    toastEl.classList.remove("mfe-toast-error", "mfe-toast-visible");
-    if (kind === "error") {
-      toastEl.classList.add("mfe-toast-error");
-    }
-    toastEl.textContent = text;
-    toastEl.classList.add("mfe-toast-visible");
-    clearToastTimer();
-    if (!persistent) {
-      toastTimer = window.setTimeout(() => {
-        if (toastEl) {
-          toastEl.classList.remove("mfe-toast-visible");
-        }
-        toastTimer = null;
-      }, 3200);
-    }
+    showWindowToast(text, kind, { persistent });
   }
 
   function setClasses(type) {
@@ -161,10 +136,7 @@ function createManager() {
       );
       statusEl.textContent = "";
     }
-    if (toastEl) {
-      toastEl.remove();
-      toastEl = null;
-    }
+    destroyWindowToast();
     statusEl = null;
   }
 
