@@ -2464,7 +2464,8 @@ function getDocumentSourceMarkdown() {
   ) {
     return documentDraftMarkdown;
   }
-  return getDocumentConfigMarkdown();
+  const base = getDocumentConfigMarkdown();
+  return composeDocumentMarkdownFromScopedDrafts(base);
 }
 
 function refreshEditorDecorations(editor) {
@@ -2551,11 +2552,8 @@ function decodeMaybeB64(value) {
   }
 }
 
-function getDraftMarkdownForScopedKey(scopeKey) {
+function getStoredMarkdownForScopedKey(scopeKey) {
   if (!scopeKey) return "";
-  const draft = draftMarkdownByScopedKey.get(scopeKey);
-  if (typeof draft === "string") return draft;
-
   if (scopeKey.startsWith("section:")) {
     const sectionName = scopeKey.slice(8);
     return decodeMaybeB64(getSectionEntry(sectionName)?.markdownB64 || "");
@@ -2564,6 +2562,22 @@ function getDraftMarkdownForScopedKey(scopeKey) {
     const parts = scopeKey.split(":");
     const section = parts[1] || "";
     const subsection = parts[2] || "";
+    if (!section || !subsection) return "";
+    if (parts.length >= 4) {
+      const name = parts[3] || "";
+      const fields = Array.isArray(
+        window.MarkdownFrontEditorConfig?.fieldsIndex,
+      )
+        ? window.MarkdownFrontEditorConfig.fieldsIndex
+        : [];
+      const match = fields.find(
+        (f) =>
+          (f?.section || "") === section &&
+          (f?.subsection || "") === subsection &&
+          (f?.name || "") === name,
+      );
+      return decodeMaybeB64(match?.markdownB64 || "");
+    }
     return decodeMaybeB64(
       getSubsectionEntry(section, subsection)?.markdownB64 || "",
     );
@@ -2581,6 +2595,84 @@ function getDraftMarkdownForScopedKey(scopeKey) {
     return decodeMaybeB64(match?.markdownB64 || "");
   }
   return "";
+}
+
+function getDraftMarkdownForScopedKey(scopeKey) {
+  if (!scopeKey) return "";
+  const draft = draftMarkdownByScopedKey.get(scopeKey);
+  if (typeof draft === "string") return draft;
+
+  return getStoredMarkdownForScopedKey(scopeKey);
+}
+
+function getParentScopeKey(scopeKey) {
+  const key = String(scopeKey || "").trim();
+  if (!key) return "";
+  if (key.startsWith("section:")) return "";
+  if (key.startsWith("subsection:")) {
+    const parts = key.split(":");
+    if (parts.length === 3) {
+      return `section:${parts[1] || ""}`;
+    }
+    if (parts.length >= 4) {
+      return `subsection:${parts[1] || ""}:${parts[2] || ""}`;
+    }
+  }
+  if (key.startsWith("field:")) {
+    const parts = key.split(":");
+    if (parts.length >= 3) {
+      return `section:${parts[1] || ""}`;
+    }
+    return "";
+  }
+  return "";
+}
+
+function collectDocumentDraftCandidates() {
+  const candidates = new Map(draftMarkdownByScopedKey);
+  const activeScopedKey = getActiveScopedHtmlKey();
+  if (
+    primaryEditor &&
+    activeScopedKey &&
+    !isDocumentScopeActive() &&
+    primaryDirty
+  ) {
+    candidates.set(activeScopedKey, getMarkdownFromEditor(primaryEditor));
+  }
+  return candidates;
+}
+
+function composeDocumentMarkdownFromScopedDrafts(baseMarkdown) {
+  let composed = typeof baseMarkdown === "string" ? baseMarkdown : "";
+  const candidates = collectDocumentDraftCandidates();
+  if (!candidates.size) return composed;
+
+  const keys = Array.from(candidates.keys()).filter(Boolean);
+  const filteredKeys = keys.filter((key) => {
+    let parent = getParentScopeKey(key);
+    while (parent) {
+      if (candidates.has(parent)) return false;
+      parent = getParentScopeKey(parent);
+    }
+    return true;
+  });
+
+  filteredKeys.forEach((scopeKey) => {
+    const nextMarkdown = candidates.get(scopeKey);
+    if (typeof nextMarkdown !== "string") return;
+    const currentMarkdown = getStoredMarkdownForScopedKey(scopeKey);
+    if (!currentMarkdown || currentMarkdown === nextMarkdown) return;
+    const updated = replaceUniqueBlockInText(
+      composed,
+      currentMarkdown,
+      nextMarkdown,
+    );
+    if (updated !== null) {
+      composed = updated;
+    }
+  });
+
+  return composed;
 }
 
 function replaceUniqueBlockInText(documentText, search, replacement) {
