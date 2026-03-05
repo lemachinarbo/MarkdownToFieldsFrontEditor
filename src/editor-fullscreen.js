@@ -745,12 +745,9 @@ function normalizeCanonicalMarkdownForIngress(markdown, options = {}) {
   if (!enforceDocumentBodyLeadingBreakPolicy) {
     return normalized;
   }
-  const split = splitLeadingFrontmatter(normalized);
-  const normalizedBody = String(split.body || "").replace(/^(?:\n)+/, "");
-  if (!split.frontmatter) {
-    return normalizedBody;
-  }
-  return `${split.frontmatter}${normalizedBody}`;
+  // Preserve leading body spacing exactly as authored. Document scope uses one
+  // canonical markdown source of truth, including intentional blank lines.
+  return normalized;
 }
 
 function emitStageMarkdownDiagnostic(stage, markdown, extra = {}) {
@@ -2451,6 +2448,41 @@ function performCanonicalSeedNormalizationHandshake(stateId, editor) {
   if (!key || !editor) return null;
   const session = getCanonicalMutationSessionForState(key);
   if (!session?.projection || !session?.scopeSlice) return null;
+  const scopeKind = normalizeScopeKind(session?.scopeMeta?.scopeKind || "field");
+  if (scopeKind === "document") {
+    const nextSession = {
+      ...session,
+      baselineFrozen: true,
+      seedMappingUpdateCount: Number(
+        session?.runtimeProjection?.projectionMeta?.mappingUpdateCount || 0,
+      ),
+    };
+    canonicalMutationSessionByStateId.set(key, nextSession);
+    emitRuntimeShapeLog("MFE_CANONICAL_SESSION_NORMALIZATION_HANDSHAKE", {
+      stateId: key,
+      changed: false,
+      skipped: true,
+      reason: "document-scope-preserve-formatting",
+      baselineDisplayHashBefore: hashStateIdentity(
+        String(session?.projection?.displayText || ""),
+      ),
+      baselineDisplayHashAfter: hashStateIdentity(
+        String(session?.projection?.displayText || ""),
+      ),
+      firstDiffStart: -1,
+      baselineWindowEscaped: "",
+      serializedWindowEscaped: "",
+      boundaryCountAfter: Number(
+        session?.runtimeProjection?.editableBoundaries?.length ||
+          session?.projection?.editableBoundaries?.length ||
+          0,
+      ),
+      docChangedTxCountAtHandshake: Number(
+        session?.runtimeProjection?.projectionMeta?.mappingUpdateCount || 0,
+      ),
+    });
+    return nextSession;
+  }
   const serializedMarkdown = String(getMarkdownFromEditor(editor) || "");
   const serializedCanonicalMeta = canonicalizeForCompareAndUnproject(
     serializedMarkdown,
@@ -5893,9 +5925,19 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
         canonicalPostSeedSerialized === finalizedBaselineDisplay,
     });
     if (canonicalPostSeedSerialized !== finalizedBaselineDisplay) {
-      throw new Error(
-        "[mfe] invariant violation: canonical session seed normalization mismatch persists after baseline adoption",
+      const finalizedScopeKind = normalizeScopeKind(
+        finalizedSession?.scopeMeta?.scopeKind || activeFieldScope || "field",
       );
+      if (finalizedScopeKind !== "document") {
+        throw new Error(
+          "[mfe] invariant violation: canonical session seed normalization mismatch persists after baseline adoption",
+        );
+      }
+      emitRuntimeShapeLog("MFE_CANONICAL_SESSION_POST_SEED_MISMATCH_ACCEPTED", {
+        stateId: String(activeDocumentState?.id || ""),
+        scopeKind: finalizedScopeKind,
+        reason: "document-scope-preserve-formatting",
+      });
     }
   }
   if (shouldWarnForExtraContent(fieldType, activeFieldName)) {

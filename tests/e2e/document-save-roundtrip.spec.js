@@ -211,7 +211,13 @@ async function openFullscreenEditor(page) {
   await page.goto("/");
 
   const saveButton = getSaveButton(page);
-  if (await saveButton.first().isVisible({ timeout: 1500 }).catch(() => false)) {
+  const editorWindow = page.locator('[data-mfe-window="true"]').last();
+  const isWindowOpen = async () =>
+    editorWindow.isVisible({ timeout: 800 }).catch(() => false);
+  if (
+    (await saveButton.first().isVisible({ timeout: 1500 }).catch(() => false)) &&
+    (await isWindowOpen())
+  ) {
     return true;
   }
 
@@ -268,7 +274,9 @@ async function openFullscreenEditor(page) {
   });
 
   if (openedByApi) {
-    const opened = await saveButton.first().isVisible({ timeout: 5000 }).catch(() => false);
+    const opened =
+      (await saveButton.first().isVisible({ timeout: 5000 }).catch(() => false)) &&
+      (await isWindowOpen());
     if (opened) {
       return true;
     }
@@ -287,7 +295,9 @@ async function openFullscreenEditor(page) {
     const visible = await target.isVisible({ timeout: 2500 }).catch(() => false);
     if (!visible) continue;
     await target.dblclick({ force: true });
-    const opened = await saveButton.first().isVisible({ timeout: 4000 }).catch(() => false);
+    const opened =
+      (await saveButton.first().isVisible({ timeout: 4000 }).catch(() => false)) &&
+      (await isWindowOpen());
     if (opened) {
       return true;
     }
@@ -329,7 +339,9 @@ async function openFullscreenEditor(page) {
   }, canonicalMarkdown);
 
   if (openedByVirtualTarget) {
-    const opened = await saveButton.first().isVisible({ timeout: 5000 }).catch(() => false);
+    const opened =
+      (await saveButton.first().isVisible({ timeout: 5000 }).catch(() => false)) &&
+      (await isWindowOpen());
     if (opened) {
       return true;
     }
@@ -343,18 +355,22 @@ async function openFullscreenEditor(page) {
     );
   });
 
-  return await saveButton.first().isVisible({ timeout: 8000 }).catch(() => false);
+  return Boolean(
+    (await saveButton.first().isVisible({ timeout: 8000 }).catch(() => false)) &&
+      (await isWindowOpen()),
+  );
 }
 
 async function navigateToDocumentScope(page) {
-  const documentLink = page.getByRole("link", { name: "Document" }).first();
+  const windowShell = page.locator('[data-mfe-window="true"]').last();
+  const documentLink = windowShell.getByRole("link", { name: "Document" }).first();
 
   if (await documentLink.isVisible({ timeout: 1500 }).catch(() => false)) {
     await documentLink.click();
     return;
   }
 
-  const sectionLink = page.getByRole("link", { name: /^Section:/ }).first();
+  const sectionLink = windowShell.getByRole("link", { name: /^Section:/ }).first();
   if (await sectionLink.isVisible({ timeout: 3000 }).catch(() => false)) {
     await sectionLink.click();
   }
@@ -933,6 +949,47 @@ test.describe("document save roundtrip", () => {
 
     expect(nameLine).toBe("name: ");
     expect(saved).toMatch(/---\r?\n\r?\n<!-- section:hero -->/);
+  });
+
+  test("document save preserves intentional multi-blankline spacing around markers", async ({
+    page,
+  }) => {
+    await resetHomesFromFixtures();
+
+    const baseline = await readEn();
+    const normalizedBaseline = String(baseline || "").replace(/\r\n/g, "\n");
+    const withIntentionalSpacing = normalizedBaseline
+      .replace(
+        /---\n\n<!-- section:hero -->/,
+        "---\n\n\n<!-- section:hero -->",
+      )
+      .replace(
+        /(tech collide\.)\n\n<!-- section:columns -->/,
+        "$1\n\n\n\n<!-- section:columns -->",
+      );
+    await fs.writeFile(EN_FILE, withIntentionalSpacing, "utf8");
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    await openScopeFromCanonical(page, {
+      scope: "document",
+      name: "document",
+      readyContains: "The Urban",
+    });
+
+    const token = `BLANKLINE_KEEP_${Date.now()}`;
+    await appendTokenAndAssertVisible(page, token);
+    await page.getByRole("button", { name: /Save changes/i }).click();
+
+    await expect
+      .poll(async () => (await readEn()).includes(token), { timeout: 20000 })
+      .toBe(true);
+
+    const saved = String(await readEn() || "").replace(/\r\n/g, "\n");
+    expect(saved).toContain("---\n\n\n<!-- section:hero -->");
+    expect(saved).toContain("tech collide.\n\n\n\n<!-- section:columns -->");
   });
 
   test("document save preserves emphasis delimiter choices", async ({

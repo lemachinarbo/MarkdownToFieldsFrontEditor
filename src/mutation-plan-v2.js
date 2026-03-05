@@ -156,6 +156,17 @@ function countConsecutiveNewlinesBeforeOffset(text, offset) {
   return count;
 }
 
+function countConsecutiveNewlinesAfterOffset(text, offset) {
+  const value = String(text || "");
+  let cursor = Math.max(0, Math.min(value.length, Number(offset || 0)));
+  let count = 0;
+  while (cursor < value.length && value.charAt(cursor) === "\n") {
+    count += 1;
+    cursor += 1;
+  }
+  return count;
+}
+
 function repairProtectedMarkerLeadingNewlines(canonicalEditedSlice, scopeSlice) {
   const baselineRaw = String(
     scopeSlice?.baselineCanonicalSliceRaw || scopeSlice?.canonicalSlice || "",
@@ -197,6 +208,61 @@ function repairProtectedMarkerLeadingNewlines(canonicalEditedSlice, scopeSlice) 
   }
 
   return edited;
+}
+
+function repairDocumentMarkerAdjacentWhitespace(canonicalEditedSlice, scopeSlice) {
+  const baselineRaw = String(
+    scopeSlice?.baselineCanonicalSliceRaw || scopeSlice?.canonicalSlice || "",
+  );
+  const spans = Array.isArray(scopeSlice?.protectedSpans)
+    ? scopeSlice.protectedSpans
+        .slice()
+        .sort((left, right) => Number(left.startCu || 0) - Number(right.startCu || 0))
+    : [];
+  if (!spans.length) return String(canonicalEditedSlice || "");
+
+  let edited = String(canonicalEditedSlice || "");
+  let searchFrom = 0;
+  for (const span of spans) {
+    const startCu = Math.max(0, Number(span?.startCu || 0));
+    const endCu = Math.max(startCu, Number(span?.endCu || startCu));
+    const markerText = baselineRaw.slice(startCu, endCu);
+    if (!markerText) continue;
+
+    const markerIndex = edited.indexOf(markerText, searchFrom);
+    if (markerIndex < 0) return null;
+    let nextMarkerIndex = markerIndex;
+
+    const expectedBefore = countConsecutiveNewlinesBeforeOffset(baselineRaw, startCu);
+    const currentBefore = countConsecutiveNewlinesBeforeOffset(edited, markerIndex);
+    if (currentBefore !== expectedBefore) {
+      const beforeStart = Math.max(0, markerIndex - currentBefore);
+      edited = `${edited.slice(0, beforeStart)}${"\n".repeat(expectedBefore)}${edited.slice(markerIndex)}`;
+      nextMarkerIndex = beforeStart + expectedBefore;
+    }
+
+    const markerEnd = nextMarkerIndex + markerText.length;
+    const expectedAfter = countConsecutiveNewlinesAfterOffset(baselineRaw, endCu);
+    const currentAfter = countConsecutiveNewlinesAfterOffset(edited, markerEnd);
+    if (currentAfter !== expectedAfter) {
+      edited = `${edited.slice(0, markerEnd)}${"\n".repeat(expectedAfter)}${edited.slice(markerEnd + currentAfter)}`;
+    }
+
+    searchFrom = nextMarkerIndex + markerText.length;
+  }
+
+  return edited;
+}
+
+function finalizeCandidateCanonicalSlice(canonicalEditedSlice, scopeSlice) {
+  let finalized = String(canonicalEditedSlice || "");
+  if (String(scopeSlice?.scopeKind || "") === "document") {
+    const repaired = repairDocumentMarkerAdjacentWhitespace(finalized, scopeSlice);
+    if (typeof repaired === "string") {
+      finalized = repaired;
+    }
+  }
+  return finalized;
 }
 
 function selectSinglePartEditedTexts(baselineParts, editedDisplay) {
@@ -731,11 +797,14 @@ function applyProjectedScopeEdit({
     editedDisplay,
   );
   if (singlePartEditedTexts) {
-    const canonicalEditedSlice = rebuildCanonicalSliceFromEditableTexts({
+    const canonicalEditedSlice = finalizeCandidateCanonicalSlice(
+      rebuildCanonicalSliceFromEditableTexts({
+        scopeSlice,
+        segmentMap: baselineProjection.segmentMap,
+        editableTexts: singlePartEditedTexts,
+      }),
       scopeSlice,
-      segmentMap: baselineProjection.segmentMap,
-      editableTexts: singlePartEditedTexts,
-    });
+    );
     const protectedValidation = validateProtectedSpansUnchanged(
       canonicalEditedSlice,
       scopeSlice,
@@ -755,11 +824,14 @@ function applyProjectedScopeEdit({
     editedDisplay,
   });
   if (Array.isArray(lcsProjectedEditableTexts)) {
-    const canonicalEditedSlice = rebuildCanonicalSliceFromEditableTexts({
+    const canonicalEditedSlice = finalizeCandidateCanonicalSlice(
+      rebuildCanonicalSliceFromEditableTexts({
+        scopeSlice,
+        segmentMap: baselineProjection.segmentMap,
+        editableTexts: lcsProjectedEditableTexts,
+      }),
       scopeSlice,
-      segmentMap: baselineProjection.segmentMap,
-      editableTexts: lcsProjectedEditableTexts,
-    });
+    );
     const protectedValidation = validateProtectedSpansUnchanged(
       canonicalEditedSlice,
       scopeSlice,
@@ -836,7 +908,20 @@ function applyProjectedScopeEdit({
         );
         continue;
       }
-      const canonicalEditedSlice = String(unprojected.canonicalEditedSlice || "");
+      const canonicalEditedSlice = finalizeCandidateCanonicalSlice(
+        String(unprojected.canonicalEditedSlice || ""),
+        scopeSlice,
+      );
+      const finalizedValidation = validateProtectedSpansUnchanged(
+        canonicalEditedSlice,
+        scopeSlice,
+      );
+      if (!finalizedValidation.ok) {
+        validationErrors.push(
+          `${candidate.source}:${String(finalizedValidation.reason || "invalid")}`,
+        );
+        continue;
+      }
       const canonicalBody = `${beforeBody.slice(0, Number(scopeSlice.sliceStartCu || 0))}${canonicalEditedSlice}${beforeBody.slice(Number(scopeSlice.sliceEndCu || 0))}`;
       return {
         canonicalBody,
@@ -862,7 +947,20 @@ function applyProjectedScopeEdit({
       validationErrors.push(String(searchResult.reason || `${candidate.source}:search-failed`));
       continue;
     }
-    const canonicalEditedSlice = String(searchResult.canonicalEditedSlice || "");
+    const canonicalEditedSlice = finalizeCandidateCanonicalSlice(
+      String(searchResult.canonicalEditedSlice || ""),
+      scopeSlice,
+    );
+    const finalizedValidation = validateProtectedSpansUnchanged(
+      canonicalEditedSlice,
+      scopeSlice,
+    );
+    if (!finalizedValidation.ok) {
+      validationErrors.push(
+        `${candidate.source}:${String(finalizedValidation.reason || "invalid")}`,
+      );
+      continue;
+    }
     const canonicalBody = `${beforeBody.slice(0, Number(scopeSlice.sliceStartCu || 0))}${canonicalEditedSlice}${beforeBody.slice(Number(scopeSlice.sliceEndCu || 0))}`;
     return {
       canonicalBody,
@@ -897,35 +995,8 @@ export function applyScopedEditV2({
   const normalizedEditorContent = normalizeText(editorContent);
 
   if (scopeKind === "document") {
-    const graphAgainstEditor = assertStructuralMarkerGraphEqual(
-      beforeBody,
-      normalizedEditorContent,
-    );
-    if (graphAgainstEditor.ok) {
-      const normalizedDocumentOutput = enforceMarkerBlankLineSeparation(
-        normalizedEditorContent,
-      );
-      if (hasStructuralMarkerBoundaryViolations(normalizedDocumentOutput)) {
-        throw new Error(
-          "[mfe] mutation-plan-v2: document marker boundary violation",
-        );
-      }
-      return {
-        scopeKind,
-        ok: true,
-        canonicalBody: normalizedDocumentOutput,
-        scopedComparableMarkdown: normalizedDocumentOutput,
-        scopedOutboundMarkdown: normalizedDocumentOutput,
-        replacementMarkdown: normalizedDocumentOutput,
-        startOffset: 0,
-        endOffset: normalizedDocumentOutput.length,
-        safety: {
-          hasNextMarker: false,
-          boundaryViolation: false,
-        },
-      };
-    }
-
+    // Always project/unproject against the baseline canonical body so unchanged
+    // structural whitespace around protected marker spans is preserved.
     const projectedEdit = applyProjectedScopeEdit({
       beforeBody,
       scopeMeta,
