@@ -9,10 +9,21 @@
  */
 
 import { createWindowTemplate } from "./window-template.js";
+import { createEventRegistry } from "./event-registry.js";
 
 let windowStack = [];
 let toastEl = null;
 let toastTimer = null;
+let toastPinnedGlobal = false;
+export const TOAST_KINDS = Object.freeze({
+  info: "info",
+  success: "success",
+  alert: "alert",
+});
+const windowManagerEventRegistry = createEventRegistry();
+const windowManagerGlobalEventScope = windowManagerEventRegistry.createScope(
+  "window-manager-global",
+);
 
 function clearToastTimer() {
   if (toastTimer) {
@@ -26,8 +37,13 @@ function getToastHost() {
   return topWindow?.dom || document.body;
 }
 
+function isToastInWindowHost() {
+  if (!toastEl || !(toastEl.parentElement instanceof Element)) return false;
+  return Boolean(toastEl.parentElement.closest('[data-mfe-window="true"]'));
+}
+
 function ensureToastElement() {
-  const host = getToastHost();
+  const host = toastPinnedGlobal ? document.body : getToastHost();
   if (!toastEl) {
     toastEl = document.createElement("div");
     toastEl.className = "mfe-toast";
@@ -43,9 +59,19 @@ function ensureToastElement() {
 
 function reparentToastToActiveHost() {
   if (!toastEl) return;
+  if (toastPinnedGlobal) return;
+  if (!isToastInWindowHost()) return;
   const host = getToastHost();
   if (toastEl.parentNode !== host) {
     host.appendChild(toastEl);
+  }
+}
+
+function pinToastToBody() {
+  if (!toastEl) return;
+  toastPinnedGlobal = true;
+  if (toastEl.parentNode !== document.body) {
+    document.body.appendChild(toastEl);
   }
 }
 
@@ -56,25 +82,46 @@ export function hideWindowToast() {
   }
 }
 
+export function clearGlobalToast() {
+  if (!toastEl) return;
+  if (isToastInWindowHost()) return;
+  hideWindowToast();
+}
+
 export function destroyWindowToast() {
   hideWindowToast();
   if (toastEl) {
     toastEl.remove();
     toastEl = null;
   }
+  toastPinnedGlobal = false;
 }
 
 export function showWindowToast(
   message,
-  kind = "error",
-  { persistent = false, timeout = 3200 } = {},
+  kind = TOAST_KINDS.alert,
+  { persistent = false, timeout = 3000, global = false } = {},
 ) {
   const text = String(message || "").trim();
   if (!text) return;
+  if (global) {
+    toastPinnedGlobal = true;
+  }
   const element = ensureToastElement();
-  element.classList.remove("mfe-toast-error", "mfe-toast-visible");
-  if (kind === "error") {
+  element.classList.remove(
+    "mfe-toast-error",
+    "mfe-toast-alert",
+    "mfe-toast-info",
+    "mfe-toast-success",
+    "mfe-toast-visible",
+  );
+  if (kind === TOAST_KINDS.alert || kind === "error") {
     element.classList.add("mfe-toast-error");
+    element.classList.add("mfe-toast-alert");
+  } else if (kind === TOAST_KINDS.success) {
+    element.classList.add("mfe-toast-success");
+  } else {
+    element.classList.add("mfe-toast-info");
   }
   element.textContent = text;
   element.classList.add("mfe-toast-visible");
@@ -87,22 +134,6 @@ export function showWindowToast(
       toastTimer = null;
     }, timeout);
   }
-}
-
-/**
- * Get current window breadcrumb path based on stack state
- */
-function getBreadcrumbPath() {
-  const paths = [];
-
-  for (let i = 0; i < windowStack.length; i++) {
-    const win = windowStack[i];
-    if (win.breadcrumbLabel) {
-      paths.push(win.breadcrumbLabel);
-    }
-  }
-
-  return paths;
 }
 
 /**
@@ -198,22 +229,22 @@ function updateBreadcrumbs() {
         if (item.name) {
           crumb.setAttribute("data-breadcrumb-name", item.name);
         }
-        crumb.addEventListener("click", (e) => {
+        crumb.onclick = (e) => {
           e.preventDefault();
           e.stopPropagation();
           while (windowStack.length > index + 1) {
             closeTopWindow();
           }
           baseClickHandler(e);
-        });
+        };
       } else if (isWindowLink) {
-        crumb.addEventListener("click", (e) => {
+        crumb.onclick = (e) => {
           e.preventDefault();
           e.stopPropagation();
           while (windowStack.length > item.windowIndex + 1) {
             closeTopWindow();
           }
-        });
+        };
       }
 
       breadcrumbInner.appendChild(crumb);
@@ -324,6 +355,10 @@ export function closeTopWindow() {
 
   const win = windowStack.pop();
 
+  if (win.dom && toastEl && win.dom.contains(toastEl)) {
+    pinToastToBody();
+  }
+
   // Cleanup DOM
   if (win.dom && win.dom.parentNode) {
     win.dom.remove();
@@ -361,6 +396,9 @@ export function closeWindow(winOrId) {
   }
 
   const [win] = windowStack.splice(index, 1);
+  if (win.dom && toastEl && win.dom.contains(toastEl)) {
+    pinToastToBody();
+  }
   if (win.dom && win.dom.parentNode) {
     win.dom.remove();
   }
@@ -386,7 +424,8 @@ export function updateWindowById(id, updates = {}) {
  * Global Keyboard Listener for Escape key.
  * Only triggers for the topmost window when NOT inside an input/textarea.
  */
-document.addEventListener(
+windowManagerGlobalEventScope.register(
+  document,
   "keydown",
   (e) => {
     if (e.key === "Escape") {

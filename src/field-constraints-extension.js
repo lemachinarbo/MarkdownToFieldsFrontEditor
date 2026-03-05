@@ -1,7 +1,7 @@
 import { Extension } from "@tiptap/core";
 import Document from "@tiptap/extension-document";
 
-export const SINGLE_BLOCK_ENTER_MESSAGE =
+const SINGLE_BLOCK_ENTER_MESSAGE =
   "This area supports only one line. Multiple lines aren’t allowed.";
 
 export const SingleBlockDocumentExtension = Document.extend({

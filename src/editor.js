@@ -1,5 +1,5 @@
 // Entry: fullscreen editor view
-import { initFullscreenEditor } from "./editor-fullscreen.js";
+import "./editor-fullscreen.js";
 import { initInlineEditor } from "./editor-inline.js";
 
 initInlineEditor();

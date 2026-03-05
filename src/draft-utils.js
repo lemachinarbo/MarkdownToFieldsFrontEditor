@@ -6,7 +6,7 @@ export function normalizeComparableMarkdown(markdown) {
     .trimEnd();
 }
 
-export function scopedKeyFromFieldId(fieldId) {
+function scopedKeyFromFieldId(fieldId) {
   if (!fieldId || typeof fieldId !== "string") return "";
   const parts = fieldId.split(":");
   if (parts.length < 4) return "";
@@ -35,36 +35,6 @@ export function scopedKeyFromFieldId(fieldId) {
     if (name) return `field:${name}`;
   }
   return "";
-}
-
-export function parseFieldId(fieldId) {
-  if (!fieldId || typeof fieldId !== "string") return null;
-  const parts = fieldId.split(":");
-  if (parts.length < 4) return null;
-
-  const pageId = parts[0] || "0";
-  const scope = parts[1] || "field";
-  const section = parts[2] || "";
-  let subsection = "";
-  let name = "";
-
-  if (scope === "section") {
-    name = parts[3] || parts[2] || "";
-  } else if (scope === "subsection") {
-    name = parts[3] || "";
-  } else if (scope === "field") {
-    if (parts.length >= 5) {
-      subsection = parts[3] || "";
-      name = parts[4] || "";
-    } else {
-      name = parts[3] || "";
-    }
-  } else {
-    name = parts[3] || "";
-  }
-
-  if (!name) return null;
-  return { fieldId, pageId, scope, section, subsection, name };
 }
 
 function changedKeyCoversTarget(changedKey, targetKey) {

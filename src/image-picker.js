@@ -1,6 +1,8 @@
 import { fetchCsrfToken, getSaveUrl } from "./editor-core.js";
 import { getImageBaseUrl } from "./editor-shared-helpers.js";
 import { openWindow, closeTopWindow } from "./window-manager.js";
+import { request, assertOk, getDataOrThrow } from "./network.js";
+import { createEventRegistry } from "./event-registry.js";
 
 /**
  * Image Picker Overlay - Revamped UI
@@ -11,6 +13,8 @@ import { openWindow, closeTopWindow } from "./window-manager.js";
  */
 
 export function createImagePicker({ onSelect, onClose, initialData = null }) {
+  const pickerEventRegistry = createEventRegistry();
+  const pickerEventScope = pickerEventRegistry.createScope("image-picker");
   let selectedImage = initialData
     ? {
         path: initialData.originalFilename || initialData.path || "",
@@ -117,7 +121,12 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
   const win = openWindow({
     id: "mfe-image-picker",
     content: container,
-    onClose: onClose,
+    onClose: () => {
+      pickerEventScope.disposeAll();
+      if (typeof onClose === "function") {
+        onClose();
+      }
+    },
     showMenuBar: true,
     menuBarDisabled: true,
     breadcrumbLabel: "Image Picker",
@@ -137,7 +146,7 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
 
   // Remote URL Change
   const remoteInput = remoteSection.querySelector("#mfe-picker-remote-input");
-  remoteInput.addEventListener("input", (e) => {
+  remoteInput.oninput = (e) => {
     const url = e.target.value.trim();
     if (url) {
       selectedImage = { filename: "", url: url };
@@ -153,10 +162,10 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
       updatePreview(null);
       addBtn.disabled = true;
     }
-  });
+  };
 
   // Insert Action
-  addBtn.addEventListener("click", async () => {
+  addBtn.onclick = async () => {
     const altInput = sidebar.querySelector("#mfe-picker-alt-input");
     if (!selectedImage || !onSelect) return;
 
@@ -178,12 +187,13 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
           formData.append(csrf.name, csrf.value);
         }
 
-        const response = await fetch(saveUrl, {
+        const response = await request(saveUrl, {
           method: "POST",
+          headers: undefined,
           body: formData,
-          credentials: "same-origin",
+          parse: "json",
         });
-        const result = await response.json();
+        const result = response.data;
 
         if (result.status === 1 && result.url) {
           pwUrl = result.url;
@@ -209,7 +219,7 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
     });
 
     closeTopWindow();
-  });
+  };
 
   function loadImages() {
     const pageId = resolvePageId();
@@ -223,17 +233,15 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
         formData.append("pageId", pageId);
         if (csrf) formData.append(csrf.name, csrf.value);
 
-        return fetch(saveUrl, {
+        return request(saveUrl, {
           method: "POST",
+          headers: undefined,
           body: formData,
-          credentials: "same-origin",
+          parse: "json",
         });
       })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then((data) => {
+      .then((result) => {
+        const data = getDataOrThrow(assertOk(result));
         if (!data.status)
           throw new Error(data.message || "Failed to load images");
         renderImages(data.images || []);
@@ -307,7 +315,7 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
       wrapper.appendChild(img);
       item.appendChild(wrapper);
 
-      item.addEventListener("click", () => {
+      item.onclick = () => {
         selectedImage = {
           filename: image.filename,
           path: image.path || image.filename,
@@ -323,7 +331,7 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
         filenameLabel.textContent = `image: ${image.path || image.filename}`;
         remoteInput.value = ""; // Clear remote input on gallery selection
         addBtn.disabled = false;
-      });
+      };
 
       grid.appendChild(item);
     });
@@ -372,7 +380,7 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
         });
         const eventSource = new EventSource(sseUrl);
 
-        eventSource.addEventListener("ready", (e) => {
+        pickerEventScope.register(eventSource, "ready", (e) => {
           try {
             const data = JSON.parse(e.data);
             const img = withHash.find(
@@ -386,7 +394,7 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
           }
         });
 
-        eventSource.addEventListener("done", () => {
+        pickerEventScope.register(eventSource, "done", () => {
           eventSource.close();
         });
 
@@ -426,13 +434,14 @@ export function createImagePicker({ onSelect, onClose, initialData = null }) {
           }
 
           try {
-            const res = await fetch(saveUrl, {
+            const res = await request(saveUrl, {
               method: "POST",
+              headers: undefined,
               body: formData,
-              credentials: "same-origin",
+              parse: "text",
             });
 
-            const raw = await res.text();
+            const raw = typeof res.data === "string" ? res.data : "";
             let data = null;
 
             if (raw) {

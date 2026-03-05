@@ -1,8 +1,56 @@
 import { Extension, Mark } from "@tiptap/core";
 import Image from "@tiptap/extension-image";
+import Bold from "@tiptap/extension-bold";
+import BulletList from "@tiptap/extension-bullet-list";
+import Italic from "@tiptap/extension-italic";
+import TaskList from "@tiptap/extension-task-list";
 import { Plugin } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import { inlineHtmlTags } from "./editor-core.js";
+
+export const MarkerAwareBold = Bold.extend({
+  addAttributes() {
+    return {
+      ...(this.parent?.() || {}),
+      delimiter: {
+        default: "**",
+      },
+    };
+  },
+});
+
+export const MarkerAwareItalic = Italic.extend({
+  addAttributes() {
+    return {
+      ...(this.parent?.() || {}),
+      delimiter: {
+        default: "_",
+      },
+    };
+  },
+});
+
+export const MarkerAwareBulletList = BulletList.extend({
+  addAttributes() {
+    return {
+      ...(this.parent?.() || {}),
+      bullet: {
+        default: "-",
+      },
+    };
+  },
+});
+
+export const MarkerAwareTaskList = TaskList.extend({
+  addAttributes() {
+    return {
+      ...(this.parent?.() || {}),
+      bullet: {
+        default: "-",
+      },
+    };
+  },
+});
 
 export const InlineHtmlLabelExtension = Extension.create({
   name: "inlineHtmlLabel",

@@ -1,8 +1,15 @@
+import {
+  resolveDataMfeCandidatesWithContext,
+  resolveDataMfeKeyWithContext,
+} from "./identity-resolver.js";
+
 export function scopedHtmlKeyFromMeta(scope, section, subsection, name) {
   const s = scope || "field";
   const sec = section || "";
   const sub = subsection || "";
   const n = name || "";
+  // Document scope is the canonical root slot, so it never maps to a scoped key.
+  if (s === "document") return "";
   if (s === "section") return n ? `section:${n}` : "";
   if (s === "subsection") return sec && n ? `subsection:${sec}:${n}` : "";
   if (s === "field") {
@@ -13,13 +20,6 @@ export function scopedHtmlKeyFromMeta(scope, section, subsection, name) {
   }
   if (s === "block") return sec && n ? `block:${sec}:${n}` : "";
   return n ? `${s}:${n}` : "";
-}
-
-function splitPath(value) {
-  return (value || "")
-    .split("/")
-    .map((p) => p.trim())
-    .filter(Boolean);
 }
 
 export function buildSemanticLookup({ sections = [], fields = [] } = {}) {
@@ -68,146 +68,6 @@ export function buildSemanticLookup({ sections = [], fields = [] } = {}) {
   };
 }
 
-function resolveDataMfeCandidates(rawValue, lookup) {
-  const raw = (rawValue || "").trim();
-  if (!raw) return [];
-  const lower = raw.toLowerCase();
-  const pathParts = splitPath(raw.replace(/:/g, "/"));
-  const out = new Set();
-
-  if (lower.startsWith("section:")) {
-    const parts = splitPath(raw.slice(8));
-    if (!parts.length) return [];
-    out.add(`section:${parts[0]}`);
-    return Array.from(out);
-  }
-  if (lower.startsWith("field:")) {
-    const parts = splitPath(raw.slice(6).replace(/:/g, "/"));
-    if (parts.length === 1) out.add(`field:${parts[0]}`);
-    if (parts.length >= 2) out.add(`field:${parts[0]}:${parts[1]}`);
-    return Array.from(out);
-  }
-  if (lower.startsWith("sub:") || lower.startsWith("subsection:")) {
-    const path = lower.startsWith("sub:") ? raw.slice(4) : raw.slice(11);
-    const parts = splitPath(path.replace(/:/g, "/"));
-    if (parts.length < 2) return [];
-    if (parts.length === 2) out.add(`subsection:${parts[0]}:${parts[1]}`);
-    if (parts.length >= 3)
-      out.add(`subsection:${parts[0]}:${parts[1]}:${parts[2]}`);
-    return Array.from(out);
-  }
-
-  const {
-    sectionNames,
-    subsectionKeys,
-    fieldSectionKeys,
-    fieldSubsectionKeys,
-    fieldTopLevelNames,
-  } = lookup || buildSemanticLookup();
-
-  if (pathParts.length === 1) {
-    const a = pathParts[0];
-    if (sectionNames.has(a)) out.add(`section:${a}`);
-    if (fieldTopLevelNames.has(a)) out.add(`field:${a}`);
-    return Array.from(out);
-  }
-  if (pathParts.length === 2) {
-    const [a, b] = pathParts;
-    const subKey = `${a}/${b}`;
-    const fieldKey = `${a}/${b}`;
-    if (subsectionKeys.has(subKey)) out.add(`subsection:${a}:${b}`);
-    if (fieldSectionKeys.has(fieldKey)) out.add(`field:${a}:${b}`);
-    return Array.from(out);
-  }
-  if (pathParts.length >= 3) {
-    const [a, b, c] = pathParts;
-    const fieldSubKey = `${a}/${b}/${c}`;
-    if (fieldSubsectionKeys.has(fieldSubKey))
-      out.add(`subsection:${a}:${b}:${c}`);
-    return Array.from(out);
-  }
-  return Array.from(out);
-}
-
-function inferContextFromAncestors(host, lookup) {
-  let el = host?.parentElement || null;
-  while (el) {
-    const raw = (el.getAttribute?.("data-mfe") || "").trim();
-    if (raw) {
-      const candidates = resolveDataMfeCandidates(raw, lookup);
-      const key = candidates.length === 1 ? candidates[0] : "";
-      if (key.startsWith("section:")) {
-        return { section: key.slice("section:".length), subsection: "" };
-      }
-      if (key.startsWith("subsection:")) {
-        const parts = key.split(":");
-        if (parts.length >= 3) {
-          return { section: parts[1] || "", subsection: parts[2] || "" };
-        }
-      }
-      if (key.startsWith("field:")) {
-        const parts = key.split(":");
-        if (parts.length >= 3) {
-          return { section: parts[1] || "", subsection: "" };
-        }
-      }
-    }
-    el = el.parentElement;
-  }
-  return null;
-}
-
-function resolveDataMfeKeyWithContext(rawValue, host, lookup) {
-  const candidates = resolveDataMfeCandidatesWithContext(
-    rawValue,
-    host,
-    lookup,
-  );
-  return candidates.length === 1 ? candidates[0] : "";
-}
-
-function resolveDataMfeCandidatesWithContext(rawValue, host, lookup) {
-  const direct = resolveDataMfeCandidates(rawValue, lookup);
-  if (direct.length) return direct;
-
-  const raw = (rawValue || "").trim();
-  if (!raw) return [];
-  const parts = splitPath(raw.replace(/:/g, "/"));
-  if (!parts.length) return [];
-
-  const ctx = inferContextFromAncestors(host, lookup);
-  if (!ctx?.section) return [];
-
-  const { fieldSectionKeys, fieldSubsectionKeys } =
-    lookup || buildSemanticLookup();
-  const out = new Set();
-
-  if (parts.length === 1) {
-    const name = parts[0];
-    if (ctx.subsection) {
-      const subKey = `${ctx.section}/${ctx.subsection}/${name}`;
-      if (fieldSubsectionKeys.has(subKey)) {
-        out.add(`subsection:${ctx.section}:${ctx.subsection}:${name}`);
-      }
-    }
-    const secKey = `${ctx.section}/${name}`;
-    if (fieldSectionKeys.has(secKey)) {
-      out.add(`field:${ctx.section}:${name}`);
-    }
-    return Array.from(out);
-  }
-
-  if (parts.length === 2) {
-    const [a, b] = parts;
-    const subKey = `${ctx.section}/${a}/${b}`;
-    if (fieldSubsectionKeys.has(subKey)) {
-      out.add(`subsection:${ctx.section}:${a}:${b}`);
-    }
-  }
-
-  return Array.from(out);
-}
-
 function hashMountKey(input) {
   let h = 2166136261;
   for (let i = 0; i < input.length; i += 1) {
@@ -228,6 +88,55 @@ function isCanonicalScopedKey(key) {
   if (/^subsection:[^:]+:[^:]+$/.test(value)) return true;
   if (/^subsection:[^:]+:[^:]+:[^:]+$/.test(value)) return true;
   return false;
+}
+
+function canonicalScopedKeySortTuple(key) {
+  const value = String(key || "").trim();
+  if (!value) return [9, "", "", "", ""];
+  const parts = value.split(":");
+  const scope = (parts[0] || "").toLowerCase();
+  if (scope === "section" && parts.length === 2) {
+    return [1, parts[1] || "", "", "", value];
+  }
+  if (scope === "subsection" && parts.length === 3) {
+    return [2, parts[1] || "", parts[2] || "", "", value];
+  }
+  if (scope === "field" && parts.length === 3) {
+    return [3, parts[1] || "", "", parts[2] || "", value];
+  }
+  if (scope === "subsection" && parts.length === 4) {
+    return [3, parts[1] || "", parts[2] || "", parts[3] || "", value];
+  }
+  if (scope === "field" && parts.length === 2) {
+    return [3, "", "", parts[1] || "", value];
+  }
+  return [9, "", "", "", value];
+}
+
+export function compareCanonicalScopedKeys(leftKey, rightKey) {
+  const left = canonicalScopedKeySortTuple(leftKey);
+  const right = canonicalScopedKeySortTuple(rightKey);
+  const count = Math.min(left.length, right.length);
+  for (let i = 0; i < count; i += 1) {
+    if (left[i] === right[i]) continue;
+    return left[i] < right[i] ? -1 : 1;
+  }
+  return String(leftKey || "").localeCompare(String(rightKey || ""));
+}
+
+export function detectCanonicalScopedKeyOrderViolation(keys) {
+  const list = Array.isArray(keys) ? keys.map((k) => String(k || "")) : [];
+  if (list.length <= 1) return null;
+  const expected = list.slice().sort(compareCanonicalScopedKeys);
+  for (let i = 0; i < list.length; i += 1) {
+    if (list[i] !== expected[i]) {
+      return {
+        actual: list,
+        expected,
+      };
+    }
+  }
+  return null;
 }
 
 function isDevDiagnosticsEnabled() {
@@ -377,7 +286,7 @@ function collectReadOnlyHostMounts(root, mounts, semanticLookup) {
   });
 }
 
-export function collectStrictMountsByKey(root, getMetaAttr, semanticLookup) {
+function collectStrictMountsByKey(root, getMetaAttr, semanticLookup) {
   const mounts = new Map();
 
   root.querySelectorAll(".fe-editable").forEach((el) => {
@@ -571,18 +480,12 @@ export function compileMountTargetsByKey({
         el.setAttribute("data-mfe-ambiguous", candidates.join("|"));
         clearCanonicalIdentityIfPresent(el);
         const sig = `${raw} -> ${candidates.join("|")}`;
-        if (!ambiguousSet.has(sig)) {
-          ambiguousSet.add(sig);
-          report.ambiguous.push(sig);
-        }
+        ambiguousSet.add(sig);
       } else {
         el.removeAttribute("data-mfe-ambiguous");
         clearCanonicalIdentityIfPresent(el);
         const sig = `${raw}`;
-        if (!unresolvedSet.has(sig)) {
-          unresolvedSet.add(sig);
-          report.unresolved.push(sig);
-        }
+        unresolvedSet.add(sig);
       }
       return;
     }
@@ -620,18 +523,12 @@ export function compileMountTargetsByKey({
         el.setAttribute("data-mfe-ambiguous", candidates.join("|"));
         clearCanonicalIdentityIfPresent(el);
         const sig = `${raw} -> ${candidates.join("|")}`;
-        if (!ambiguousSet.has(sig)) {
-          ambiguousSet.add(sig);
-          report.ambiguous.push(sig);
-        }
+        ambiguousSet.add(sig);
       } else {
         el.removeAttribute("data-mfe-ambiguous");
         clearCanonicalIdentityIfPresent(el);
         const sig = `${raw}`;
-        if (!unresolvedSet.has(sig)) {
-          unresolvedSet.add(sig);
-          report.unresolved.push(sig);
-        }
+        unresolvedSet.add(sig);
       }
       return;
     }
@@ -639,16 +536,20 @@ export function compileMountTargetsByKey({
     addTarget(candidates[0], el, "inner", "mirror");
   });
 
-  const fpSource = JSON.stringify({
-    nodes: report.nodes,
-    ambiguous: [...report.ambiguous].sort(),
-    unresolved: [...report.unresolved].sort(),
-  });
-  report.fingerprint = `mfe-r-${hashMountKey(fpSource)}`;
-  const graphParts = Array.from(graphKeySet).sort();
+  report.ambiguous = Array.from(ambiguousSet).sort((a, b) => a.localeCompare(b));
+  report.unresolved = Array.from(unresolvedSet).sort((a, b) =>
+    a.localeCompare(b),
+  );
+  const graphParts = Array.from(graphKeySet).sort(compareCanonicalScopedKeys);
   report.graphKeys = graphParts;
   report.graphNodeCount = graphParts.length;
   report.graphChecksum = `mfe-g-${hashMountKey(JSON.stringify(graphParts))}`;
+  const fpSource = JSON.stringify({
+    nodes: report.nodes,
+    ambiguous: report.ambiguous,
+    unresolved: report.unresolved,
+  });
+  report.fingerprint = `mfe-r-${hashMountKey(fpSource)}`;
 
   if (devDiagnostics) {
     keyToCanonicalSigSet.forEach((canonicalSigMap, key) => {

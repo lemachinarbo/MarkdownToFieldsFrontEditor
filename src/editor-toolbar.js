@@ -283,10 +283,7 @@ export function createToolbarButtons({
           onOpenDocumentView();
         }
       },
-      isActive: () =>
-        typeof isDocumentView === "function"
-          ? Boolean(isDocumentView())
-          : false,
+      isActive: () => false,
       title: "Open document in outline view",
     },
     {
@@ -305,6 +302,7 @@ export function createToolbarButtons({
       isActive: () =>
         typeof isOutlineView === "function" ? Boolean(isOutlineView()) : false,
       title: "Toggle outline view",
+      alt: "View outline",
     },
     {
       key: "save",

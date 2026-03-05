@@ -2,10 +2,10 @@ export function setInlineShellOpen(isOpen) {
   if (typeof document === "undefined") return;
   if (!document.body?.classList) return;
   if (isOpen) {
-    document.body.classList.add("mfe-view-inline");
+    document.body.classList.add("mfe-state-inline-open");
     return;
   }
-  document.body.classList.remove("mfe-view-inline");
+  document.body.classList.remove("mfe-state-inline-open");
 }
 
 export function setInlineDebugShell({
@@ -30,5 +30,5 @@ export function setInlineLabelStyle(labelStyle = "outside") {
 
 export function isInlineShellOpen() {
   if (typeof document === "undefined") return false;
-  return Boolean(document.body?.classList?.contains("mfe-view-inline"));
+  return Boolean(document.body?.classList?.contains("mfe-state-inline-open"));
 }

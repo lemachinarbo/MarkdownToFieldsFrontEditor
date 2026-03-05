@@ -73,14 +73,10 @@ export function resolveDblclickAction({
     } else {
       fullscreenTarget =
         target.closest(
-          '[data-mfe-scope="field"][data-field-type="container"], [data-md-scope="field"][data-field-type="container"]',
+          '[data-mfe-scope="field"][data-field-type="container"]',
         ) ||
-        target.closest(
-          '[data-mfe-scope="subsection"], [data-md-scope="subsection"]',
-        ) ||
-        target.closest(
-          '[data-mfe-scope="section"], [data-md-scope="section"]',
-        ) ||
+        target.closest('[data-mfe-scope="subsection"]') ||
+        target.closest('[data-mfe-scope="section"]') ||
         target;
     }
 

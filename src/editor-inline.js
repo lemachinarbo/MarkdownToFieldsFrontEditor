@@ -2,39 +2,44 @@ import { Editor, Extension } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
+import TaskList from "@tiptap/extension-task-list";
+import TaskItem from "@tiptap/extension-task-item";
+import { Table } from "@tiptap/extension-table";
+import TableRow from "@tiptap/extension-table-row";
+import TableHeader from "@tiptap/extension-table-header";
+import TableCell from "@tiptap/extension-table-cell";
 import { common, createLowlight } from "lowlight";
 import { NodeSelection } from "prosemirror-state";
 import {
   shouldWarnForExtraContent,
   countSignificantTopLevelBlocks,
-  renderMarkdownToHtml,
+  parseMarkdownToDoc,
   decodeMarkdownBase64,
   decodeHtmlEntitiesInFences,
   trimTrailingLineBreaks,
   getLanguagesConfig,
-  getSaveUrl,
-  fetchCsrfToken,
-  assertMarkdownInvariant,
-  validateSerializerLosslessness,
+  saveTranslation,
 } from "./editor-core.js";
 import {
   InlineHtmlLabelExtension,
+  MarkerAwareBold,
   UnderlineMark,
   SuperscriptMark,
   SubscriptMark,
+  MarkerAwareItalic,
   createMfeImageExtension,
 } from "./editor-tiptap-extensions.js";
 import {
   getMetaAttr,
   getImageBaseUrl,
+  normalizeFieldHostIdentity,
   setOriginalBlockCount,
   getOriginalBlockCount,
   applyFieldAttributes,
   stripTrailingEmptyParagraph,
   getMarkdownFromEditor,
-  stripMfeMarkersForFieldScope,
 } from "./editor-shared-helpers.js";
-import { Marker } from "./marker-extension.js";
+import { Marker, GapSentinel } from "./marker-extension.js";
 import { createToolbarButtons } from "./editor-toolbar.js";
 import { renderToolbarButtons } from "./editor-toolbar-renderer.js";
 import {
@@ -75,10 +80,26 @@ import {
   setError,
 } from "./editor-status.js";
 import {
+  CANONICAL_SCOPE_SET,
+  assertCanonicalPayloadSchema,
+} from "./canonical-contract.js";
+import {
   HeadingSingleLineExtension,
   SingleBlockDocumentExtension,
   createSingleBlockEnterToastExtension,
 } from "./field-constraints-extension.js";
+import {
+  isHostDebugClicksEnabled,
+  isHostDebugLabelsEnabled,
+  isHostFlagEnabled,
+} from "./host-env.js";
+import { parseDataMfe } from "./identity-resolver.js";
+import { afterNextPaint } from "./async-queue.js";
+import { assertOk, getDataOrThrow } from "./network.js";
+import { createEventRegistry } from "./event-registry.js";
+import { createInlineStateAdapter } from "./inline-state-adapter.js";
+import { getDocumentState } from "./document-state.js";
+import { createTransactionGuardExtension } from "./transaction-guard-extension.js";
 
 let activeEditor = null;
 let activeTarget = null;
@@ -92,116 +113,138 @@ let isClosingInlineEditor = false;
 let toolbarEl = null;
 let toolbarStatusEl = null;
 let toolbarCloseBtn = null;
-let keydownHandler = null;
-let pointerHandler = null;
-let dblclickHandler = null;
-let hoverHandler = null;
-let clickBlockHandler = null;
+const inlineEventRegistry = createEventRegistry();
+let inlineRuntimeEventScope = null;
+let inlineRuntimeEventsBound = false;
 let hoverRaf = null;
 let lastHoverKey = "";
 let lastHoverRect = null;
 let pendingLinkNavigation = null;
-let debugLabels =
-  window.MarkdownFrontEditorConfig?.debugLabels ||
-  window.localStorage?.getItem("mfeDebugLabels") === "1";
-const debugClicks = window.localStorage?.getItem("mfeDebugClicks") === "1";
+let debugLabels = isHostDebugLabelsEnabled();
+const debugClicks = isHostDebugClicksEnabled();
 const overlayEngine = createOverlayEngine({ debugLabels });
+let allowSystemTransactionDepth = 0;
+let lastInlineEditorInputAt = 0;
+let lastInlineEditorInputSource = "none";
+let lastInlineIntentAt = 0;
+let lastInlineIntentSource = "none";
+
+function markInlineEditorInputSource(source) {
+  lastInlineEditorInputAt = Date.now();
+  lastInlineEditorInputSource = String(source || "unknown");
+  markInlineIntentToken(`editor:${lastInlineEditorInputSource}`);
+}
+
+function markInlineIntentToken(source) {
+  lastInlineIntentAt = Date.now();
+  lastInlineIntentSource = String(source || "ui");
+}
+
+function resolveInlineUpdateSource(transaction) {
+  const now = Date.now();
+  const fromRecentEditorInput = now - lastInlineEditorInputAt <= 1500;
+  const fromRecentIntent = now - lastInlineIntentAt <= 1500;
+  const uiEvent = String(transaction?.getMeta?.("uiEvent") || "");
+  const pointer = Boolean(transaction?.getMeta?.("pointer"));
+  const docChanged = Boolean(transaction?.docChanged);
+  if (fromRecentEditorInput || (fromRecentIntent && docChanged)) {
+    return {
+      source: "human",
+      inputSource: lastInlineEditorInputSource,
+      intentSource: lastInlineIntentSource,
+      uiEvent,
+      pointer,
+      docChanged,
+    };
+  }
+  return {
+    source: "system",
+    inputSource: lastInlineEditorInputSource,
+    intentSource: lastInlineIntentSource,
+    uiEvent,
+    pointer,
+    docChanged,
+  };
+}
+
+function shouldBlockInlineTransaction(transaction) {
+  if (!transaction?.docChanged) return false;
+  if (allowSystemTransactionDepth > 0) return false;
+  const updateSource = resolveInlineUpdateSource(transaction);
+  return updateSource.source !== "human";
+}
+
+function reportInlineTransactionBlocked(transaction) {
+  const updateSource = resolveInlineUpdateSource(transaction);
+  const payload = {
+    type: "MFE_TX_GUARD_BLOCKED",
+    host: "inline",
+    scope: activeFieldScope || "",
+    fieldId: activeFieldId || "",
+    uiEvent: String(updateSource.uiEvent || ""),
+    pointer: Boolean(updateSource.pointer),
+    inputSource: String(updateSource.inputSource || ""),
+    intentSource: String(updateSource.intentSource || ""),
+    docChanged: Boolean(updateSource.docChanged),
+    stepCount: Array.isArray(transaction?.steps) ? transaction.steps.length : 0,
+  };
+  if (isHostFlagEnabled("debug")) {
+    try {
+      console.warn("MFE_TX_GUARD_BLOCKED", JSON.stringify(payload));
+    } catch (_error) {
+      // noop
+    }
+  }
+}
+
+function isDblclickDebugEnabled() {
+  return isHostFlagEnabled("debug");
+}
+
+function toDblclickTargetDebug(element) {
+  if (!(element instanceof Element)) return null;
+  return {
+    scope: getMetaAttr(element, "scope") || "",
+    section: getMetaAttr(element, "section") || "",
+    subsection: getMetaAttr(element, "subsection") || "",
+    name: getMetaAttr(element, "name") || "",
+    page: element.getAttribute("data-page") || "",
+    fieldType: element.getAttribute("data-field-type") || "",
+    source: element.getAttribute("data-mfe-source") || "",
+    sourcePath: element.getAttribute("data-mfe") || "",
+    inlineActiveClass: element.classList.contains("mfe-inline-active"),
+    classes: element.className || "",
+  };
+}
+
+function debugInlineDblclick({ event, hit, action, reason }) {
+  if (!isDblclickDebugEnabled()) return;
+  console.info("[mfe:dblclick:inline]", {
+    reason,
+    modifiers: {
+      ctrl: Boolean(event?.ctrlKey),
+      meta: Boolean(event?.metaKey),
+      shift: Boolean(event?.shiftKey),
+      alt: Boolean(event?.altKey),
+    },
+    detail: Number(event?.detail || 0),
+    hit: toDblclickTargetDebug(hit),
+    action: action
+      ? {
+          type: action.action || "",
+          target: toDblclickTargetDebug(action.target || null),
+        }
+      : null,
+  });
+}
 
 let dirty = false;
 const originalBlockCounts = new WeakMap();
 const originalHtml = new WeakMap();
-const originalMarkdownByField = new Map();
 let activeFieldId = null;
-let activeSession = null;
-const draftByField = new Map();
-const draftMarkdownByField = new Map();
-const scopeMetaByKey = new Map();
 let suppressUpdates = false;
-const fieldElements = new Map();
-
-function parseDataMfe(value) {
-  const raw = (value || "").trim();
-  if (!raw) return null;
-  const lower = raw.toLowerCase();
-
-  const splitPath = (path) =>
-    (path || "")
-      .split("/")
-      .map((p) => p.trim())
-      .filter(Boolean);
-
-  if (lower.startsWith("field:")) {
-    const parts = splitPath(raw.slice(6));
-    if (parts.length === 1) {
-      return { scope: "field", name: parts[0], section: "", subsection: "" };
-    }
-    if (parts.length === 2) {
-      return {
-        scope: "field",
-        section: parts[0],
-        name: parts[1],
-        subsection: "",
-      };
-    }
-    if (parts.length >= 3) {
-      return {
-        scope: "field",
-        section: parts[0],
-        subsection: parts[1],
-        name: parts[2],
-      };
-    }
-    return null;
-  }
-
-  if (lower.startsWith("section:")) {
-    const parts = splitPath(raw.slice(8));
-    if (!parts.length) return null;
-    return { scope: "section", name: parts[0], section: "" };
-  }
-
-  if (lower.startsWith("sub:") || lower.startsWith("subsection:")) {
-    const path = lower.startsWith("sub:") ? raw.slice(4) : raw.slice(11);
-    const parts = splitPath(path.replace(/:/g, "/"));
-    if (parts.length < 2) return null;
-    return { scope: "subsection", section: parts[0], name: parts[1] };
-  }
-
-  // New shorthand for field-within-section
-  // "topics" => auto resolve (field first, then section)
-  // "foo/topics" => auto resolve (field in section first, then subsection)
-  const pathParts = splitPath(raw);
-  if (pathParts.length === 2) {
-    return {
-      scope: "auto",
-      section: pathParts[0],
-      name: pathParts[1],
-      subsection: "",
-    };
-  }
-  if (pathParts.length >= 3) {
-    return {
-      scope: "field",
-      section: pathParts[0],
-      subsection: pathParts[1],
-      name: pathParts[2],
-    };
-  }
-
-  // Backward compatibility with previous syntax:
-  // "hero" => section, "hero:chirology" => subsection
-  const legacy = raw
-    .split(":")
-    .map((p) => p.trim())
-    .filter(Boolean);
-  if (legacy.length === 1) {
-    return { scope: "auto", name: legacy[0], section: "", subsection: "" };
-  }
-  if (legacy.length >= 2) {
-    return { scope: "subsection", section: legacy[0], name: legacy[1] };
-  }
-  return null;
-}
+const inlineState = createInlineStateAdapter();
+const inlineDocumentStates = new Map();
 
 function findFieldEntry({ name, section = "", subsection = "" }) {
   const fields = getFieldsIndex().filter(
@@ -329,7 +372,16 @@ function findDataMfeTargetFromPoint(x, y) {
   const parsed = parseDataMfe(host.getAttribute("data-mfe"));
   const resolved = resolveDataMfe(parsed);
   if (!resolved) return null;
-  const rect = host.getBoundingClientRect();
+  const hostRect = host.getBoundingClientRect();
+  const hasBox =
+    hostRect &&
+    Number.isFinite(hostRect.left) &&
+    Number.isFinite(hostRect.right) &&
+    Number.isFinite(hostRect.top) &&
+    Number.isFinite(hostRect.bottom) &&
+    hostRect.right > hostRect.left &&
+    hostRect.bottom > hostRect.top;
+  const rect = hasBox ? hostRect : getRectFromChildren(host) || hostRect;
   return {
     scope: resolved.scope,
     name: resolved.name,
@@ -347,10 +399,6 @@ function findTargetFromPoint(x, y) {
   return null;
 }
 
-function normalizeText(value) {
-  return (value || "").replace(/\s+/g, " ").trim().toLowerCase();
-}
-
 function createVirtualTarget({
   pageId,
   scope,
@@ -363,19 +411,15 @@ function createVirtualTarget({
   const el = document.createElement("div");
   el.className = "fe-editable md-edit mfe-virtual";
   el.setAttribute("data-page", pageId);
-  el.setAttribute("data-md-scope", scope);
   el.setAttribute("data-mfe-scope", scope);
-  el.setAttribute("data-md-name", name);
   el.setAttribute("data-mfe-name", name);
   if (fieldType) {
     el.setAttribute("data-field-type", fieldType);
   }
   if (section) {
-    el.setAttribute("data-md-section", section);
     el.setAttribute("data-mfe-section", section);
   }
   if (subsection) {
-    el.setAttribute("data-md-subsection", subsection);
     el.setAttribute("data-mfe-subsection", subsection);
   }
   if (markdown !== undefined) {
@@ -415,16 +459,6 @@ function applyEditLabelAttributes(el) {
   const subsection = getMetaAttr(el, "subsection") || "";
   const label = getEditLabel(scope, name, section, subsection);
   el.setAttribute("data-mfe-label", label);
-
-  const fieldType = el.getAttribute("data-field-type") || "";
-  const isSectionLike = scope === "section" || scope === "subsection";
-  const host = el.firstElementChild;
-  if (isSectionLike || fieldType === "container") {
-    if (host) {
-      host.classList.add("mfe-label-host");
-      host.setAttribute("data-mfe-label", label);
-    }
-  }
 }
 
 function applyDataMfeLabelAttributes(el) {
@@ -526,9 +560,70 @@ function buildScopeKey({ scope, section, subsection, name }) {
   );
 }
 
+function ensureInlineDocumentState(field, fallbackTarget = null) {
+  const fieldId = buildFieldId({
+    pageId: field.pageId,
+    scope: field.scope,
+    section: field.section,
+    name: field.name,
+  });
+  if (!fieldId) return null;
+  if (inlineDocumentStates.has(fieldId)) {
+    return { fieldId, docState: inlineDocumentStates.get(fieldId) };
+  }
+  const target =
+    fallbackTarget ||
+    inlineState.getFieldElement(fieldId) ||
+    activeTarget ||
+    null;
+  if (!target) return null;
+  const { current: lang } = getLanguagesConfig();
+  const session = resolveSession({
+    pageId: field.pageId,
+    section: field.section,
+    subsection: field.subsection,
+    name: field.name,
+    scope: field.scope,
+    target,
+  });
+  const payloadMeta = {
+    element: target,
+    pageId: field.pageId,
+    fieldScope: field.scope,
+    fieldSection: field.section,
+    fieldSubsection: field.subsection,
+    fieldName: field.name,
+    sessionId: session.sessionKey,
+  };
+  const initialPersistedMarkdown =
+    inlineState.getOriginalMarkdown(fieldId) || target.dataset.markdown || "";
+  const docState = getDocumentState(inlineDocumentStates, payloadMeta, lang, {
+    reason: "inline-field-bind",
+    trigger: "scope-navigation",
+    currentScope: field.scope || "field",
+    initialPersistedMarkdown,
+    initialDraftMarkdown: initialPersistedMarkdown,
+  });
+  inlineDocumentStates.set(fieldId, docState);
+  return { fieldId, docState };
+}
+
+function setCanonicalInlineDraft(field, markdown, fallbackTarget = null) {
+  const entry = ensureInlineDocumentState(field, fallbackTarget);
+  if (!entry) return null;
+  const { fieldId, docState } = entry;
+  const scopeKey = buildScopeKey(field);
+  docState.setDraft(markdown, {
+    reason: "inline-draft-update",
+    trigger: "user-edit-transaction",
+    currentScope: field.scope || "field",
+  });
+  return { fieldId, scopeKey };
+}
+
 function buildDeterministicTargetKeyMap() {
   const out = new Map();
-  for (const [fieldId, el] of fieldElements.entries()) {
+  for (const [fieldId, el] of inlineState.getFieldElementEntries()) {
     if (!fieldId || !el) continue;
     out.set(fieldId, el);
     const scope = getMetaAttr(el, "scope") || "field";
@@ -602,7 +697,11 @@ function renderDraftHtml(editor) {
 
   return doc.body.innerHTML;
 }
-let beforeUnloadHandler = null;
+function ensureInlineRuntimeEventScope() {
+  if (inlineRuntimeEventScope) return inlineRuntimeEventScope;
+  inlineRuntimeEventScope = inlineEventRegistry.createScope("inline-runtime");
+  return inlineRuntimeEventScope;
+}
 
 function confirmDiscardChanges() {
   if (!dirty) return true;
@@ -657,7 +756,9 @@ function hasBlockingExtraContent(editor = activeEditor) {
 function createEditorInstance(host, fieldType, fieldName) {
   const restrictToSingleBlock = shouldWarnForExtraContent(fieldType, fieldName);
   const starterKitOptions = {
+    bold: false,
     codeBlock: false,
+    italic: false,
     link: false,
     underline: false,
     ...(restrictToSingleBlock ? { document: false } : {}),
@@ -671,11 +772,20 @@ function createEditorInstance(host, fieldType, fieldName) {
     element: host,
     extensions: [
       StarterKit.configure(starterKitOptions),
+      MarkerAwareBold,
+      MarkerAwareItalic,
+      TaskList,
+      TaskItem.configure({ nested: true }),
+      Table.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
       ...(restrictToSingleBlock ? [SingleBlockDocumentExtension] : []),
       UnderlineMark,
       SuperscriptMark,
       SubscriptMark,
       Marker,
+      GapSentinel,
       CodeBlockLowlight.configure({
         lowlight,
       }),
@@ -688,6 +798,11 @@ function createEditorInstance(host, fieldType, fieldName) {
       ...(restrictToSingleBlock ? [SingleBlockEnterToastExtension] : []),
       HeadingSingleLineExtension,
       EscapeKeyExtension,
+      createTransactionGuardExtension({
+        name: "mfeInlineTxGuard",
+        shouldBlockTransaction: shouldBlockInlineTransaction,
+        onBlockedTransaction: reportInlineTransactionBlocked,
+      }),
     ],
     content: "",
     editorProps: {
@@ -704,8 +819,34 @@ function createEditorInstance(host, fieldType, fieldName) {
     activeEditor = editor;
   });
 
-  editor.on("update", () => {
+  if (inlineRuntimeEventScope) {
+    inlineRuntimeEventScope.register(editor.view.dom, "beforeinput", () =>
+      markInlineEditorInputSource("beforeinput"),
+    );
+    inlineRuntimeEventScope.register(editor.view.dom, "input", () =>
+      markInlineEditorInputSource("input"),
+    );
+    inlineRuntimeEventScope.register(editor.view.dom, "keydown", () =>
+      markInlineEditorInputSource("keydown"),
+    );
+    inlineRuntimeEventScope.register(editor.view.dom, "paste", () =>
+      markInlineEditorInputSource("paste"),
+    );
+    inlineRuntimeEventScope.register(editor.view.dom, "drop", () =>
+      markInlineEditorInputSource("drop"),
+    );
+    inlineRuntimeEventScope.register(editor.view.dom, "compositionend", () =>
+      markInlineEditorInputSource("compositionend"),
+    );
+  }
+
+  editor.on("update", ({ transaction }) => {
     if (suppressUpdates) return;
+    if (!transaction?.docChanged) return;
+    const updateSource = resolveInlineUpdateSource(transaction);
+    if (updateSource.source !== "human") {
+      return;
+    }
     highlightExtraContent(editor);
     if (shouldWarnForExtraContent(fieldType, fieldName)) {
       stripTrailingEmptyParagraph(editor);
@@ -715,144 +856,16 @@ function createEditorInstance(host, fieldType, fieldName) {
       markDirty(activeFieldId);
     }
     if (activeScopeKey) {
-      draftByField.set(activeScopeKey, editor.getJSON());
+      inlineState.setDraft(activeScopeKey, editor.getJSON());
+      const activeField = parseFieldId(activeFieldId || "");
       const markdown = decodeHtmlEntitiesInFences(
         getMarkdownFromEditor(editor),
       );
-      draftMarkdownByField.set(activeScopeKey, markdown);
+      setCanonicalInlineDraft(activeField, markdown, activeTarget);
     }
   });
 
   return editor;
-}
-
-function saveField(fieldId, markdown) {
-  const finalMarkdown = trimTrailingLineBreaks(markdown);
-  const { pageId, name: fieldName, scope, section } = parseFieldId(fieldId);
-  const target = fieldElements.get(fieldId);
-  if (!pageId || !fieldName || !target) {
-    return Promise.resolve();
-  }
-
-  // INVARIANT: Validate markdown byte-for-byte if not explicitly edited
-  const original = originalMarkdownByField.get(fieldId);
-  if (original !== undefined && original === finalMarkdown) {
-    // No user edits - markdown must remain unchanged
-    assertMarkdownInvariant(original, finalMarkdown);
-  }
-
-  return fetchCsrfToken()
-    .then((csrf) => {
-      const scopeFromTarget = getMetaAttr(target, "scope") || "";
-      const resolvedScope = scopeFromTarget || scope || "field";
-      const outboundRawMarkdown =
-        resolvedScope === "field"
-          ? stripMfeMarkersForFieldScope(finalMarkdown)
-          : finalMarkdown;
-      const outboundMarkdown = trimTrailingLineBreaks(outboundRawMarkdown);
-      const { current } = getLanguagesConfig();
-      const formData = new FormData();
-      formData.append("markdown", outboundMarkdown);
-      formData.append("mdName", fieldName);
-      formData.append("mdScope", resolvedScope);
-      if (section) {
-        formData.append("mdSection", section);
-      }
-      formData.append("pageId", pageId);
-      formData.append("fieldId", fieldId);
-      if (current) {
-        formData.append("lang", current);
-      }
-
-      if (csrf) {
-        formData.append(csrf.name, csrf.value);
-      }
-
-      return fetch(getSaveUrl(), {
-        method: "POST",
-        body: formData,
-        credentials: "same-origin",
-      });
-    })
-    .then((res) => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
-    })
-    .then((data) => {
-      if (!data.status) throw new Error(data.message || "Save failed");
-
-      if (data.sectionsIndex) {
-        window.MarkdownFrontEditorConfig =
-          window.MarkdownFrontEditorConfig || {};
-        window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;
-      }
-      if (data.fieldsIndex) {
-        window.MarkdownFrontEditorConfig =
-          window.MarkdownFrontEditorConfig || {};
-        window.MarkdownFrontEditorConfig.fieldsIndex = data.fieldsIndex;
-      }
-
-      if (data.html || data.htmlMap) {
-        const htmlMap =
-          data.htmlMap || (typeof data.html === "object" ? data.html : {});
-        const targetsByKey = buildDeterministicTargetKeyMap();
-        const resolvedScopeForMatch =
-          getMetaAttr(target, "scope") || scope || "field";
-        const activeTargetScopeKey = buildScopeKey({
-          scope: resolvedScopeForMatch,
-          section: section || "",
-          subsection: getMetaAttr(target, "subsection") || "",
-          name: fieldName,
-        });
-        const primaryHtml =
-          typeof data.html === "string"
-            ? data.html
-            : htmlMap[fieldId] ||
-              (activeTargetScopeKey
-                ? htmlMap[activeTargetScopeKey]
-                : undefined);
-
-        let activeTargetMatched = false;
-        Object.entries(htmlMap).forEach(([key, html]) => {
-          if (!html || typeof html !== "string") return;
-          const el = targetsByKey.get(key);
-          if (!el) return;
-          originalHtml.set(el, html);
-          if (el === activeTarget) activeTargetMatched = true;
-
-          if (el === activeTarget && activeEditor) {
-            const selection = activeEditor.state.selection;
-            activeEditor.commands.setContent(html, false);
-            try {
-              activeEditor.commands.setTextSelection(selection);
-            } catch (e) {}
-          } else {
-            el.innerHTML = html;
-          }
-        });
-        if (!activeTargetMatched && target && primaryHtml) {
-          originalHtml.set(target, primaryHtml);
-          if (activeEditor && target === activeTarget) {
-            const selection = activeEditor.state.selection;
-            activeEditor.commands.setContent(primaryHtml, false);
-            try {
-              activeEditor.commands.setTextSelection(selection);
-            } catch (e) {}
-          } else {
-            target.innerHTML = primaryHtml;
-          }
-        }
-      }
-      target.dataset.markdown = finalMarkdown;
-      target.dataset.markdownB64 = btoa(
-        unescape(encodeURIComponent(finalMarkdown)),
-      );
-      clearDirty(fieldId);
-      if (activeTargetScopeKey) {
-        draftByField.delete(activeTargetScopeKey);
-        draftMarkdownByField.delete(activeTargetScopeKey);
-      }
-    });
 }
 
 function saveAllDrafts({ showStatus = true } = {}) {
@@ -861,21 +874,45 @@ function saveAllDrafts({ showStatus = true } = {}) {
     return Promise.resolve();
   }
 
-  if (draftMarkdownByField.size === 0 && activeEditor && activeScopeKey) {
+  if (activeEditor && activeScopeKey && activeFieldId) {
+    const activeField = parseFieldId(activeFieldId);
     const markdown = decodeHtmlEntitiesInFences(
       getMarkdownFromEditor(activeEditor),
     );
-    draftMarkdownByField.set(activeScopeKey, markdown);
+    setCanonicalInlineDraft(activeField, markdown, activeTarget);
   }
-  if (draftMarkdownByField.size === 0) {
+
+  const entries = [];
+  for (const [scopeKey, meta] of inlineState.scopeMetaByKey.entries()) {
+    if (!meta) continue;
+    const { pageId, name, scope, section, subsection, fieldId } = meta;
+    if (!pageId || !name) continue;
+    const stateEntry = ensureInlineDocumentState(
+      {
+        pageId,
+        scope: scope || "field",
+        section: section || "",
+        subsection: subsection || "",
+        name,
+      },
+      inlineState.getFieldElement(fieldId || "") || null,
+    );
+    const docState = stateEntry?.docState || null;
+    if (!docState || !docState.isDirty()) continue;
+    const normalizedMarkdown = trimTrailingLineBreaks(
+      String(docState.getDraft() || ""),
+    );
+    entries.push([scopeKey, normalizedMarkdown]);
+  }
+
+  if (entries.length === 0) {
     if (showStatus) setNoChanges();
     return Promise.resolve();
   }
 
-  const entries = Array.from(draftMarkdownByField.entries());
   const grouped = new Map();
   entries.forEach(([scopeKey, markdown]) => {
-    const meta = scopeMetaByKey.get(scopeKey);
+    const meta = inlineState.getScopeMeta(scopeKey);
     if (!meta) return;
     const { pageId, name, scope, section, subsection, fieldId } = meta;
     if (!pageId || !name) return;
@@ -914,93 +951,129 @@ function saveBatch(pageId, fields) {
     if (!field?.key) return;
     fieldsByKey.set(field.key, field);
   });
-  return fetchCsrfToken()
-    .then((csrf) => {
-      const { current } = getLanguagesConfig();
-      const formData = new FormData();
-      formData.append("batch", "1");
-      formData.append("pageId", pageId);
-      formData.append("fields", JSON.stringify(fields));
-      if (current) {
-        formData.append("lang", current);
-      }
+  const { current } = getLanguagesConfig();
+  return fields.reduce(
+    (chain, field) =>
+      chain
+        .then(() =>
+          saveTranslation(
+            pageId,
+            field.scope === "document" ? "document" : field.name,
+            current,
+            field.markdown,
+            field.scope || "field",
+            field.section || "",
+            field.subsection || "",
+            field.fieldId || "",
+          ),
+        )
+        .then((result) => {
+          const data = getDataOrThrow(assertOk(result));
+          if (!data.status) throw new Error(data.message || "Save failed");
 
-      if (csrf) {
-        formData.append(csrf.name, csrf.value);
-      }
-
-      return fetch(getSaveUrl(), {
-        method: "POST",
-        body: formData,
-        credentials: "same-origin",
-      });
-    })
-    .then((res) => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
-    })
-    .then((data) => {
-      if (!data.status) throw new Error(data.message || "Save failed");
-
-      if (data.sectionsIndex) {
-        window.MarkdownFrontEditorConfig =
-          window.MarkdownFrontEditorConfig || {};
-        window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;
-      }
-      if (data.fieldsIndex) {
-        window.MarkdownFrontEditorConfig =
-          window.MarkdownFrontEditorConfig || {};
-        window.MarkdownFrontEditorConfig.fieldsIndex = data.fieldsIndex;
-      }
-
-      const htmlMap =
-        data.htmlMap || (typeof data.html === "object" ? data.html : {});
-      const targetsByKey = buildDeterministicTargetKeyMap();
-      Object.entries(htmlMap).forEach(([fieldKey, html]) => {
-        const target = targetsByKey.get(fieldKey);
-        if (!target) return;
-        const scope = getMetaAttr(target, "scope") || "field";
-        const section = getMetaAttr(target, "section") || "";
-        const subsection = getMetaAttr(target, "subsection") || "";
-        const name = getMetaAttr(target, "name") || "";
-        const scopeKey = buildScopeKey({ scope, section, subsection, name });
-        const meta = scopeMetaByKey.get(scopeKey);
-        const fieldId = meta?.fieldId || "";
-
-        // Always update the stored original HTML and dataset
-        if (html && typeof html === "string") {
-          originalHtml.set(target, html);
-
-          // Update TipTap or DOM
-          if (target === activeTarget && activeEditor) {
-            const selection = activeEditor.state.selection;
-            activeEditor.commands.setContent(html, false);
-            try {
-              activeEditor.commands.setTextSelection(selection);
-            } catch (e) {}
-          } else {
-            target.innerHTML = html;
+          if (data.sectionsIndex) {
+            window.MarkdownFrontEditorConfig =
+              window.MarkdownFrontEditorConfig || {};
+            window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;
           }
-        }
+          if (data.fieldsIndex) {
+            window.MarkdownFrontEditorConfig =
+              window.MarkdownFrontEditorConfig || {};
+            window.MarkdownFrontEditorConfig.fieldsIndex = data.fieldsIndex;
+          }
 
-        const fieldData =
-          fieldsByKey.get(scopeKey) || fieldsByKey.get(fieldKey);
-        if (fieldData?.markdown) {
-          const markdown = fieldData.markdown;
-          target.dataset.markdown = markdown;
-          target.dataset.markdownB64 = btoa(
-            unescape(encodeURIComponent(markdown)),
-          );
-        }
-        if (fieldId) {
-          clearDirty(fieldId);
-        }
-        if (scopeKey) {
-          draftByField.delete(scopeKey);
-          draftMarkdownByField.delete(scopeKey);
-        }
-      });
-    });
+          const htmlMap =
+            data.htmlMap || (typeof data.html === "object" ? data.html : {});
+          const targetsByKey = buildDeterministicTargetKeyMap();
+          Object.entries(htmlMap).forEach(([fieldKey, html]) => {
+            const target = targetsByKey.get(fieldKey);
+            if (!target) return;
+            const scope = getMetaAttr(target, "scope") || "field";
+            const section = getMetaAttr(target, "section") || "";
+            const subsection = getMetaAttr(target, "subsection") || "";
+            const name = getMetaAttr(target, "name") || "";
+            const scopeKey = buildScopeKey({
+              scope,
+              section,
+              subsection,
+              name,
+            });
+            const meta = inlineState.getScopeMeta(scopeKey);
+            const fieldId = meta?.fieldId || "";
+            const fieldData =
+              fieldsByKey.get(scopeKey) || fieldsByKey.get(fieldKey);
+
+            // Always update the stored original HTML and dataset
+            if (html && typeof html === "string") {
+              originalHtml.set(target, html);
+
+              // Update TipTap or DOM
+              if (target === activeTarget && activeEditor) {
+                const selection = activeEditor.state.selection;
+                const markdown = String(fieldData?.markdown || "");
+                try {
+                  const doc = parseMarkdownToDoc(markdown, activeEditor.schema);
+                  activeEditor.commands.setContent(doc.toJSON(), false);
+                } catch (_error) {
+                  console.warn("[mfe:inline] parse-failed:refresh-active", {
+                    scope,
+                    section,
+                    subsection,
+                    name,
+                    error: _error?.message || String(_error),
+                  });
+                }
+                try {
+                  activeEditor.commands.setTextSelection(selection);
+                } catch (e) {}
+              } else {
+                target.innerHTML = html;
+              }
+            }
+
+            if (fieldData?.markdown) {
+              const markdown = fieldData.markdown;
+              target.dataset.markdown = markdown;
+              target.dataset.markdownB64 = btoa(
+                unescape(encodeURIComponent(markdown)),
+              );
+              const stateEntry = ensureInlineDocumentState(
+                {
+                  pageId,
+                  scope,
+                  section,
+                  subsection,
+                  name,
+                },
+                target,
+              );
+              if (stateEntry?.docState) {
+                const readbackClassification =
+                  typeof stateEntry.docState.getLastReadbackClassification ===
+                  "function"
+                    ? stateEntry.docState.getLastReadbackClassification()
+                    : null;
+                stateEntry.docState.markSaved(markdown, {
+                  reason: "inline-save-success",
+                  trigger: "save-commit",
+                  currentScope: scope,
+                  readbackClassification,
+                  readbackClass: String(
+                    readbackClassification?.className || "",
+                  ),
+                });
+              }
+            }
+            if (fieldId) {
+              clearDirty(fieldId);
+            }
+            if (scopeKey) {
+              inlineState.deleteDraft(scopeKey);
+            }
+          });
+        }),
+    Promise.resolve(),
+  );
 }
 
 /**
@@ -1014,6 +1087,7 @@ function openImagePickerInline(initialData = null, imagePos = null) {
     onSelect: (imageData) => {
       // imageData is { filename, url, alt }
       if (!activeEditor) return;
+      markInlineIntentToken("image-picker:select");
 
       let shouldReplaceSelectedImage = false;
       if (typeof imagePos === "number") {
@@ -1060,15 +1134,16 @@ function openImagePickerInline(initialData = null, imagePos = null) {
         markDirty(activeFieldId);
       }
       if (activeScopeKey) {
+        const activeField = parseFieldId(activeFieldId || "");
         const markdown = decodeHtmlEntitiesInFences(
           getMarkdownFromEditor(activeEditor),
         );
-        draftMarkdownByField.set(activeScopeKey, markdown);
+        setCanonicalInlineDraft(activeField, markdown, activeTarget);
       }
     },
     onClose: () => {
       // Refocus editor after picker closes
-      setTimeout(() => activeEditor?.view?.focus(), 0);
+      afterNextPaint(() => activeEditor?.view?.focus());
     },
   });
 }
@@ -1090,7 +1165,7 @@ function createInlineToolbar() {
   }
   const { menubar, menubarInner } = createMenubarShell({
     className: "mfe-inline-menubar",
-    top: "12px",
+    // rely on CSS variable --mfe-menubar-offset instead of hardcoded value
   });
 
   const toolbar = document.createElement("div");
@@ -1123,10 +1198,10 @@ function createInlineToolbar() {
   closeBtn.className = "editor-toolbar-btn mfe-inline-close";
   closeBtn.title = "Close (Esc)";
   closeBtn.innerHTML = "×";
-  closeBtn.addEventListener("click", (e) => {
+  closeBtn.onclick = (e) => {
     e.preventDefault();
     closeInlineEditor({ saveOnClose: false, promptOnClose: true });
-  });
+  };
 
   toolbar.appendChild(closeBtn);
   attachToolbarToMenubarInner(menubarInner, toolbar);
@@ -1136,8 +1211,40 @@ function createInlineToolbar() {
   toolbarCloseBtn = closeBtn;
 }
 
+function buildCanonicalInlinePayloadFromElement(element, markdownContent) {
+  if (!(element instanceof Element)) {
+    throw new Error("[mfe] inline payload invariant: target element required");
+  }
+  const fieldScope = getMetaAttr(element, "scope") || "";
+  if (!CANONICAL_SCOPE_SET.has(fieldScope)) {
+    throw new Error(
+      `[mfe] inline payload invariant: invalid target scope "${fieldScope}"`,
+    );
+  }
+  const fieldName = getMetaAttr(element, "name") || "";
+  if (fieldScope !== "document" && !fieldName) {
+    throw new Error("[mfe] inline payload invariant: target name required");
+  }
+  const pageId = element.getAttribute("data-page") || "";
+  if (!pageId) {
+    throw new Error("[mfe] inline payload invariant: target pageId required");
+  }
+  return {
+    element,
+    markdownContent: typeof markdownContent === "string" ? markdownContent : "",
+    fieldName: fieldName || "document",
+    fieldType: element.getAttribute("data-field-type") || "tag",
+    fieldScope,
+    fieldSection: getMetaAttr(element, "section") || "",
+    fieldSubsection: getMetaAttr(element, "subsection") || "",
+    pageId,
+    canonicalHydrated: true,
+  };
+}
+
 async function openInlineEditorFromPayload(payload) {
   if (!payload || !payload.element) return;
+  assertCanonicalPayloadSchema(payload, "inline:openInlineEditorFromPayload");
   const el = payload.element;
   if (activeTarget === el && activeEditor) return;
 
@@ -1179,7 +1286,7 @@ async function openInlineEditorFromPayload(payload) {
     subsection: fieldSubsection || "",
     name: fieldName,
   });
-  scopeMetaByKey.set(activeScopeKey, {
+  inlineState.setScopeMeta(activeScopeKey, {
     fieldId: activeFieldId,
     pageId,
     scope: fieldScope,
@@ -1187,7 +1294,7 @@ async function openInlineEditorFromPayload(payload) {
     subsection: fieldSubsection || "",
     name: fieldName,
   });
-  fieldElements.set(activeFieldId, el);
+  inlineState.setFieldElement(activeFieldId, el);
 
   const scope = createScope({
     kind: fieldScope,
@@ -1199,7 +1306,7 @@ async function openInlineEditorFromPayload(payload) {
   });
   const view = createView({ kind: "rich" });
   const hostContext = createHost({ kind: "inline" });
-  activeSession = resolveSession({ scope, view, host: hostContext });
+  resolveSession({ scope, view, host: hostContext });
 
   if (!originalHtml.has(el)) {
     originalHtml.set(el, el.innerHTML);
@@ -1215,21 +1322,49 @@ async function openInlineEditorFromPayload(payload) {
   activeEditor = createEditorInstance(host, fieldType, fieldName);
 
   suppressUpdates = true;
-  const draftJson = activeScopeKey ? draftByField.get(activeScopeKey) : null;
-  if (draftJson) {
-    activeEditor.commands.setContent(draftJson, false);
-    dirty = true;
-    markDirty(activeFieldId);
-  } else {
-    const html = renderMarkdownToHtml(markdownContent || "");
-    activeEditor.commands.setContent(html, false);
-    dirty = false;
-    clearDirty(activeFieldId);
-    if (activeScopeKey) {
-      draftMarkdownByField.delete(activeScopeKey);
-    }
-    // Store original markdown for losslessness validation
-    originalMarkdownByField.set(activeFieldId, markdownContent || "");
+  allowSystemTransactionDepth += 1;
+  try {
+    const doc = parseMarkdownToDoc(markdownContent || "", activeEditor.schema);
+    activeEditor.commands.setContent(doc.toJSON(), false);
+  } catch (_error) {
+    console.warn("[mfe:inline] parse-failed:open", {
+      scope: fieldScope,
+      section: fieldSection,
+      subsection: fieldSubsection || "",
+      name: fieldName,
+      error: _error?.message || String(_error),
+    });
+  } finally {
+    allowSystemTransactionDepth = Math.max(0, allowSystemTransactionDepth - 1);
+  }
+  dirty = false;
+  clearDirty(activeFieldId);
+  if (activeScopeKey) {
+    inlineState.deleteDraft(activeScopeKey);
+  }
+  inlineState.setOriginalMarkdown(activeFieldId, markdownContent || "");
+  const boundState = ensureInlineDocumentState(
+    {
+      pageId,
+      scope: fieldScope,
+      section: fieldSection,
+      subsection: fieldSubsection || "",
+      name: fieldName,
+    },
+    el,
+  );
+  if (boundState?.docState) {
+    const readbackClassification =
+      typeof boundState.docState.getLastReadbackClassification === "function"
+        ? boundState.docState.getLastReadbackClassification()
+        : null;
+    boundState.docState.markSaved(markdownContent || "", {
+      reason: "inline-open-sync",
+      trigger: "save-commit",
+      currentScope: fieldScope,
+      readbackClassification,
+      readbackClass: String(readbackClassification?.className || ""),
+    });
   }
   suppressUpdates = false;
   if (shouldWarnForExtraContent(fieldType, fieldName)) {
@@ -1246,24 +1381,7 @@ async function openInlineEditorFromPayload(payload) {
   createInlineToolbar();
 
   const editor = activeEditor;
-  setTimeout(() => editor?.view?.focus(), 0);
-}
-
-async function openInlineEditor(el) {
-  if (!el) return;
-  const markdownB64 = el.getAttribute("data-markdown-b64");
-  const markdownContent = markdownB64 ? decodeMarkdownBase64(markdownB64) : "";
-  const payload = {
-    element: el,
-    markdownContent,
-    fieldName: getMetaAttr(el, "name") || "unknown",
-    fieldType: el.getAttribute("data-field-type") || "tag",
-    fieldScope: getMetaAttr(el, "scope") || "field",
-    fieldSection: getMetaAttr(el, "section") || "",
-    fieldSubsection: getMetaAttr(el, "subsection") || "",
-    pageId: el.getAttribute("data-page") || "0",
-  };
-  return openInlineEditorFromPayload(payload);
+  afterNextPaint(() => editor?.view?.focus());
 }
 
 function closeInlineEditor({
@@ -1271,6 +1389,7 @@ function closeInlineEditor({
   promptOnClose = false,
   keepToolbar = false,
   persistDraft = false,
+  flushToCanonical = false,
 } = {}) {
   if (!activeEditor || !activeTarget) {
     if (toolbarEl) {
@@ -1295,7 +1414,6 @@ function closeInlineEditor({
     activeFieldSubsection = "";
     activeFieldId = null;
     activeScopeKey = "";
-    activeSession = null;
     dirty = false;
     isClosingInlineEditor = false;
     return Promise.resolve(true);
@@ -1310,7 +1428,7 @@ function closeInlineEditor({
   const target = activeTarget;
   const scopeKey = activeScopeKey;
   const editorForDraft = activeEditor;
-  const hasDraft = scopeKey ? draftByField.has(scopeKey) : false;
+  const hasDraft = scopeKey ? inlineState.hasDraft(scopeKey) : false;
 
   const cleanup = () => {
     if (activeEditor) {
@@ -1325,7 +1443,6 @@ function closeInlineEditor({
     activeFieldSubsection = "";
     activeFieldId = null;
     activeScopeKey = "";
-    activeSession = null;
     dirty = false;
     isClosingInlineEditor = false;
 
@@ -1355,55 +1472,144 @@ function closeInlineEditor({
   }
 
   if (persistDraft && scopeKey && editorForDraft) {
+    const activeField = parseFieldId(activeFieldId || "");
     const markdown = decodeHtmlEntitiesInFences(
       getMarkdownFromEditor(editorForDraft),
     );
-    draftMarkdownByField.set(scopeKey, markdown);
+    setCanonicalInlineDraft(activeField, markdown, target);
   }
 
   if (!saveOnClose && promptOnClose) {
-    draftByField.forEach((_, key) => {
-      const meta = scopeMetaByKey.get(key);
+    for (const [, meta] of inlineState.scopeMetaByKey.entries()) {
+      if (!meta) continue;
+      const stateEntry = ensureInlineDocumentState(
+        {
+          pageId: meta.pageId,
+          scope: meta.scope,
+          section: meta.section,
+          subsection: meta.subsection,
+          name: meta.name,
+        },
+        inlineState.getFieldElement(meta.fieldId || "") || null,
+      );
+      if (!stateEntry?.docState) continue;
+      stateEntry.docState.clearDraft({
+        reason: "inline-discard",
+        trigger: "explicit-discard",
+      });
+    }
+    inlineState.forEachDraft((_, key) => {
+      const meta = inlineState.getScopeMeta(key);
       if (!meta?.fieldId) return;
       clearDirty(meta.fieldId);
-      const el = fieldElements.get(meta.fieldId);
+      const el = inlineState.getFieldElement(meta.fieldId);
       if (el) {
         const finalHtml = originalHtml.get(el) || "";
         el.innerHTML = finalHtml;
         el.classList.remove("mfe-inline-active");
       }
     });
-    draftByField.clear();
-    draftMarkdownByField.clear();
+    inlineState.clearDrafts();
     dirty = false;
   }
+
+  const flushPromise = flushToCanonical
+    ? (() => {
+        if (!editorForDraft || !target) {
+          throw new Error(
+            "[mfe] inline: flush requested without active editor",
+          );
+        }
+        const fullscreenApi = window.MarkdownFrontEditor;
+        if (
+          !fullscreenApi ||
+          typeof fullscreenApi.applyScopedDraftForTarget !== "function" ||
+          typeof fullscreenApi.getCanonicalState !== "function"
+        ) {
+          throw new Error(
+            "[mfe] inline: canonical fullscreen bridge unavailable",
+          );
+        }
+        const markdown = decodeHtmlEntitiesInFences(
+          getMarkdownFromEditor(editorForDraft),
+        );
+        return Promise.resolve(
+          fullscreenApi.applyScopedDraftForTarget(target, markdown),
+        ).then(() => {
+          fullscreenApi.getCanonicalState();
+        });
+      })()
+    : Promise.resolve();
 
   const savePromise = saveOnClose
     ? saveAllDrafts({ showStatus: false })
     : Promise.resolve();
-  return Promise.resolve(savePromise).then(
-    () => {
-      cleanup();
-      return true;
-    },
-    (err) => {
-      cleanup();
-      return Promise.reject(err);
-    },
-  );
+  return Promise.resolve(flushPromise)
+    .then(() => savePromise)
+    .then(
+      () => {
+        cleanup();
+        return true;
+      },
+      (err) => {
+        cleanup();
+        return Promise.reject(err);
+      },
+    );
 }
 
 function initInlineEditor() {
+  normalizeFieldHostIdentity(document);
   setInlineShellOpen(true);
   window.MarkdownFrontEditorInline = {
     isOpen() {
       return Boolean(activeEditor && activeTarget);
     },
     openForElement(target) {
-      return openInlineEditor(target);
+      const opened = openInlineForTarget(target);
+      if (!opened) {
+        throw new Error("[mfe] inline: router unavailable for openForElement");
+      }
+      return opened;
+    },
+    openForElementFromCanonical(target, canonicalState = null) {
+      const fullscreenApi = window.MarkdownFrontEditor;
+      if (
+        !fullscreenApi ||
+        typeof fullscreenApi.resolveMarkdownForTarget !== "function"
+      ) {
+        throw new Error(
+          "[mfe] inline: canonical fullscreen bridge unavailable",
+        );
+      }
+      const markdownContent = fullscreenApi.resolveMarkdownForTarget(
+        target,
+        canonicalState,
+      );
+      const canonicalPayload = buildCanonicalInlinePayloadFromElement(
+        target,
+        markdownContent,
+      );
+      return openInlineEditorFromPayload(canonicalPayload);
     },
     close(options = {}) {
       return closeInlineEditor(options);
+    },
+    async flushToCanonical() {
+      if (!activeEditor || !activeTarget) {
+        const fullscreenApi = window.MarkdownFrontEditor;
+        if (fullscreenApi?.getCanonicalState) {
+          fullscreenApi.getCanonicalState();
+        }
+        return true;
+      }
+      return closeInlineEditor({
+        saveOnClose: false,
+        promptOnClose: false,
+        keepToolbar: true,
+        persistDraft: false,
+        flushToCanonical: true,
+      }).then(() => true);
     },
   };
   const cfg = window.MarkdownFrontEditorConfig || {};
@@ -1429,15 +1635,29 @@ function initInlineEditor() {
 
   overlayEngine.init();
 
-  if (!dblclickHandler) {
-    dblclickHandler = (e) => {
+  if (!inlineRuntimeEventsBound) {
+    const scope = ensureInlineRuntimeEventScope();
+
+    const onInlineDblclick = (e) => {
+      markInlineIntentToken("dblclick");
       if (isFullscreenOpen()) {
+        debugInlineDblclick({
+          event: e,
+          hit: e.target?.closest?.(".fe-editable") || null,
+          action: null,
+          reason: "fullscreen-open-skip",
+        });
         return;
       }
       clearPendingLinkNavigation();
       const hit = e.target?.closest?.(".fe-editable");
       if (!hit) {
-        // no hit
+        debugInlineDblclick({
+          event: e,
+          hit: null,
+          action: null,
+          reason: "no-hit",
+        });
       }
 
       e.preventDefault();
@@ -1456,24 +1676,44 @@ function initInlineEditor() {
       });
 
       if (!action || action.action === "none") {
+        debugInlineDblclick({
+          event: e,
+          hit,
+          action,
+          reason: "resolved-none",
+        });
         return;
       }
 
       if (action.action === "fullscreen") {
-        openFullscreenForTarget(action.target);
+        debugInlineDblclick({
+          event: e,
+          hit,
+          action,
+          reason: "open-fullscreen",
+        });
+        const opened = openFullscreenForTarget(action.target);
+        if (!opened && isDblclickDebugEnabled()) {
+          console.warn("[mfe:dblclick:inline] fullscreen-open-unavailable", {
+            hit: toDblclickTargetDebug(hit),
+            target: toDblclickTargetDebug(action.target),
+          });
+        }
         return;
       }
 
       if (action.action === "inline") {
+        debugInlineDblclick({
+          event: e,
+          hit,
+          action,
+          reason: "open-inline",
+        });
         openInlineForTarget(action.target);
       }
     };
 
-    document.addEventListener("dblclick", dblclickHandler, true);
-  }
-
-  if (!clickBlockHandler) {
-    clickBlockHandler = (e) => {
+    const onInlineClickBlock = (e) => {
       const linkHit = e.target?.closest?.("a");
       if (!linkHit) return;
       if (!isInEditableZone(e.target)) return;
@@ -1481,7 +1721,6 @@ function initInlineEditor() {
       if (e.altKey || e.shiftKey) return;
       if (linkHit.hasAttribute("download")) return;
 
-      // First click: delay navigation briefly so a second click can become dblclick edit.
       if (e.detail === 1) {
         clearPendingLinkNavigation();
         e.preventDefault();
@@ -1497,29 +1736,15 @@ function initInlineEditor() {
         return;
       }
 
-      // Subsequent click in a dblclick sequence: always cancel link navigation.
       clearPendingLinkNavigation();
       e.preventDefault();
       e.stopPropagation();
     };
-    document.addEventListener("click", clickBlockHandler, true);
-  }
 
-  if (!hoverHandler) {
-    hoverHandler = (e) => {
+    const onInlineHover = (e) => {
       if (hoverRaf) return;
       hoverRaf = window.requestAnimationFrame(() => {
         hoverRaf = null;
-        const containerHit = e.target?.closest?.(
-          '.fe-editable[data-md-scope="field"][data-field-type="container"], .fe-editable[data-mfe-scope="field"][data-field-type="container"]',
-        );
-        if (containerHit) {
-          overlayEngine.hide();
-          lastHoverKey = "";
-          lastHoverRect = null;
-          return;
-        }
-
         const fieldSubHit = overlayEngine.findFieldSubsectionTargetFromPoint(
           e.clientX,
           e.clientY,
@@ -1574,25 +1799,15 @@ function initInlineEditor() {
         lastHoverKey = "";
       });
     };
-    document.addEventListener("mousemove", hoverHandler, true);
-    window.addEventListener("scroll", overlayEngine.hide, true);
-  }
 
-  if (!pointerHandler) {
-    pointerHandler = () => {};
-  }
-
-  if (!beforeUnloadHandler) {
-    beforeUnloadHandler = (e) => {
+    const onInlineBeforeUnload = (e) => {
       if (!dirty) return;
       e.preventDefault();
       e.returnValue = "";
     };
-    window.addEventListener("beforeunload", beforeUnloadHandler);
-  }
 
-  if (!keydownHandler) {
-    keydownHandler = (e) => {
+    const onInlineKeydown = (e) => {
+      markInlineIntentToken("keydown");
       if (e.key === "Escape") {
         closeInlineEditor({ saveOnClose: false, promptOnClose: true });
       }
@@ -1603,7 +1818,14 @@ function initInlineEditor() {
         }
       }
     };
-    document.addEventListener("keydown", keydownHandler, true);
+
+    scope.register(document, "dblclick", onInlineDblclick, true);
+    scope.register(document, "click", onInlineClickBlock, true);
+    scope.register(document, "mousemove", onInlineHover, true);
+    scope.register(window, "scroll", overlayEngine.hide, true);
+    scope.register(window, "beforeunload", onInlineBeforeUnload);
+    scope.register(document, "keydown", onInlineKeydown, true);
+    inlineRuntimeEventsBound = true;
   }
 }
 

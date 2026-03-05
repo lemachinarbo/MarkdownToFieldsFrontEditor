@@ -34,6 +34,7 @@ function createManager() {
       "is-unchanged",
       "is-draft",
       "is-error",
+      "is-processing",
     );
     if (type) {
       statusEl.classList.add(type);
@@ -97,16 +98,35 @@ function createManager() {
     updateFromState();
   }
 
+  function clearAllDirty() {
+    dirtyFields.clear();
+    updateFromState();
+  }
+
   function setSaved() {
     hideToast();
+    dirtyFields.clear();
     lastExplicit = { message: "Saved", className: "is-saved" };
     updateFromState();
   }
 
   function setNoChanges() {
     hideToast();
+    dirtyFields.clear();
     lastExplicit = { message: "No changes", className: "is-unchanged" };
     updateFromState();
+  }
+
+  function setProcessing(message = "Saving...") {
+    hideToast();
+    lastExplicit = {
+      message: String(message || "Saving..."),
+      className: "is-processing",
+      timeout: 2000,
+    };
+    showMessage(lastExplicit.message, lastExplicit.className, {
+      autoHide: false,
+    });
   }
 
   function setError(message = "Save failed", options = {}) {
@@ -115,7 +135,7 @@ function createManager() {
       className: "is-error",
       timeout: 2500,
     };
-    showToast(message, "error", {
+    showToast(message, "alert", {
       persistent: Boolean(options?.persistent),
     });
     updateFromState();
@@ -132,6 +152,7 @@ function createManager() {
         "is-unchanged",
         "is-draft",
         "is-error",
+        "is-processing",
         "is-visible",
       );
       statusEl.textContent = "";
@@ -144,8 +165,10 @@ function createManager() {
     registerStatusEl,
     markDirty,
     clearDirty,
+    clearAllDirty,
     setSaved,
     setNoChanges,
+    setProcessing,
     setError,
     reset,
   };

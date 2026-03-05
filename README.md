@@ -40,48 +40,91 @@ Click breadcrumbs to edit parent sections, subsections oor container fields.
 
 Double click images to open the image picker and select a new one from your MarkdownToFields image folder. The markdown will be updated with the new image path.
 
+
 ## How MFE Works
 
 The editor is built around a simple idea: everything comes from one Markdown document, and it treats that source with care. 
 Your Markdown content and format must stay exactly as you wrote it.
 
-This editor works in 4 layers:
+### 1. Document
 
-### Document
+The Markdown file is the original content. 
 
-The Markdown file is the original content.
-What you see in the editor or on the page is always a representation of that same document.
+#### State
 
-### Scope
+When user opens an editor, a 'state' of the document is created. This state is a 'draft' of the document, and it can be modified without affecting the original markdown file, until the user decides to save or discard the changes.
+
+#### Status
+
+The document can be in one of the following statuses:
+- No changes: the document state is the same as the original markdown file.
+- Draft: the document state has been modified, but not yet saved to the original
+
+Status changes are triggered by 2 actions:
+
+- Discarded: the document state has been discarded, and the original markdown file is unchanged
+- Saved: the document state has been saved to the original markdown file, and the original markdown file is updated with the changes.
+
+### 2. Scope
 
 Scope is just *which part* of the document you’re editing. The scope is provided by MarkdownToFields, and it can be:
 
-* whole document
-* a section
-* a subsection
-* a field
+- whole document
+- a section
+- a subsection
+- a field
 
-Changing scope doesn’t change content. It only changes what portion the user is focused on.
+Each of these scopes acts as a peek window into the same 'document state'.
 
-### Views
+If document state changes, any scope that can view the 'modified content' will show the change immediately, because scopes are just lenses of the state of the document, not versions or copies. 
 
-Views control **how content is shown**, not what it is:
+Changing scope doesn’t change content, status, or state. It only changes what portion the user is focused on.
 
-* **Raw** → Markdown text
-* **Rich** → visual editor
-* **Outline** → shows boundaries and labels
-* **Map** → shows structure as a tree
+### 3. Interfaces
 
-Switching views never modifies the content.
+Interfaces allow users to view and edit the document state through specific scopes. There are two main interfaces:
 
-### Context
+- **Fullscreen** An editor window
+- **Inline** WYSIWYG editor on top of your frontend (LIMITED for now)
 
-Context is where users edit:
+Interfaces only define where you are editing, not how the 'editing' works.
 
-* **Inline** WYSIWYG editor on top of your frontend (LIMITED for now)
-* **Fullscreen** An editor window
+### 4. Modes
 
-Context only changes where you edit, not how editing works.
+Modes control **how content is presented and interacted with**:
+
+Editors:
+- **Raw** → Markdown text
+- **Rich** → visual editor
+
+Helpers:
+- **Outline** → shows boundaries and labels
+- **Split** → shows two documents at the same time
+- **Map** → shows structured navigation (WIP)
+
+
+#### Split and multilanguage
+
+The idea of split view is that you can open multiple documents at the same time, and see them side by side. 
+Is currently implemented to identify documents by language, but it can be extended to other dimensions in the future.
+
+If your website is structured as:
+
+en/markdown.md
+es/markdown.md
+de/markdown.md
+
+When split view is open, a document state is created for each language, and each document state is independent from the others.
+
+Editing tools (like bold, italic, etc. in the rich editor) are local for the document you are editing, but scopes and helpers are global. This means: Saving, discarding, changing the scope or activating the outline mode, will change for all documents, but editing tools, will only apply to the document you are editing.
+
+
+### Nice to know:
+
+So, basically, MFE works like this: We have `Interfaces` with `Modes`, which displays a `Scope` of the `Document State`.
+
+No matter if user is viewing, saving, or discarding changes in any scope or language, each document state is unique, and all scopes reflect the changes accordingly. This ensures that users have a consistent and accurate view of their work, until they decide to finalize their changes. And most important, that the pipelines for opening, editing, viewing, saving discarding changes are deterministic, consistent, predictable and centralized, not branched or decentralized.
+
 
 ## Install
 
@@ -248,28 +291,9 @@ This module is small and opinionated. If something breaks, start by (shaking) ch
 
 ### Debugging
 
-Live preview uses a stamped canonical identity per mount.
+If you need to troubleshoot, check [docs/debug.md](docs/debug.md). It has practical steps and copy/paste helpers.
 
-- Authors write shorthand (`data-mfe`, `data-mfe-source`).
-- Compiler resolves canonical identity and stamps:
-  - `data-mfe-key` (canonical key used across network)
-  - `data-mfe-sig` (structural signature)
-  - `data-mfe-key-id` (runtime patch selector id)
-- In debug mode it also stamps:
-  - `data-mfe-path` (human-readable path, e.g. `topics.description`)
-
-Important rule:
-- If `data-mfe-key` is present, runtime uses that key directly (no shorthand inference for that node).
-
-Debug helpers (run in your console):
-- `window.MarkdownFrontEditor.recompile()` -> recompute and restamp mount graph.
-- `window.MarkdownFrontEditor.watch()` -> dev-only MutationObserver auto-recompile.
-- `window.MarkdownFrontEditor.unwatch()` -> stop watch mode.
-
-Diagnostics you may see in processwire log:
-- `mfe_missing` -> fragment key not resolved server-side; editable-only fallback applied.
-- `FRAGMENTS_GRAPH_MISMATCH` -> client and server mount graph checksums differ.
-- `FRAGMENTS_STAMP_WARN` / `FRAGMENTS_STAMP_ERROR` -> stamped key mismatch or non-recomputable key on server render.
+By default, logs stay pretty quiet. Turn on debug mode only when you actually need deeper details.
 
 
 ## License

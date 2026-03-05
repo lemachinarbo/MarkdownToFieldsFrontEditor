@@ -15,7 +15,7 @@ describe("Fullscreen shell contract", () => {
 
     setFullscreenShellOpen(true);
 
-    expect(add).toHaveBeenCalledWith("mfe-view-fullscreen");
+    expect(add).toHaveBeenCalledWith("mfe-state-fullscreen-open");
     expect(remove).not.toHaveBeenCalled();
   });
 
@@ -26,7 +26,7 @@ describe("Fullscreen shell contract", () => {
 
     setFullscreenShellOpen(false);
 
-    expect(remove).toHaveBeenCalledWith("mfe-view-fullscreen");
+    expect(remove).toHaveBeenCalledWith("mfe-state-fullscreen-open");
     expect(add).not.toHaveBeenCalled();
   });
 
@@ -43,7 +43,7 @@ describe("Fullscreen shell contract", () => {
 
     setDocumentModeShellOpen(true);
 
-    expect(add).toHaveBeenCalledWith("mfe-document-mode");
+    expect(add).toHaveBeenCalledWith("mfe-state-document-mode");
     expect(remove).not.toHaveBeenCalled();
   });
 
@@ -54,7 +54,7 @@ describe("Fullscreen shell contract", () => {
 
     setDocumentModeShellOpen(false);
 
-    expect(remove).toHaveBeenCalledWith("mfe-document-mode");
+    expect(remove).toHaveBeenCalledWith("mfe-state-document-mode");
     expect(add).not.toHaveBeenCalled();
   });
 });

@@ -15,6 +15,7 @@ This is the front-end editor for [MarkdownToFields](https://github.com/lemachina
 
 ## Developer Workflows
 
+- **lint php:** Use `ddev php`
 - **Build:** Use `ddev npm install` to install dependencies. Build steps are handled by Vite (`vite.config.js`).
 - **Test:** Run all tests with `ddev npm test -- tests`. Update Jest snapshots with `ddev npm test -- -u`.
 - **Debug:** Use browser console helpers:
@@ -47,6 +48,12 @@ This is the front-end editor for [MarkdownToFields](https://github.com/lemachina
 - **MarkdownToFields** (content tagging and scoping)
 - **Vite** (build tooling)
 - **Jest** (testing)
+
+## Canonical entrypoint
+
+Never introduce parallel state or alternate execution paths for the same user action. All reads and writes must go through a single canonical entrypoint per intent. Do not add helper fallbacks that mask errors or silently recover from invariant violations. UI navigation must not mutate scope, target, or source of truth outside the canonical flow. Treat document-level actions as simple links, not separate mode systems.
+
+Assume bugs come from boundary orchestration, not core logic. If multiple mutable sources appear, stop and refactor to one. Add checks that fail fast when state shape or markers change unexpectedly.
 
 ---
 

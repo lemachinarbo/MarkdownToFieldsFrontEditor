@@ -1,16 +1,40 @@
 # Changelog
 
+## v0.7
+
+- Big cleanup release focused on trust and stability.
+- The editor flow is now simpler and more consistent: one clear way to open, edit, and save content without hidden side paths (check architect.md).
+- New E2E tests.
+
+## v0.6.2
+
+- Editor’s been hardened for deterministic behavior. Updates and new features can now be added freely, without worrying about hidden state ghosts or timing gremlins lurking in the machinery.
+- You can now target the main markdown area by passing an empty key when applying or syncing drafts. Before, the system treated the whole document like a normal field and ignored it. That’s fixed now, with tests to make sure it stays that way.
+- Saves now show a persistent “Saving…” notice, the status bar reflects processing, and concurrent saves are queued instead of racing. Notices can be pinned, and closing fullscreen no longer waits for saves.
+- Fix document view button.
+- Fullscreen editor now reliably tracks changes for document‑scope edits and correctly saves the canonical markdown. Dirty flags, draft maps and save logic have been cleaned up to prevent stale drafts and ensure updates across scopes.
+
+## v0.6.1
+
+- Improve field resolution logic: Fields now pick the right one at the section level; handles ambiguities better
+- Added helper for consistent field identity in both editors
+- Fullscreen editor uses inline editor for clicks; normalizes field identity before loading
+- Inline editor handles all clicks/double-clicks; added debug logging
+- Hover overlays toggle a single active class; debug bypass included
+- Better error handling and logging for routing failures
+- Removed old hover/label CSS; overlay handles all hover effects
+- Tests added for field identity and hover overlays; regression suite updated
+- Removed all data-md-* compatibility reads and legacy view classes; now only data-mfe-* and mfe-state-* are used.
+Unified runtime identity and state handling; added tests and checklist to lock in canonical naming.
 
 ## V0.6
-Made opening editors consistent: inline and fullscreen now use one shared router path.
-  - Removed duplicate double-click logic from editors. The router now handles switching.
- - Fixed a bug where inline UI could stay visible when fullscreen opened.
-* Fixed an issue where ~~strikethrough~~ text sometimes showed raw `~~` after switching views. Now it stays formatted correctly.
-* Tightened parser logic so special markers only load when supported, preventing random mis-parsing.
-- Update draft retrieval logic.
-* Expanded tests to ensure formatting and images stay correct when moving between editor scopes.
-
-
+- Unified editor routing. Inline and fullscreen now open through one deterministic path, fixing visibility glitches and removing duplicate dblclick. Editor state is canonical-first across hosts, so switching views is consistent.
+- Breadcrumbs stay stable. Field context remains pinned while navigating parents.
+- Draft retrieval logic improved.
+- Fixed rare case where ~~strikethrough~~ showed raw markers after view switch.
+- Sections with no direct body now show a **synthetic preview** built from their subsections. In plain words: if a section only contains `sub:*` blocks, the editor temporarily “fakes” section content so the preview isn’t empty. This preview is generated strictly from the current canonical markdown state, so it always reflects unsaved edits and never pulls stale cache data.
+- Restored `Ctrl/Cmd + double click` inline launch by preventing fullscreen delegated dblclick capture from intercepting modified clicks.
+- Fix breadcrumb reopening and stale unsaved changes prompts
 
 ## V0.5.7.3
 - Fix thumbnail generation with EXIF orientation caching

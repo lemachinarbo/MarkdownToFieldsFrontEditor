@@ -30,20 +30,10 @@ function findSectionNameForSubsection(subName) {
 function collectFieldTargets(root = document) {
   const fields = Array.from(root.querySelectorAll(".fe-editable"));
   return fields.map((el) => {
-    const scope =
-      el.getAttribute("data-mfe-scope") ||
-      el.getAttribute("data-md-scope") ||
-      "field";
-    const name =
-      el.getAttribute("data-mfe-name") || el.getAttribute("data-md-name") || "";
-    const section =
-      el.getAttribute("data-mfe-section") ||
-      el.getAttribute("data-md-section") ||
-      "";
-    const subsection =
-      el.getAttribute("data-mfe-subsection") ||
-      el.getAttribute("data-md-subsection") ||
-      "";
+    const scope = el.getAttribute("data-mfe-scope") || "field";
+    const name = el.getAttribute("data-mfe-name") || "";
+    const section = el.getAttribute("data-mfe-section") || "";
+    const subsection = el.getAttribute("data-mfe-subsection") || "";
     const fieldType = el.getAttribute("data-field-type") || "tag";
     const primaryId = subsection
       ? `subsection:${section}:${subsection}:${name}`

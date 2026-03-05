@@ -1,6 +1,157 @@
 import { Extension } from "@tiptap/core";
-import { Plugin } from "prosemirror-state";
+import { Plugin, PluginKey } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
+
+const DOCUMENT_BOUNDARY_PLUGIN_KEY = new PluginKey("documentBoundary");
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function mapDisplayOffsetToDocPos(offset, displayLength, docSize) {
+  if (docSize <= 0) return 1;
+  if (displayLength <= 0) return clamp(1, 1, docSize);
+  const ratio = clamp(Number(offset || 0) / displayLength, 0, 1);
+  return clamp(Math.round(ratio * docSize), 1, docSize);
+}
+
+function mapDocPosToDisplayOffset(docPos, docSize, displayLength) {
+  if (docSize <= 0 || displayLength <= 0) return 0;
+  const ratio = clamp(Number(docPos || 0) / docSize, 0, 1);
+  return clamp(Math.round(ratio * displayLength), 0, displayLength);
+}
+
+function mapBoundaryDocPositionsWithTransaction(boundaryDocPositions, tr, docSize) {
+  const source = Array.isArray(boundaryDocPositions) ? boundaryDocPositions : [];
+  const mapped = source.map((position) => {
+    const mappedPosition = tr.mapping.map(Number(position || 1), 1);
+    return clamp(mappedPosition, 1, Math.max(1, docSize));
+  });
+  let floor = 1;
+  for (let index = 0; index < mapped.length; index += 1) {
+    const next = Math.max(floor, mapped[index]);
+    mapped[index] = next;
+    floor = next;
+  }
+  return mapped;
+}
+
+function normalizeStrictIncreasingBoundaries(boundaries, maxOffset) {
+  const source = Array.isArray(boundaries) ? boundaries : [];
+  const max = Math.max(0, Number(maxOffset || 0));
+  const count = source.length;
+  if (!count) return [];
+  const normalized = new Array(count).fill(0);
+  normalized[0] = 0;
+  for (let index = 1; index < count; index += 1) {
+    const raw = Math.max(0, Number(source[index] || 0));
+    const minAllowed = normalized[index - 1] + 1;
+    const maxAllowed = Math.max(minAllowed, max - (count - 1 - index));
+    normalized[index] = clamp(raw, minAllowed, maxAllowed);
+  }
+  return normalized;
+}
+
+export function mapEditableBoundariesWithTransaction(
+  editableBoundaries,
+  tr,
+  maxDisplayLength,
+) {
+  const source = Array.isArray(editableBoundaries) ? editableBoundaries : [];
+  const mapped = source.map((boundary, index) => {
+    if (index === 0) return 0;
+    const mappedBoundary = tr?.mapping?.map
+      ? tr.mapping.map(Number(boundary || 0), 1)
+      : Number(boundary || 0);
+    return Math.max(0, Number(mappedBoundary || 0));
+  });
+  return normalizeStrictIncreasingBoundaries(mapped, maxDisplayLength);
+}
+
+function normalizeProjectionPayload(projection, doc) {
+  const payload = projection && typeof projection === "object" ? projection : {};
+  const displayText = String(payload.displayText || "");
+  const displayLength = displayText.length;
+  const docSize = Math.max(1, Number(doc?.content?.size || 0));
+  const inputEditableBoundaries = Array.isArray(payload.editableBoundaries)
+    ? payload.editableBoundaries
+    : [];
+  const editableBoundaries = Array.isArray(payload.editableBoundaries)
+    ? payload.editableBoundaries.map((value) => Math.max(0, Number(value || 0)))
+    : [];
+  const boundaryDocPositions =
+    Array.isArray(payload.boundaryDocPositions) &&
+    payload.boundaryDocPositions.length === editableBoundaries.length
+      ? payload.boundaryDocPositions.map((value) =>
+          clamp(Number(value || 1), 1, docSize),
+        )
+      : editableBoundaries.map((offset) =>
+          mapDisplayOffsetToDocPos(offset, displayLength, docSize),
+        );
+  const nextProjectionMeta =
+    payload.projectionMeta && typeof payload.projectionMeta === "object"
+      ? payload.projectionMeta
+      : {};
+  return {
+    ...payload,
+    displayText,
+    editableBoundaries,
+    boundaryDocPositions,
+    projectionMeta: {
+      updateMode: String(nextProjectionMeta.updateMode || "deterministic-recompute"),
+      deterministicRecomputeCount: Number(
+        nextProjectionMeta.deterministicRecomputeCount || 0,
+      ),
+      mappingUpdateCount: Number(nextProjectionMeta.mappingUpdateCount || 0),
+      boundaryInputCount: Number(
+        nextProjectionMeta.boundaryInputCount || inputEditableBoundaries.length,
+      ),
+      boundaryNormalizedCount: Number(
+        nextProjectionMeta.boundaryNormalizedCount || editableBoundaries.length,
+      ),
+      boundaryDedupeOccurred: Boolean(
+        nextProjectionMeta.boundaryDedupeOccurred || false,
+      ),
+      runtimeBoundariesTrusted: Boolean(
+        nextProjectionMeta.runtimeBoundariesTrusted || false,
+      ),
+      stateId: String(nextProjectionMeta.stateId || ""),
+      scopeKey: String(nextProjectionMeta.scopeKey || ""),
+      lastDocChangeTrace:
+        nextProjectionMeta.lastDocChangeTrace &&
+        typeof nextProjectionMeta.lastDocChangeTrace === "object"
+          ? nextProjectionMeta.lastDocChangeTrace
+          : null,
+    },
+    projectionUtils: {
+      displayLength,
+      docSize,
+      mapDocPosToDisplayOffset,
+    },
+  };
+}
+
+export function readDocumentBoundaryProjection(editorOrState) {
+  const state =
+    editorOrState?.state && typeof editorOrState.state === "object"
+      ? editorOrState.state
+      : editorOrState;
+  if (!state || typeof state !== "object") return null;
+  const pluginState = DOCUMENT_BOUNDARY_PLUGIN_KEY.getState(state);
+  if (!pluginState || typeof pluginState !== "object") return null;
+  return pluginState.canonicalProjection || null;
+}
+
+export function writeDocumentBoundaryProjection(editor, projection) {
+  const view = editor?.view;
+  if (!view?.state || typeof view.dispatch !== "function") return false;
+  const tr = view.state.tr.setMeta(DOCUMENT_BOUNDARY_PLUGIN_KEY, {
+    type: "setCanonicalProjection",
+    projection: projection || null,
+  });
+  view.dispatch(tr);
+  return true;
+}
 
 function parseMarkerContext(name, ctx) {
   const value = String(name || "").trim();
@@ -104,6 +255,68 @@ function buildMarkerClassName(ctx) {
   return "mfe-doc-marker mfe-doc-marker--document";
 }
 
+function resolveSyntheticMarkerPosition(state, rawPosition) {
+  const docSize = Math.max(0, Number(state?.doc?.content?.size || 0));
+  if (docSize <= 0) return 0;
+  const candidate = clamp(Math.round(Number(rawPosition || 0)), 0, docSize);
+  const resolved = state.doc.resolve(candidate);
+  if (resolved.depth >= 1) {
+    return resolved.before(1);
+  }
+  return candidate;
+}
+
+function resolveMarkerContextFromProtectedSpan(span, fallbackContext) {
+  const fallback =
+    fallbackContext && typeof fallbackContext === "object"
+      ? fallbackContext
+      : {
+          section: "",
+          subsection: "",
+          field: "",
+          fieldIsContainer: false,
+        };
+  const rawName = String(span?.markerRawName || "").trim();
+  if (rawName) {
+    return parseMarkerContext(rawName, fallback);
+  }
+
+  const kind = String(span?.markerKind || "")
+    .trim()
+    .toLowerCase();
+  const markerName = String(span?.markerName || "").trim();
+  const markerSection = String(span?.markerSection || "").trim();
+  const markerSubsection = String(span?.markerSubsection || "").trim();
+  const markerFieldIsContainer = Boolean(span?.markerFieldIsContainer);
+
+  if (kind === "section") {
+    const section = markerName || markerSection;
+    return {
+      section,
+      subsection: "",
+      field: "",
+      fieldIsContainer: false,
+    };
+  }
+  if (kind === "subsection") {
+    return {
+      section: markerSection || fallback.section || "",
+      subsection: markerName || markerSubsection,
+      field: "",
+      fieldIsContainer: false,
+    };
+  }
+  if (kind === "field") {
+    return {
+      section: markerSection || fallback.section || "",
+      subsection: markerSubsection || fallback.subsection || "",
+      field: markerName,
+      fieldIsContainer: markerFieldIsContainer,
+    };
+  }
+  return fallback;
+}
+
 function contextsEqual(left, right) {
   return (
     String(left?.section || "") === String(right?.section || "") &&
@@ -128,6 +341,168 @@ export function createDocumentBoundaryExtension(getMode) {
     addProseMirrorPlugins() {
       return [
         new Plugin({
+          key: DOCUMENT_BOUNDARY_PLUGIN_KEY,
+          state: {
+            init() {
+              return {
+                canonicalProjection: null,
+              };
+            },
+            apply(tr, pluginState, oldState, newState) {
+              const prev =
+                pluginState && typeof pluginState === "object"
+                  ? pluginState
+                  : { canonicalProjection: null };
+              const meta = tr.getMeta(DOCUMENT_BOUNDARY_PLUGIN_KEY);
+              if (meta && typeof meta === "object" && meta.type === "setCanonicalProjection") {
+                const nextProjection = normalizeProjectionPayload(
+                  meta.projection || null,
+                  tr.doc,
+                );
+                if (typeof console !== "undefined" && typeof console.info === "function") {
+                  console.info(
+                    "MFE_RUNTIME_BOUNDARY_WRITE_TRACE",
+                    JSON.stringify({
+                      reason: "document-boundary:setCanonicalProjection",
+                      mode: String(nextProjection?.projectionMeta?.updateMode || ""),
+                      trDocChanged: Boolean(tr.docChanged),
+                      selectionFrom: Number(newState?.selection?.from ?? -1),
+                      selectionTo: Number(newState?.selection?.to ?? -1),
+                      previousRuntimeBoundaries: Array.isArray(
+                        prev?.canonicalProjection?.editableBoundaries,
+                      )
+                        ? prev.canonicalProjection.editableBoundaries
+                        : [],
+                      newRuntimeBoundaries: Array.isArray(
+                        nextProjection?.editableBoundaries,
+                      )
+                        ? nextProjection.editableBoundaries
+                        : [],
+                      deterministicBoundaries: [],
+                      stateId: String(nextProjection?.projectionMeta?.stateId || ""),
+                      scopeKey: String(nextProjection?.projectionMeta?.scopeKey || ""),
+                      runtimeBoundariesTrusted: Boolean(
+                        nextProjection?.projectionMeta?.runtimeBoundariesTrusted || false,
+                      ),
+                    }),
+                  );
+                }
+                return {
+                  ...prev,
+                  canonicalProjection: nextProjection,
+                };
+              }
+              if (tr.docChanged && prev.canonicalProjection) {
+                const previousProjection =
+                  prev.canonicalProjection && typeof prev.canonicalProjection === "object"
+                    ? prev.canonicalProjection
+                    : null;
+                const previousDisplayLength = String(
+                  previousProjection?.displayText || "",
+                ).length;
+                const oldDocSize = Math.max(
+                  1,
+                  Number(oldState?.doc?.content?.size || 0),
+                );
+                const newDocSize = Math.max(
+                  1,
+                  Number(newState?.doc?.content?.size || tr.doc?.content?.size || 0),
+                );
+                const estimatedDisplayLength = Math.max(
+                  0,
+                  previousDisplayLength + (newDocSize - oldDocSize),
+                );
+                const currentProjection = normalizeProjectionPayload(
+                  previousProjection,
+                  tr.doc,
+                );
+                const mappedBoundaryDocPositions = mapBoundaryDocPositionsWithTransaction(
+                  currentProjection.boundaryDocPositions,
+                  tr,
+                  Math.max(1, Number(tr.doc?.content?.size || 0)),
+                );
+                const mappedEditableBoundaries = mapEditableBoundariesWithTransaction(
+                  currentProjection.editableBoundaries,
+                  tr,
+                  estimatedDisplayLength,
+                );
+                const prevMetaProjection =
+                  currentProjection.projectionMeta &&
+                  typeof currentProjection.projectionMeta === "object"
+                    ? currentProjection.projectionMeta
+                    : {};
+                const metaObject =
+                  tr.meta && typeof tr.meta === "object" ? tr.meta : {};
+                const metaKeys = Object.keys(metaObject)
+                  .map((key) => String(key || ""))
+                  .filter(Boolean)
+                  .slice(0, 12);
+                if (typeof console !== "undefined" && typeof console.info === "function") {
+                  console.info(
+                    "MFE_RUNTIME_BOUNDARY_WRITE_TRACE",
+                    JSON.stringify({
+                      reason: "document-boundary:tr-mapping",
+                      mode: "tr-mapping",
+                      trDocChanged: Boolean(tr.docChanged),
+                      selectionFrom: Number(newState?.selection?.from ?? -1),
+                      selectionTo: Number(newState?.selection?.to ?? -1),
+                      previousRuntimeBoundaries: Array.isArray(
+                        currentProjection?.editableBoundaries,
+                      )
+                        ? currentProjection.editableBoundaries
+                        : [],
+                      newRuntimeBoundaries: Array.isArray(mappedEditableBoundaries)
+                        ? mappedEditableBoundaries
+                        : [],
+                      deterministicBoundaries: [],
+                      stateId: String(prevMetaProjection.stateId || ""),
+                      scopeKey: String(prevMetaProjection.scopeKey || ""),
+                      runtimeBoundariesTrusted: true,
+                    }),
+                  );
+                }
+                return {
+                  ...prev,
+                  canonicalProjection: {
+                    ...currentProjection,
+                    boundaryDocPositions: mappedBoundaryDocPositions,
+                    editableBoundaries: mappedEditableBoundaries,
+                    projectionMeta: {
+                      updateMode: "tr-mapping",
+                      deterministicRecomputeCount: Number(
+                        prevMetaProjection.deterministicRecomputeCount || 0,
+                      ),
+                      mappingUpdateCount:
+                        Number(prevMetaProjection.mappingUpdateCount || 0) + 1,
+                      boundaryInputCount: Number(
+                        prevMetaProjection.boundaryInputCount ||
+                          mappedBoundaryDocPositions.length,
+                      ),
+                      boundaryNormalizedCount: Number(
+                        Array.isArray(mappedEditableBoundaries)
+                          ? mappedEditableBoundaries.length
+                          : 0,
+                      ),
+                      boundaryDedupeOccurred: false,
+                      runtimeBoundariesTrusted: true,
+                      stateId: String(prevMetaProjection.stateId || ""),
+                      scopeKey: String(prevMetaProjection.scopeKey || ""),
+                      lastDocChangeTrace: {
+                        stepsLength: Array.isArray(tr.steps) ? tr.steps.length : 0,
+                        mappingMapsLength:
+                          tr.mapping && Array.isArray(tr.mapping.maps)
+                            ? tr.mapping.maps.length
+                            : 0,
+                        docSize: Number(tr.doc?.content?.size || 0),
+                        metaKeys,
+                      },
+                    },
+                  },
+                };
+              }
+              return prev;
+            },
+          },
           props: {
             decorations(state) {
               const mode =
@@ -139,6 +514,21 @@ export function createDocumentBoundaryExtension(getMode) {
               const decorations = [];
               const segmentNodes = [];
               const markerNodes = [];
+              const pluginState = DOCUMENT_BOUNDARY_PLUGIN_KEY.getState(state);
+              const canonicalProjection =
+                pluginState && typeof pluginState === "object"
+                  ? pluginState.canonicalProjection
+                  : null;
+              const projectionProtectedSpans = Array.isArray(
+                canonicalProjection?.protectedSpans,
+              )
+                ? canonicalProjection.protectedSpans
+                : [];
+              const projectionBoundaryDocPositions = Array.isArray(
+                canonicalProjection?.boundaryDocPositions,
+              )
+                ? canonicalProjection.boundaryDocPositions
+                : [];
               const firstFieldSegmentFromByKey = new Map();
               let context = {
                 section: "",
@@ -147,6 +537,7 @@ export function createDocumentBoundaryExtension(getMode) {
                 fieldIsContainer: false,
               };
               const selectionPos = state.selection?.from || 0;
+              const selectionHeadPos = state.selection?.$head?.pos || selectionPos;
 
               state.doc.forEach((node, offset) => {
                 const from = offset;
@@ -180,10 +571,74 @@ export function createDocumentBoundaryExtension(getMode) {
                 }
               });
 
-              const activeSegment = segmentNodes.find(
+              if (!markerNodes.length && projectionProtectedSpans.length) {
+                const markerCount = Math.max(
+                  0,
+                  Math.min(
+                    projectionProtectedSpans.length,
+                    projectionBoundaryDocPositions.length ||
+                      projectionProtectedSpans.length,
+                  ),
+                );
+                let syntheticContext = {
+                  section: "",
+                  subsection: "",
+                  field: "",
+                  fieldIsContainer: false,
+                };
+                for (let index = 0; index < markerCount; index += 1) {
+                  const span = projectionProtectedSpans[index] || null;
+                  syntheticContext = resolveMarkerContextFromProtectedSpan(
+                    span,
+                    syntheticContext,
+                  );
+                  const rawPosition =
+                    projectionBoundaryDocPositions.length > 0
+                      ? projectionBoundaryDocPositions[index]
+                      : 0;
+                  const markerPos = resolveSyntheticMarkerPosition(
+                    state,
+                    rawPosition,
+                  );
+                  markerNodes.push({
+                    from: markerPos,
+                    to: markerPos,
+                    context: { ...syntheticContext },
+                    synthetic: true,
+                    index,
+                    rawName: String(span?.markerRawName || ""),
+                  });
+                }
+              }
+
+              const resolvedActiveIndex = segmentNodes.findIndex(
                 (segment) =>
-                  selectionPos >= segment.from && selectionPos <= segment.to,
+                  selectionPos >= segment.from && selectionPos < segment.to,
               );
+              const resolvedHeadIndex =
+                resolvedActiveIndex >= 0
+                  ? resolvedActiveIndex
+                  : segmentNodes.findIndex(
+                      (segment) =>
+                        selectionHeadPos >= segment.from &&
+                        selectionHeadPos < segment.to,
+                    );
+              const topLevelFrom =
+                state.selection?.$from && state.selection.$from.depth >= 1
+                  ? state.selection.$from.before(1)
+                  : -1;
+              const resolvedTopLevelIndex =
+                resolvedHeadIndex >= 0
+                  ? resolvedHeadIndex
+                  : segmentNodes.findIndex((segment) => segment.from === topLevelFrom);
+              const activeSegmentIndex =
+                resolvedTopLevelIndex >= 0
+                  ? resolvedTopLevelIndex
+                  : segmentNodes.length > 0
+                    ? 0
+                    : -1;
+              const activeSegment =
+                activeSegmentIndex >= 0 ? segmentNodes[activeSegmentIndex] : null;
               const activeContext = activeSegment
                 ? activeSegment.context
                 : {
@@ -193,16 +648,9 @@ export function createDocumentBoundaryExtension(getMode) {
                     fieldIsContainer: false,
                   };
 
-              const segmentActiveFlags = segmentNodes.map((segment) => {
-                if (!activeSegment) return false;
-                if (!segment.context.field) {
-                  return contextsEqual(segment.context, activeContext);
-                }
-                if (segment.context.fieldIsContainer) {
-                  return contextsEqual(segment.context, activeContext);
-                }
-                return segment.from === activeSegment.from;
-              });
+              const segmentActiveFlags = segmentNodes.map(
+                (_segment, index) => index === activeSegmentIndex,
+              );
 
               segmentNodes.forEach((segment, index) => {
                 const isActive = Boolean(segmentActiveFlags[index]);
@@ -248,10 +696,34 @@ export function createDocumentBoundaryExtension(getMode) {
                 const className = `${buildMarkerClassName(marker.context)} ${
                   isActive ? "mfe-doc-marker--active" : "mfe-doc-marker--dim"
                 }`;
+                const markerLabel = buildLabel(marker.context);
+                if (marker.synthetic) {
+                  decorations.push(
+                    Decoration.widget(
+                      marker.from,
+                      () => {
+                        const markerEl = document.createElement("div");
+                        markerEl.className = `mfe-marker ${className}`;
+                        markerEl.setAttribute("data-mfe-doc-label", markerLabel);
+                        markerEl.setAttribute(
+                          "data-mfe-marker",
+                          marker.rawName || markerLabel,
+                        );
+                        markerEl.setAttribute("data-mfe-marker-synth", "1");
+                        return markerEl;
+                      },
+                      {
+                        side: -1,
+                        key: `mfe-doc-marker:${marker.from}:${marker.index || 0}:${markerLabel}`,
+                      },
+                    ),
+                  );
+                  return;
+                }
                 decorations.push(
                   Decoration.node(marker.from, marker.to, {
                     class: className,
-                    "data-mfe-doc-label": buildLabel(marker.context),
+                    "data-mfe-doc-label": markerLabel,
                   }),
                 );
               });

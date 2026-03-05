@@ -65,11 +65,7 @@ function createRoot({ editables = [], mfe = [], sources = [] }) {
 }
 
 function getMetaAttr(el, name) {
-  return (
-    el.getAttribute(`data-mfe-${name}`) ||
-    el.getAttribute(`data-md-${name}`) ||
-    ""
-  );
+  return el.getAttribute(`data-mfe-${name}`) || "";
 }
 
 describe("Graph parity regression", () => {

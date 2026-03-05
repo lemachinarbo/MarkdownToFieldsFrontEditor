@@ -4,54 +4,16 @@ import {
   defaultMarkdownParser,
   defaultMarkdownSerializer,
 } from "prosemirror-markdown";
-
-function normalizeHardBreaksInHeadings(node, insideHeading = false) {
-  if (!node || node.childCount === 0) {
-    return node;
-  }
-
-  const schema = node.type?.schema;
-  if (!schema) {
-    return node;
-  }
-
-  const nextChildren = [];
-  let changed = false;
-
-  node.forEach((child) => {
-    if (insideHeading && child?.type?.name === "hardBreak") {
-      nextChildren.push(schema.text(" "));
-      changed = true;
-      return;
-    }
-
-    const nextInsideHeading = insideHeading || child?.type?.name === "heading";
-    const normalizedChild = normalizeHardBreaksInHeadings(
-      child,
-      nextInsideHeading,
-    );
-
-    if (normalizedChild !== child) {
-      changed = true;
-    }
-
-    nextChildren.push(normalizedChild);
-  });
-
-  if (!changed) {
-    return node;
-  }
-
-  return node.type.create(node.attrs, nextChildren, node.marks);
-}
+import { isHostDevMode } from "./host-env.js";
+import { request } from "./network.js";
 
 /**
  * CRITICAL: Each parser/serializer instance MUST be fresh and isolated.
  * Never mutate shared instances. Markdown source must be immutable.
  */
 
-export const warningFieldTypes = new Set(["heading"]);
-export const warningFieldNames = new Set(["title", "name"]);
+const warningFieldTypes = new Set(["heading"]);
+const warningFieldNames = new Set(["title", "name"]);
 
 export const inlineHtmlTags = [
   "br",
@@ -66,6 +28,85 @@ export const inlineHtmlTags = [
   "sub",
   "sup",
 ];
+
+const MFE_MARKER_LINE_RE = /^[\t ]*<!--\s*([a-zA-Z0-9_:.\/-]+)\s*-->[\t ]*$/;
+const MFE_GAP_COMMENT_RE = /^[\t ]*<!--\s*mfe-gap:(\d+)\s*-->[\t ]*$/;
+
+function isBlankLine(line) {
+  return String(line || "").trim() === "";
+}
+
+function parseGapLineCount(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) return 1;
+  return Math.max(1, Math.floor(parsed));
+}
+
+function isReservedGapMarkerName(name) {
+  return /^mfe-gap:\d+$/i.test(String(name || "").trim());
+}
+
+function encodeMarkerBoundaryGapsForParser(markdown) {
+  const source = typeof markdown === "string" ? markdown : "";
+  if (!source.includes("<!--")) return source;
+
+  const lines = source.split("\n");
+  if (lines.length < 3) return source;
+
+  const output = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const currentLine = String(lines[index] || "");
+    output.push(currentLine);
+
+    const markerMatch = currentLine.match(MFE_MARKER_LINE_RE);
+    if (!markerMatch) {
+      continue;
+    }
+    if (isReservedGapMarkerName(markerMatch[1])) {
+      continue;
+    }
+
+    let scan = index + 1;
+    while (scan < lines.length && isBlankLine(lines[scan])) {
+      scan += 1;
+    }
+
+    const blankLineCount = scan - (index + 1);
+    if (blankLineCount < 1 || scan >= lines.length) {
+      continue;
+    }
+
+    const nextLine = String(lines[scan] || "");
+    if (!MFE_MARKER_LINE_RE.test(nextLine)) {
+      continue;
+    }
+
+    output.push(`<!-- mfe-gap:${blankLineCount} -->`);
+    index += blankLineCount;
+  }
+
+  return output.join("\n");
+}
+
+function decodeGapSentinelComments(markdown) {
+  const source = typeof markdown === "string" ? markdown : "";
+  if (!source.includes("mfe-gap:")) return source;
+
+  const lines = source.split("\n");
+  const output = [];
+  for (const line of lines) {
+    const match = String(line || "").match(MFE_GAP_COMMENT_RE);
+    if (!match) {
+      output.push(line);
+      continue;
+    }
+    const gapLineCount = parseGapLineCount(match[1]);
+    for (let i = 0; i < gapLineCount; i += 1) {
+      output.push("");
+    }
+  }
+  return output.join("\n");
+}
 
 export function trimTrailingLineBreaks(markdown) {
   const text = typeof markdown === "string" ? markdown : "";
@@ -125,13 +166,223 @@ function createFreshMarkdownItInstance() {
   // Configure for source preservation
   md.set({ html: false, breaks: false });
   md.enable("strikethrough");
+  md.enable("table");
+  md.disable(["reference"], true);
 
   return md;
+}
+
+function findMatchingTokenIndex(tokens, startIndex, openType, closeType) {
+  let depth = 0;
+  for (let i = startIndex; i < tokens.length; i += 1) {
+    if (tokens[i].type === openType) depth += 1;
+    if (tokens[i].type === closeType) {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function stripTaskPrefixFromInlineToken(inlineToken, checkboxPattern) {
+  if (!inlineToken || typeof inlineToken.content !== "string") return false;
+  if (!checkboxPattern.test(inlineToken.content)) return false;
+
+  inlineToken.content = inlineToken.content.replace(checkboxPattern, "");
+
+  if (Array.isArray(inlineToken.children)) {
+    for (const child of inlineToken.children) {
+      if (child?.type !== "text" || typeof child.content !== "string") continue;
+      if (checkboxPattern.test(child.content)) {
+        child.content = child.content.replace(checkboxPattern, "");
+      }
+      break;
+    }
+  }
+
+  return true;
+}
+
+function promoteTaskListTokens(tokens) {
+  if (!Array.isArray(tokens) || tokens.length === 0) return;
+  const checkboxPattern = /^\[([ xX])\]\s+/;
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    if (tokens[i].type !== "bullet_list_open") continue;
+
+    const listCloseIndex = findMatchingTokenIndex(
+      tokens,
+      i,
+      "bullet_list_open",
+      "bullet_list_close",
+    );
+    if (listCloseIndex <= i) continue;
+
+    const candidateItems = [];
+    let allItemsAreTaskItems = true;
+
+    for (let j = i + 1; j < listCloseIndex; j += 1) {
+      if (tokens[j].type !== "list_item_open") continue;
+
+      const itemCloseIndex = findMatchingTokenIndex(
+        tokens,
+        j,
+        "list_item_open",
+        "list_item_close",
+      );
+      if (itemCloseIndex <= j || itemCloseIndex > listCloseIndex) {
+        allItemsAreTaskItems = false;
+        break;
+      }
+
+      let inlineIndex = -1;
+      for (let k = j + 1; k < itemCloseIndex; k += 1) {
+        if (tokens[k].type === "inline") {
+          inlineIndex = k;
+          break;
+        }
+      }
+
+      if (inlineIndex === -1) {
+        allItemsAreTaskItems = false;
+        break;
+      }
+
+      const match = String(tokens[inlineIndex].content || "").match(
+        checkboxPattern,
+      );
+      if (!match) {
+        allItemsAreTaskItems = false;
+        break;
+      }
+
+      candidateItems.push({
+        openIndex: j,
+        closeIndex: itemCloseIndex,
+        inlineIndex,
+        checked: String(match[1] || " ").toLowerCase() === "x",
+      });
+      j = itemCloseIndex;
+    }
+
+    if (!allItemsAreTaskItems || candidateItems.length === 0) continue;
+
+    tokens[i].type = "task_list_open";
+    tokens[listCloseIndex].type = "task_list_close";
+
+    for (const item of candidateItems) {
+      tokens[item.openIndex].type = "task_list_item_open";
+      tokens[item.closeIndex].type = "task_list_item_close";
+      tokens[item.openIndex].meta = {
+        ...(tokens[item.openIndex].meta || {}),
+        checked: item.checked,
+      };
+      stripTaskPrefixFromInlineToken(tokens[item.inlineIndex], checkboxPattern);
+    }
+
+    i = listCloseIndex;
+  }
+}
+
+function wrapInlineTableCellContent(tokens) {
+  if (!Array.isArray(tokens) || tokens.length === 0) return;
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (!token || (token.type !== "th_open" && token.type !== "td_open")) {
+      continue;
+    }
+
+    const nextToken = tokens[i + 1];
+    if (!nextToken || nextToken.type !== "inline") continue;
+
+    const TokenCtor = nextToken.constructor;
+    if (typeof TokenCtor !== "function") continue;
+
+    const paragraphOpen = new TokenCtor("paragraph_open", "p", 1);
+    const paragraphClose = new TokenCtor("paragraph_close", "p", -1);
+    paragraphOpen.block = true;
+    paragraphClose.block = true;
+
+    tokens.splice(i + 1, 0, paragraphOpen);
+    tokens.splice(i + 3, 0, paragraphClose);
+    i += 3;
+  }
+}
+
+function parseMarkdownTableDelimiterCell(cell) {
+  const raw = String(cell || "").trim();
+  if (!raw) return null;
+  const match = raw.match(/^(:)?(-+)(:)?$/);
+  if (!match) return null;
+  return {
+    left: Boolean(match[1]),
+    right: Boolean(match[3]),
+    dashCount: match[2].length,
+  };
+}
+
+function normalizeShortTableDelimiterRows(src) {
+  const source = typeof src === "string" ? src : "";
+  if (!source.includes("|")) return source;
+
+  const lines = source.split("\n");
+  for (let i = 0; i < lines.length - 1; i += 1) {
+    const headerLine = String(lines[i] || "");
+    const delimiterLine = String(lines[i + 1] || "");
+
+    if (!headerLine.includes("|") || !delimiterLine.includes("|")) continue;
+    if (!headerLine.trim() || !delimiterLine.trim()) continue;
+
+    const delimiterCells = delimiterLine.split("|");
+    const parsedCells = [];
+    let hasAnyDelimiterCell = false;
+    let allNonEmptyCellsAreDelimiters = true;
+
+    for (const cell of delimiterCells) {
+      const trimmed = String(cell || "").trim();
+      if (!trimmed) {
+        parsedCells.push(null);
+        continue;
+      }
+
+      const parsed = parseMarkdownTableDelimiterCell(trimmed);
+      if (!parsed) {
+        allNonEmptyCellsAreDelimiters = false;
+        break;
+      }
+
+      hasAnyDelimiterCell = true;
+      parsedCells.push(parsed);
+    }
+
+    if (!hasAnyDelimiterCell || !allNonEmptyCellsAreDelimiters) continue;
+
+    const normalized = parsedCells.map((entry) => {
+      if (!entry) return "";
+      const dashes = "-".repeat(Math.max(3, entry.dashCount));
+      return `${entry.left ? ":" : ""}${dashes}${entry.right ? ":" : ""}`;
+    });
+
+    lines[i + 1] = normalized.join(" | ").trim();
+  }
+
+  return lines.join("\n");
 }
 
 export function createMarkdownParser(schema) {
   // Create a fresh markdown-it instance - DO NOT mutate global state
   const markdownIt = createFreshMarkdownItInstance();
+  const parseTokens = markdownIt.parse.bind(markdownIt);
+  markdownIt.parse = (src, env) => {
+    const normalizedSource = normalizeShortTableDelimiterRows(src);
+    const tokens = parseTokens(normalizedSource, env);
+    wrapInlineTableCellContent(tokens);
+    promoteTaskListTokens(tokens);
+    return tokens;
+  };
+
+  const blockTerminatorAlts = ["paragraph", "reference", "blockquote", "list"];
 
   // Add MFE marker rule (only once per instance)
   if (!markdownIt.__mfeMarker) {
@@ -145,6 +396,7 @@ export function createMarkdownParser(schema) {
         const line = state.src.slice(pos, max);
         const match = line.match(/^\s*<!--\s*([a-zA-Z0-9_:.\/-]+)\s*-->\s*$/);
         if (!match) return false;
+        if (isReservedGapMarkerName(match[1])) return false;
         if (silent) return true;
 
         markdownIt.__mfeMarkerHits = (markdownIt.__mfeMarkerHits || 0) + 1;
@@ -158,8 +410,33 @@ export function createMarkdownParser(schema) {
         state.line = startLine + 1;
         return true;
       },
+      { alt: blockTerminatorAlts },
     );
     markdownIt.__mfeMarker = true;
+  }
+  if (!markdownIt.__mfeGap) {
+    markdownIt.block.ruler.before(
+      "html_block",
+      "mfe_gap",
+      (state, startLine, endLine, silent) => {
+        void endLine;
+        const pos = state.bMarks[startLine] + state.tShift[startLine];
+        const max = state.eMarks[startLine];
+        if (pos >= max) return false;
+        const line = state.src.slice(pos, max);
+        const match = line.match(/^\s*<!--\s*mfe-gap:(\d+)\s*-->\s*$/);
+        if (!match) return false;
+        if (silent) return true;
+
+        const token = state.push("mfe_gap", "", 0);
+        token.meta = { lineCount: parseGapLineCount(match[1]) };
+        token.block = true;
+        state.line = startLine + 1;
+        return true;
+      },
+      { alt: blockTerminatorAlts },
+    );
+    markdownIt.__mfeGap = true;
   }
   if (!schema.nodes.image) {
     markdownIt.disable("image");
@@ -171,12 +448,36 @@ export function createMarkdownParser(schema) {
     list_item: { block: "listItem" },
     bullet_list: {
       block: "bulletList",
-      getAttrs: defaultMarkdownParser.tokens.bullet_list?.getAttrs,
+      getAttrs: (tok, tokens, i) => ({
+        ...(defaultMarkdownParser.tokens.bullet_list?.getAttrs
+          ? defaultMarkdownParser.tokens.bullet_list.getAttrs(tok, tokens, i)
+          : {}),
+        bullet: String(tok?.markup || "-").slice(0, 1) || "-",
+      }),
     },
     ordered_list: {
       block: "orderedList",
       getAttrs: defaultMarkdownParser.tokens.ordered_list?.getAttrs,
     },
+    task_list: {
+      block: "taskList",
+      getAttrs: (tok, tokens, i) => ({
+        ...(defaultMarkdownParser.tokens.bullet_list?.getAttrs
+          ? defaultMarkdownParser.tokens.bullet_list.getAttrs(tok, tokens, i)
+          : {}),
+        bullet: String(tok?.markup || "-").slice(0, 1) || "-",
+      }),
+    },
+    task_list_item: {
+      block: "taskItem",
+      getAttrs: (tok) => ({ checked: Boolean(tok?.meta?.checked) }),
+    },
+    table: { block: "table" },
+    thead: { ignore: true },
+    tbody: { ignore: true },
+    tr: { block: "tableRow" },
+    th: { block: "tableHeader" },
+    td: { block: "tableCell" },
     heading: {
       block: "heading",
       getAttrs: defaultMarkdownParser.tokens.heading?.getAttrs,
@@ -184,29 +485,76 @@ export function createMarkdownParser(schema) {
     code_block: { block: "codeBlock", noCloseToken: true },
     fence: {
       block: "codeBlock",
-      getAttrs: defaultMarkdownParser.tokens.fence?.getAttrs,
+      getAttrs: (tok) => {
+        const info = String(tok?.info || "").trim();
+        return {
+          ...(defaultMarkdownParser.tokens.fence?.getAttrs
+            ? defaultMarkdownParser.tokens.fence.getAttrs(tok)
+            : {}),
+          params: info || null,
+          language: info ? info.split(/\s+/, 1)[0] : null,
+        };
+      },
       noCloseToken: true,
     },
     hr: { node: "horizontalRule" },
     hardbreak: { node: "hardBreak" },
     softbreak: { node: "hardBreak" },
-    em: { mark: "italic" },
-    strong: { mark: "bold" },
+    em: {
+      mark: "italic",
+      getAttrs: (tok) => ({
+        delimiter: String(tok?.markup || "") === "_" ? "_" : "*",
+      }),
+    },
+    strong: {
+      mark: "bold",
+      getAttrs: (tok) => ({
+        delimiter: String(tok?.markup || "") === "__" ? "__" : "**",
+      }),
+    },
     s: { mark: "strike" },
     link: defaultMarkdownParser.tokens.link,
     image: defaultMarkdownParser.tokens.image,
   };
 
-  if (schema.nodes.mfeMarker) {
-    tokens.mfe_marker = {
-      block: "mfeMarker",
-      getAttrs: (tok) => ({ name: tok.meta?.name || "" }),
-    };
-  }
+  tokens.mfe_marker = schema.nodes.mfeMarker
+    ? {
+        block: "mfeMarker",
+        getAttrs: (tok) => ({ name: tok.meta?.name || "" }),
+        noCloseToken: true,
+      }
+    : { ignore: true, noCloseToken: true };
+
+  tokens.mfe_gap = schema.nodes.mfeGap
+    ? {
+        block: "mfeGap",
+        getAttrs: (tok) => ({
+          lineCount: parseGapLineCount(tok.meta?.lineCount),
+        }),
+        noCloseToken: true,
+      }
+    : { ignore: true, noCloseToken: true };
 
   if (!schema.nodes.codeBlock) {
     delete tokens.code_block;
     delete tokens.fence;
+  }
+  if (!schema.nodes.taskList || !schema.nodes.taskItem) {
+    delete tokens.task_list;
+    delete tokens.task_list_item;
+  }
+  if (
+    !schema.nodes.table ||
+    !schema.nodes.tableRow ||
+    !schema.nodes.tableHeader ||
+    !schema.nodes.tableCell
+  ) {
+    delete tokens.table;
+    delete tokens.thead;
+    delete tokens.tbody;
+    delete tokens.tr;
+    delete tokens.th;
+    delete tokens.td;
   }
   if (!schema.nodes.image) {
     delete tokens.image;
@@ -223,10 +571,34 @@ export function parseMarkdownToDoc(markdown, schema) {
     throw new Error("parseMarkdownToDoc requires schema");
   }
   const parser = createMarkdownParser(schema);
-  const canonicalMarkdown = trimTrailingLineBreaks(
-    typeof markdown === "string" ? markdown : "",
-  );
-  return parser.parse(canonicalMarkdown);
+  const canonicalMarkdown = typeof markdown === "string" ? markdown : "";
+  const parserSource = encodeMarkerBoundaryGapsForParser(canonicalMarkdown);
+  const doc = parser.parse(parserSource);
+
+  const taskStats = getTaskNodeStats(doc);
+  const taskLines = buildTaskLineDiagnostics(canonicalMarkdown);
+  if (taskLines.hasTaskSyntax || taskStats.taskItemCount > 0) {
+    const payload = {
+      inputHash: hashTextForTrace(canonicalMarkdown),
+      taskListCount: taskStats.taskListCount,
+      taskItemCount: taskStats.taskItemCount,
+      canonicalTaskLineCount: taskLines.canonicalTaskLineCount,
+      escapedTaskLineCount: taskLines.escapedTaskLineCount,
+      canonicalSamples: taskLines.canonicalSamples,
+      escapedSamples: taskLines.escapedSamples,
+      callerStack: getCallerStack(),
+    };
+    logMfeTrace("TASK_PARSE_TRACE", payload);
+    if (isHostDevMode()) {
+      try {
+        console.warn("[mfe] TASK_PARSE_TRACE", payload);
+      } catch (_error) {
+        // noop
+      }
+    }
+  }
+
+  return doc;
 }
 
 /**
@@ -282,88 +654,491 @@ function serializeImageSrc(src) {
     .replace(/\s/g, "%20");
 }
 
-export const markdownSerializer = new MarkdownSerializer(
-  {
-    blockquote: defaultMarkdownSerializer.nodes.blockquote,
-    codeBlock: defaultMarkdownSerializer.nodes.code_block,
-    heading: defaultMarkdownSerializer.nodes.heading,
-    horizontalRule: defaultMarkdownSerializer.nodes.horizontal_rule,
-    bulletList: defaultMarkdownSerializer.nodes.bullet_list,
-    orderedList: defaultMarkdownSerializer.nodes.ordered_list,
-    listItem: defaultMarkdownSerializer.nodes.list_item,
-    paragraph: defaultMarkdownSerializer.nodes.paragraph,
-    image(state, node) {
-      const src = getSerializableImageSource(node);
-      state.write(
-        "![" +
-          state.esc(node.attrs.alt || "") +
-          "](" +
-          serializeImageSrc(src) +
-          (node.attrs.title ? ' "' + state.esc(node.attrs.title) + '"' : "") +
-          ")",
-      );
-    },
-    mfeMarker(state, node) {
-      const name = node.attrs.name || "";
-      state.write(`<!-- ${name} -->`);
+function escapeTableCellText(value) {
+  return String(value || "")
+    .replace(/\|/g, "\\|")
+    .replace(/\r?\n/g, "<br>")
+    .trim();
+}
+
+function computeMarkdownTableColumnWidths(rows, columnCount) {
+  const widths = Array.from({ length: columnCount }, () => 3);
+  rows.forEach((row) => {
+    for (let i = 0; i < columnCount; i += 1) {
+      const cell = String(row?.[i] || "");
+      widths[i] = Math.max(widths[i], cell.length);
+    }
+  });
+  return widths;
+}
+
+function formatMarkdownTableDataRow(cells, widths) {
+  const padded = cells.map((cell, index) => {
+    const value = String(cell || "");
+    const width = Number(widths?.[index] || 0);
+    return value.padEnd(width, " ");
+  });
+  return `| ${padded.join(" | ")} |`;
+}
+
+function buildMarkdownTableSeparator(widths, alignments) {
+  const segments = [];
+  for (let i = 0; i < widths.length; i += 1) {
+    const align = String(alignments[i] || "").toLowerCase();
+    const dashCount = Math.max(3, Number(widths[i] || 0));
+    if (align === "left") {
+      segments.push(`:${"-".repeat(Math.max(1, dashCount - 1))}`);
+      continue;
+    }
+    if (align === "right") {
+      segments.push(`${"-".repeat(Math.max(1, dashCount - 1))}:`);
+      continue;
+    }
+    if (align === "center") {
+      segments.push(`:${"-".repeat(Math.max(1, dashCount - 2))}:`);
+      continue;
+    }
+    segments.push("-".repeat(dashCount));
+  }
+  return `| ${segments.join(" | ")} |`;
+}
+
+function writeTextPreservingFootnoteTokens(state, textValue) {
+  const text = String(textValue || "");
+  if (!text) return;
+
+  const footnoteTokenPattern = /\[\^[^\]\n]+\](?::)?|\^\[[^\]\n]+\]/g;
+  let cursor = 0;
+  let match = footnoteTokenPattern.exec(text);
+
+  while (match) {
+    const matchIndex = Number(match.index || 0);
+    const token = String(match[0] || "");
+    if (matchIndex > cursor) {
+      state.text(text.slice(cursor, matchIndex));
+    }
+    state.write(token);
+    cursor = matchIndex + token.length;
+    match = footnoteTokenPattern.exec(text);
+  }
+
+  if (cursor < text.length) {
+    state.text(text.slice(cursor));
+  }
+}
+
+function deepFreeze(value) {
+  if (!value || typeof value !== "object") return value;
+  Object.getOwnPropertyNames(value).forEach((name) => {
+    const child = value[name];
+    if (child && typeof child === "object") {
+      deepFreeze(child);
+    }
+  });
+  return Object.freeze(value);
+}
+
+function cloneMarkSpecMap(source) {
+  const out = {};
+  Object.keys(source || {}).forEach((key) => {
+    const spec = source[key];
+    out[key] =
+      spec && typeof spec === "object" && !Array.isArray(spec)
+        ? { ...spec }
+        : spec;
+  });
+  return out;
+}
+
+const SERIALIZER_NODES_BLUEPRINT = deepFreeze({
+  blockquote: defaultMarkdownSerializer.nodes.blockquote,
+  codeBlock(state, node) {
+    const language = String(node?.attrs?.language || "").trim();
+    const params = String(node?.attrs?.params || "").trim();
+    const info = language || params;
+    const content = String(node?.textContent || "").replace(/[\r\n]+$/, "");
+    state.write(`\`\`\`${info}`);
+    state.ensureNewLine();
+    if (content) {
+      state.text(content, false);
       state.ensureNewLine();
-      state.atBlockStart = true;
-    },
-    hardBreak(state) {
-      state.write("  \n");
-    },
-    text: defaultMarkdownSerializer.nodes.text,
+    }
+    state.write("```");
+    state.closeBlock(node);
   },
-  {
-    ...defaultMarkdownSerializer.marks,
-    bold: {
-      open: "**",
-      close: "**",
-      mixable: true,
-      expelEnclosingWhitespace: true,
-    },
-    italic: {
-      open: "_",
-      close: "_",
-      mixable: true,
-      expelEnclosingWhitespace: true,
-    },
-    strike: {
-      open: "~~",
-      close: "~~",
-      mixable: true,
-      expelEnclosingWhitespace: true,
-    },
-    underline: {
-      open: "<u>",
-      close: "</u>",
-      mixable: true,
-      expelEnclosingWhitespace: true,
-    },
-    superscript: {
-      open: "<sup>",
-      close: "</sup>",
-      mixable: true,
-      expelEnclosingWhitespace: true,
-    },
-    subscript: {
-      open: "<sub>",
-      close: "</sub>",
-      mixable: true,
-      expelEnclosingWhitespace: true,
-    },
-    code: defaultMarkdownSerializer.marks.code,
+  heading: defaultMarkdownSerializer.nodes.heading,
+  horizontalRule: defaultMarkdownSerializer.nodes.horizontal_rule,
+  bulletList(state, node) {
+    const marker = String(node?.attrs?.bullet || "-").slice(0, 1) || "-";
+    state.renderList(node, "  ", () => `${marker} `);
   },
-  {
-    tightLists: true,
-    bulletListMarker: "-",
+  orderedList: defaultMarkdownSerializer.nodes.ordered_list,
+  taskList(state, node) {
+    state.renderList(node, "  ", () => `${node?.attrs?.bullet || "-"} `);
   },
-);
+  taskItem(state, node) {
+    state.write(node?.attrs?.checked ? "[x] " : "[ ] ");
+    state.renderContent(node);
+  },
+  listItem: defaultMarkdownSerializer.nodes.list_item,
+  table(state, node) {
+    const rows = [];
+    const alignments = [];
+
+    for (let i = 0; i < node.childCount; i += 1) {
+      const row = node.child(i);
+      if (row?.type?.name !== "tableRow") continue;
+
+      const cells = [];
+      for (let j = 0; j < row.childCount; j += 1) {
+        const cell = row.child(j);
+        cells.push(escapeTableCellText(cell?.textContent || ""));
+        if (i === 0) {
+          const align =
+            cell?.attrs?.align ||
+            cell?.attrs?.textAlign ||
+            cell?.attrs?.textalign;
+          alignments.push(align || "");
+        }
+      }
+
+      rows.push(cells);
+    }
+
+    if (rows.length === 0) {
+      state.closeBlock(node);
+      return;
+    }
+
+    const columnCount = rows.reduce(
+      (maxCount, row) => Math.max(maxCount, row.length),
+      0,
+    );
+    const safeColumnCount = Math.max(1, columnCount);
+    const normalizedRows = rows.map((row) => {
+      const normalized = row.slice(0, safeColumnCount);
+      while (normalized.length < safeColumnCount) normalized.push("");
+      return normalized;
+    });
+    const columnWidths = computeMarkdownTableColumnWidths(
+      normalizedRows,
+      safeColumnCount,
+    );
+
+    state.write(formatMarkdownTableDataRow(normalizedRows[0], columnWidths));
+    state.ensureNewLine();
+    state.write(buildMarkdownTableSeparator(columnWidths, alignments));
+    state.ensureNewLine();
+
+    for (let i = 1; i < normalizedRows.length; i += 1) {
+      state.write(formatMarkdownTableDataRow(normalizedRows[i], columnWidths));
+      state.ensureNewLine();
+    }
+
+    state.closeBlock(node);
+  },
+  paragraph: defaultMarkdownSerializer.nodes.paragraph,
+  image(state, node) {
+    const src = getSerializableImageSource(node);
+    state.write(
+      "![" +
+        state.esc(node.attrs.alt || "") +
+        "](" +
+        serializeImageSrc(src) +
+        (node.attrs.title ? ' "' + state.esc(node.attrs.title) + '"' : "") +
+        ")",
+    );
+  },
+  mfeMarker(state, node) {
+    const name = node.attrs.name || "";
+    state.write(`<!-- ${name} -->`);
+    state.ensureNewLine();
+    state.atBlockStart = true;
+  },
+  mfeGap(state, node) {
+    const lineCount = parseGapLineCount(node?.attrs?.lineCount || 1);
+    state.write(`<!-- mfe-gap:${lineCount} -->`);
+    state.ensureNewLine();
+    state.atBlockStart = true;
+  },
+  hardBreak(state) {
+    state.write("\n");
+  },
+  text(state, node) {
+    writeTextPreservingFootnoteTokens(state, node?.text || "");
+  },
+});
+
+const SERIALIZER_MARKS_BLUEPRINT = deepFreeze({
+  ...cloneMarkSpecMap(defaultMarkdownSerializer.marks),
+  bold: {
+    open: (_state, mark) =>
+      String(mark?.attrs?.delimiter || "") === "__" ? "__" : "**",
+    close: (_state, mark) =>
+      String(mark?.attrs?.delimiter || "") === "__" ? "__" : "**",
+    mixable: true,
+    expelEnclosingWhitespace: true,
+  },
+  italic: {
+    open: (_state, mark) =>
+      String(mark?.attrs?.delimiter || "") === "*" ? "*" : "_",
+    close: (_state, mark) =>
+      String(mark?.attrs?.delimiter || "") === "*" ? "*" : "_",
+    mixable: true,
+    expelEnclosingWhitespace: true,
+  },
+  strike: {
+    open: "~~",
+    close: "~~",
+    mixable: true,
+    expelEnclosingWhitespace: true,
+  },
+  underline: {
+    open: "<u>",
+    close: "</u>",
+    mixable: true,
+    expelEnclosingWhitespace: true,
+  },
+  superscript: {
+    open: "<sup>",
+    close: "</sup>",
+    mixable: true,
+    expelEnclosingWhitespace: true,
+  },
+  subscript: {
+    open: "<sub>",
+    close: "</sub>",
+    mixable: true,
+    expelEnclosingWhitespace: true,
+  },
+  code: {
+    ...defaultMarkdownSerializer.marks.code,
+  },
+});
+
+const SERIALIZER_OPTIONS_BLUEPRINT = deepFreeze({
+  tightLists: true,
+  bulletListMarker: "-",
+});
+
+function cloneSerializerNodeMap() {
+  return { ...SERIALIZER_NODES_BLUEPRINT };
+}
+
+function cloneSerializerMarkMap() {
+  return cloneMarkSpecMap(SERIALIZER_MARKS_BLUEPRINT);
+}
+
+export function createMarkdownSerializer(_schema) {
+  return new MarkdownSerializer(
+    cloneSerializerNodeMap(),
+    cloneSerializerMarkMap(),
+    { ...SERIALIZER_OPTIONS_BLUEPRINT },
+  );
+}
+
+function hashTextForTrace(value) {
+  const text = String(value || "");
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  }
+  return `${text.length}:${hash.toString(16)}`;
+}
+
+function buildTaskLineDiagnostics(markdown, maxSamples = 4) {
+  const text = String(markdown || "");
+  const lines = text.split(/\r?\n/);
+  const canonicalSamples = [];
+  const escapedSamples = [];
+  let canonicalTaskLineCount = 0;
+  let escapedTaskLineCount = 0;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const isCanonical = /^[ \t]*[*+-][ \t]+\[[ xX]\][ \t]+.*$/.test(line);
+    const isEscaped = /^[ \t]*[*+-][ \t]+\\\[[ xX]\\\][ \t]+.*$/.test(line);
+
+    if (!isCanonical && !isEscaped) continue;
+
+    if (isCanonical) {
+      canonicalTaskLineCount += 1;
+      if (canonicalSamples.length < maxSamples) {
+        canonicalSamples.push({ line: index + 1, value: line });
+      }
+    }
+
+    if (isEscaped) {
+      escapedTaskLineCount += 1;
+      if (escapedSamples.length < maxSamples) {
+        escapedSamples.push({ line: index + 1, value: line });
+      }
+    }
+  }
+
+  return {
+    canonicalTaskLineCount,
+    escapedTaskLineCount,
+    canonicalSamples,
+    escapedSamples,
+    hasTaskSyntax: canonicalTaskLineCount > 0 || escapedTaskLineCount > 0,
+  };
+}
+
+function getCallerStack(limit = 6) {
+  return (
+    new Error("MFE_TASK_TRACE").stack
+      ?.split("\n")
+      ?.slice(1, 1 + limit)
+      ?.map((line) => String(line || "").trim()) || []
+  );
+}
+
+function getTaskNodeStats(doc) {
+  if (!doc || typeof doc.descendants !== "function") {
+    return { taskListCount: 0, taskItemCount: 0 };
+  }
+
+  let taskListCount = 0;
+  let taskItemCount = 0;
+
+  doc.descendants((node) => {
+    if (node?.type?.name === "taskList") taskListCount += 1;
+    if (node?.type?.name === "taskItem") taskItemCount += 1;
+  });
+
+  return { taskListCount, taskItemCount };
+}
+
+function countEscapedTaskCheckboxLines(markdown) {
+  const text = String(markdown || "");
+  const matches = text.match(/^[ \t]*[*+-][ \t]+\\\[[ xX]\\\][ \t]+.*$/gm);
+  return Array.isArray(matches) ? matches.length : 0;
+}
+
+function collectTaskCheckboxLineSamples(markdown, limit = 4) {
+  const text = String(markdown || "");
+  const lines = text.split(/\r?\n/);
+  const out = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^[ \t]*[*+-][ \t]+\\\[[ xX]\\\][ \t]+.*$/.test(line)) {
+      out.push({ line: i + 1, value: line });
+      if (out.length >= limit) break;
+    }
+  }
+
+  return out;
+}
+
+function logTaskEscapeDriftIfDetected(doc, output) {
+  const taskStats = getTaskNodeStats(doc);
+  if (taskStats.taskItemCount === 0) return;
+
+  const escapedTaskLineCount = countEscapedTaskCheckboxLines(output);
+  if (escapedTaskLineCount === 0) return;
+
+  const stack =
+    new Error("TASK_ESCAPE_DRIFT").stack
+      ?.split("\n")
+      ?.slice(1, 7)
+      ?.map((line) => String(line || "").trim()) || [];
+
+  const payload = {
+    taskListCount: taskStats.taskListCount,
+    taskItemCount: taskStats.taskItemCount,
+    escapedTaskLineCount,
+    escapedTaskSamples: collectTaskCheckboxLineSamples(output),
+    outputHash: hashTextForTrace(output),
+    callerStack: stack,
+  };
+
+  logMfeTrace("TASK_ESCAPE_DRIFT_DETECTED", payload);
+
+  if (isHostDevMode()) {
+    try {
+      console.warn("[mfe] TASK_ESCAPE_DRIFT_DETECTED", payload);
+    } catch (_error) {
+      // noop
+    }
+  }
+}
+
+function logTaskSerializeTrace(doc, output) {
+  const taskStats = getTaskNodeStats(doc);
+  const taskLines = buildTaskLineDiagnostics(output);
+  if (!taskLines.hasTaskSyntax && taskStats.taskItemCount === 0) return;
+
+  const payload = {
+    outputHash: hashTextForTrace(output),
+    taskListCount: taskStats.taskListCount,
+    taskItemCount: taskStats.taskItemCount,
+    canonicalTaskLineCount: taskLines.canonicalTaskLineCount,
+    escapedTaskLineCount: taskLines.escapedTaskLineCount,
+    canonicalSamples: taskLines.canonicalSamples,
+    escapedSamples: taskLines.escapedSamples,
+    callerStack: getCallerStack(),
+  };
+
+  logMfeTrace("TASK_SERIALIZE_TRACE", payload);
+
+  if (isHostDevMode()) {
+    try {
+      console.warn("[mfe] TASK_SERIALIZE_TRACE", payload);
+    } catch (_error) {
+      // noop
+    }
+  }
+}
+
+function logMfeTrace(label, payload) {
+  const debugEnabled =
+    typeof window !== "undefined" &&
+    window.MarkdownFrontEditorConfig?.debug === true;
+  if (!debugEnabled) return;
+  try {
+    console.warn(`[mfe] ${label}`, payload);
+  } catch (_error) {
+    // noop
+  }
+}
+
+let lastSerializeMarkdownDocTraceSignature = "";
+
+function logSerializeMarkdownDocTrace(output) {
+  const debugEnabled =
+    typeof window !== "undefined" &&
+    window.MarkdownFrontEditorConfig?.debug === true;
+  if (!debugEnabled) return;
+
+  const outputHash = hashTextForTrace(output);
+  const payload = {
+    serializedHash: outputHash,
+    outputHash,
+    changedByNormalizer: false,
+  };
+  const signature = `${payload.serializedHash}|${payload.outputHash}|${payload.changedByNormalizer ? "1" : "0"}`;
+  if (signature === lastSerializeMarkdownDocTraceSignature) return;
+  lastSerializeMarkdownDocTraceSignature = signature;
+
+  logMfeTrace("SERIALIZE_MARKDOWN_DOC", payload);
+}
+
+// Backwards-compatible snapshot export. Runtime serialization uses per-call factories.
+export const markdownSerializer = deepFreeze(createMarkdownSerializer(null));
 
 export function serializeMarkdownDoc(doc) {
   if (!doc) return "";
-  const normalized = normalizeHardBreaksInHeadings(doc);
-  return markdownSerializer.serialize(normalized);
+  const serializer = createMarkdownSerializer(doc?.type?.schema);
+  const serialized = serializer.serialize(doc);
+  const output = decodeGapSentinelComments(serialized);
+  logTaskSerializeTrace(doc, output);
+  logTaskEscapeDriftIfDetected(doc, output);
+
+  logSerializeMarkdownDocTrace(output);
+
+  return output;
 }
 
 export function decodeMarkdownBase64(markdownB64) {
@@ -410,14 +1185,20 @@ export function fetchTranslations(
   const sectionParam = section
     ? `&mdSection=${encodeURIComponent(section)}`
     : "";
-  return fetch(
+  return request(
     `?markdownFrontEditorTranslations=1&mdName=${encodeURIComponent(
       mdName,
     )}&pageId=${encodeURIComponent(pageId)}${scopeParam}${sectionParam}`,
-    { credentials: "same-origin" },
+    {
+      method: "GET",
+      headers: undefined,
+      body: undefined,
+      parse: "json",
+    },
   )
-    .then((res) => res.json())
-    .then((data) => (data?.status ? data.data : null))
+    .then((result) =>
+      result.ok && result.data?.status ? result.data.data : null,
+    )
     .catch(() => null);
 }
 
@@ -428,6 +1209,8 @@ export function saveTranslation(
   markdown,
   scope = "field",
   section = "",
+  subsection = "",
+  fieldId = "",
 ) {
   return fetchCsrfToken().then((csrf) => {
     const formData = new FormData();
@@ -439,15 +1222,56 @@ export function saveTranslation(
     if (section) {
       formData.append("mdSection", section);
     }
+    if (subsection) {
+      formData.append("mdSubsection", subsection);
+    }
+    if (fieldId) {
+      formData.append("fieldId", fieldId);
+    }
 
     if (csrf) {
       formData.append(csrf.name, csrf.value);
     }
 
-    return fetch(getSaveUrl(), {
+    logMfeTrace("SAVE_TRANSLATION_REQUEST", {
+      mdName,
+      scope: scope || "field",
+      section,
+      subsection,
+      fieldId,
+      markdownHash: hashTextForTrace(markdown),
+    });
+
+    const taskLines = buildTaskLineDiagnostics(markdown);
+    if (taskLines.hasTaskSyntax) {
+      const payload = {
+        mdName,
+        scope: scope || "field",
+        section,
+        subsection,
+        fieldId,
+        markdownHash: hashTextForTrace(markdown),
+        canonicalTaskLineCount: taskLines.canonicalTaskLineCount,
+        escapedTaskLineCount: taskLines.escapedTaskLineCount,
+        canonicalSamples: taskLines.canonicalSamples,
+        escapedSamples: taskLines.escapedSamples,
+        callerStack: getCallerStack(),
+      };
+      logMfeTrace("TASK_SAVE_PAYLOAD_TRACE", payload);
+      if (isHostDevMode()) {
+        try {
+          console.warn("[mfe] TASK_SAVE_PAYLOAD_TRACE", payload);
+        } catch (_error) {
+          // noop
+        }
+      }
+    }
+
+    return request(getSaveUrl(), {
       method: "POST",
+      headers: undefined,
       body: formData,
-      credentials: "same-origin",
+      parse: "json",
     });
   });
 }
@@ -466,11 +1290,14 @@ export function getFragmentsUrl() {
 
 export async function fetchCsrfToken() {
   try {
-    const response = await fetch("?markdownFrontEditorToken=1", {
+    const result = await request("?markdownFrontEditorToken=1", {
       method: "GET",
-      credentials: "same-origin",
+      headers: undefined,
+      body: undefined,
+      parse: "text",
     });
-    const html = await response.text();
+    if (!result.ok) return null;
+    const html = String(result.data || "");
     const match = html.match(
       /name=["\']?([^"\'\s]+)["\']?[^>]*value=["\']?([^"\'>]+)/,
     );
@@ -481,25 +1308,6 @@ export async function fetchCsrfToken() {
     // token fetch errors are handled by callers
   }
   return null;
-}
-/**
- * SYSTEM INVARIANT: Markdown Losslessness Assertion
- *
- * Detects accidental normalization, transformation, or mutation of markdown source.
- * In dev mode, this validates that parse → serialize round-trip is lossless.
- *
- * Rule: If markdown didn't change in the editor, it must not change in persistence.
- *
- * @param {string} original Original markdown source
- * @param {string} serialized Serialized markdown from editor state
- * @returns {boolean} true if lossless, false if mutation detected
- */
-export function validateMarkdownLosslessness(original, serialized) {
-  if (!isDevMode()) return true;
-
-  if (original === serialized) return true;
-
-  return false;
 }
 
 /**
@@ -523,76 +1331,6 @@ export function assertMarkdownInvariant(original, edited) {
   throw new Error(msg);
 }
 
-/**
- * Detect if markdown appears to have been mutated implicitly.
- */
-export function detectMarkdownNormalization(markdown) {
-  if (!isDevMode()) return [];
-
-  const violations = [];
-
-  // Check for HTML line breaks that should be newlines
-  if (markdown.includes("<br>")) {
-    violations.push("Found <br> instead of newlines");
-  }
-
-  // Check for HTML strong/em instead of markdown
-  if (markdown.includes("<strong>") || markdown.includes("<em>")) {
-    violations.push("Found HTML formatting instead of markdown");
-  }
-
-  // Check for collapsed blank lines (visible if originally had `\n\n`)
-  if (
-    markdown.includes("\n\n") &&
-    markdown !== markdown.replace(/\n\n+/g, "\n\n")
-  ) {
-    violations.push("Possible blank line normalization");
-  }
-
-  return violations;
-}
-
-/**
- * Verify serializer losslessness: parse(src) → serialize() === src
- *
- * CRITICAL INVARIANT: If the user did not modify the markdown,
- * the serialized output must be byte-identical to the input.
- *
- * This validates that the parse/serialize round-trip is lossless
- * for untouched content.
- *
- * @param {string} markdown Original markdown source
- * @param {SchemaSpec} schema ProseMirror schema
- * @throws Error in dev mode if round-trip is not lossless
- */
-export function validateSerializerLosslessness(markdown, schema) {
-  if (!isDevMode()) return;
-
-  try {
-    const parser = createMarkdownParser(schema);
-    const parsed = parser.parse(markdown);
-    const serialized = markdownSerializer.serialize(parsed);
-
-    if (serialized === markdown) return; // ✅ Lossless
-
-    // ❌ Mutation detected
-    const msg =
-      `SERIALIZER LOSSLESSNESS FAILURE\n` +
-      `Input (${markdown.length} bytes):\n${JSON.stringify(markdown)}\n\n` +
-      `Output (${serialized.length} bytes):\n${JSON.stringify(serialized)}\n\n` +
-      `Diff: Characters differ at unedited content`;
-
-    throw new Error(msg);
-  } catch (err) {
-    if (err.message.includes("SERIALIZER LOSSLESSNESS FAILURE")) throw err;
-    // Parse errors are OK - malformed markdown is expected sometimes
-    // Only throw losslessness violations
-  }
-}
-
 function isDevMode() {
-  return Boolean(
-    typeof window !== "undefined" &&
-    (window.__MFE_DEV || window.localStorage?.getItem("mfe-dev") === "1"),
-  );
+  return isHostDevMode();
 }

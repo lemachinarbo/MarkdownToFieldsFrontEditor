@@ -53,7 +53,52 @@ export const Marker = Node.create({
         class: `mfe-marker mfe-marker--${type}`,
         contenteditable: "false",
       },
-      `<!-- ${name} -->`,
+    ];
+  },
+});
+
+export const GapSentinel = Node.create({
+  name: "mfeGap",
+  group: "block",
+  atom: true,
+  selectable: false,
+  draggable: false,
+  isolating: true,
+  defining: true,
+
+  addAttributes() {
+    return {
+      lineCount: {
+        default: 1,
+        parseHTML: (element) => {
+          const value = Number(
+            element.getAttribute("data-mfe-gap-lines") || "1",
+          );
+          if (!Number.isFinite(value) || value < 1) return 1;
+          return Math.max(1, Math.floor(value));
+        },
+      },
+    };
+  },
+
+  parseHTML() {
+    return [
+      {
+        tag: "div[data-mfe-gap]",
+      },
+    ];
+  },
+
+  renderHTML({ node }) {
+    const lineCount = Math.max(1, Number(node.attrs.lineCount || 1));
+    return [
+      "div",
+      {
+        "data-mfe-gap": "1",
+        "data-mfe-gap-lines": String(lineCount),
+        class: "mfe-gap-sentinel",
+        contenteditable: "false",
+      },
     ];
   },
 });

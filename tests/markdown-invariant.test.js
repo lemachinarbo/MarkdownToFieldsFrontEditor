@@ -8,7 +8,6 @@
  */
 
 import {
-  markdownSerializer,
   renderMarkdownToHtml,
 } from "../src/editor-core.js";
 
@@ -226,7 +225,7 @@ const code = () => {
       // NOT re-parse HTML or apply any transforms
 
       // This is verified by implementation details:
-      // - markdownSerializer.serialize(editor.state.doc) serializes from state
+      // - serializeMarkdownDoc(editor.state.doc) serializes from state
       // - No intermediate HTML parsing step in the save pipeline
       // - All post-processing mutations have been removed
 

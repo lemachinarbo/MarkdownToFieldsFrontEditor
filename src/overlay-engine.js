@@ -1,6 +1,7 @@
 import { getSubsectionEntry } from "./content-index.js";
 
 export function createOverlayEngine({ debugLabels = false } = {}) {
+  const HOVER_ACTIVE_CLASS = "mfe-state-hover-active";
   let hoverOverlay = null;
   let hoverLabel = null;
 
@@ -21,6 +22,7 @@ export function createOverlayEngine({ debugLabels = false } = {}) {
   function hide() {
     if (!hoverOverlay) return;
     hoverOverlay.style.display = "none";
+    document.body.classList.remove(HOVER_ACTIVE_CLASS);
   }
 
   function setLabel(text) {
@@ -31,11 +33,15 @@ export function createOverlayEngine({ debugLabels = false } = {}) {
 
   function showBox(rect) {
     if (!hoverOverlay || !rect) return;
+    if (document.body.classList.contains("mfe-debug-labels")) {
+      hide();
+      return;
+    }
     if (document.body.classList.contains("mfe-debug-sections")) {
       hide();
       return;
     }
-    if (document.body.classList.contains("mfe-view-fullscreen")) {
+    if (document.body.classList.contains("mfe-state-fullscreen-open")) {
       hide();
       return;
     }
@@ -49,6 +55,7 @@ export function createOverlayEngine({ debugLabels = false } = {}) {
     }
     hoverOverlay.dataset.mode = "box";
     hoverOverlay.style.display = "block";
+    document.body.classList.add(HOVER_ACTIVE_CLASS);
     hoverOverlay.style.left = `${left}px`;
     hoverOverlay.style.top = `${top}px`;
     hoverOverlay.style.width = `${Math.max(right - left, 0)}px`;
@@ -57,11 +64,15 @@ export function createOverlayEngine({ debugLabels = false } = {}) {
 
   function showEdge(rect) {
     if (!hoverOverlay || !rect) return;
+    if (document.body.classList.contains("mfe-debug-labels")) {
+      hide();
+      return;
+    }
     if (document.body.classList.contains("mfe-debug-sections")) {
       hide();
       return;
     }
-    if (document.body.classList.contains("mfe-view-fullscreen")) {
+    if (document.body.classList.contains("mfe-state-fullscreen-open")) {
       hide();
       return;
     }
@@ -74,23 +85,16 @@ export function createOverlayEngine({ debugLabels = false } = {}) {
     }
     hoverOverlay.dataset.mode = "edge";
     hoverOverlay.style.display = "block";
+    document.body.classList.add(HOVER_ACTIVE_CLASS);
     hoverOverlay.style.left = `${left}px`;
     hoverOverlay.style.top = `${top}px`;
     hoverOverlay.style.width = `${Math.max(right - left, 0)}px`;
     hoverOverlay.style.height = "2px";
   }
 
-  function isPointInRect(x, y, rect) {
-    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-  }
-
   function getMetaAttr(el, name) {
     if (!el) return "";
-    return (
-      el.getAttribute(`data-mfe-${name}`) ||
-      el.getAttribute(`data-md-${name}`) ||
-      ""
-    );
+    return el.getAttribute(`data-mfe-${name}`) || "";
   }
 
   function findFieldSubsectionTargetFromPoint(x, y) {
@@ -99,14 +103,10 @@ export function createOverlayEngine({ debugLabels = false } = {}) {
         ? document.elementsFromPoint(x, y)
         : [];
     const hitEl = stack.find((el) =>
-      el?.closest?.(
-        '.fe-editable[data-mfe-scope="subsection"], .fe-editable[data-md-scope="subsection"]',
-      ),
+      el?.closest?.('.fe-editable[data-mfe-scope="subsection"]'),
     );
     const subsectionEl = hitEl?.closest
-      ? hitEl.closest(
-          '.fe-editable[data-mfe-scope="subsection"], .fe-editable[data-md-scope="subsection"]',
-        )
+      ? hitEl.closest('.fe-editable[data-mfe-scope="subsection"]')
       : null;
     if (subsectionEl) {
       const section = getMetaAttr(subsectionEl, "section") || "";

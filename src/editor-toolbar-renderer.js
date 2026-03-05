@@ -1,3 +1,5 @@
+import { defer } from "./async-queue.js";
+
 export function renderToolbarButtons({
   toolbar,
   buttons,
@@ -6,6 +8,16 @@ export function renderToolbarButtons({
 }) {
   const resolveEditor = () =>
     typeof getEditor === "function" ? getEditor() : null;
+  const emitUserIntent = (source) => {
+    if (typeof document === "undefined") return;
+    document.dispatchEvent(
+      new CustomEvent("mfe:user-intent", {
+        detail: {
+          source: String(source || "toolbar"),
+        },
+      }),
+    );
+  };
   const buttonRefreshers = [];
 
   const createEditorAwareRefresher = (updateStyle) => {
@@ -63,6 +75,10 @@ export function renderToolbarButtons({
       btn.textContent = btnDef.label;
     }
     btn.title = btnDef.title;
+    const ariaLabel = String(btnDef.alt || "").trim();
+    if (ariaLabel) {
+      btn.setAttribute("aria-label", ariaLabel);
+    }
     btn.type = "button";
     btn.className = `editor-toolbar-btn${btnDef.className ? ` ${btnDef.className}` : ""}`;
 
@@ -78,22 +94,23 @@ export function renderToolbarButtons({
       }
     };
 
-    btn.addEventListener("mousedown", (e) => {
+    btn.onmousedown = (e) => {
       e.preventDefault();
+      emitUserIntent(`toolbar:${btnDef.key}:mousedown`);
       btnDef.action();
-      setTimeout(refreshButton, 0);
-    });
+      defer(refreshButton);
+    };
 
-    btn.addEventListener("mouseenter", () => {
+    btn.onmouseenter = () => {
       if (!btnDef.isActive()) {
         btn.style.background = "#f3f4f6";
         btn.style.color = "#374151";
       }
-    });
+    };
 
-    btn.addEventListener("mouseleave", () => {
+    btn.onmouseleave = () => {
       refreshButton();
-    });
+    };
 
     const refreshButton = createEditorAwareRefresher(updateStyle);
     buttonRefreshers.push(refreshButton);
@@ -120,6 +137,10 @@ export function renderToolbarButtons({
       btn.textContent = saveBtn.label;
     }
     btn.title = saveBtn.title;
+    const saveAriaLabel = String(saveBtn.alt || "").trim();
+    if (saveAriaLabel) {
+      btn.setAttribute("aria-label", saveAriaLabel);
+    }
     btn.type = "button";
     btn.className = `editor-toolbar-btn${saveBtn.className ? ` ${saveBtn.className}` : ""}`;
 
@@ -135,22 +156,23 @@ export function renderToolbarButtons({
       }
     };
 
-    btn.addEventListener("mousedown", (e) => {
+    btn.onmousedown = (e) => {
       e.preventDefault();
+      emitUserIntent(`toolbar:save:mousedown`);
       saveBtn.action();
-      setTimeout(refreshButton, 0);
-    });
+      defer(refreshButton);
+    };
 
-    btn.addEventListener("mouseenter", () => {
+    btn.onmouseenter = () => {
       if (!saveBtn.isActive()) {
         btn.style.background = "#f3f4f6";
         btn.style.color = "#374151";
       }
-    });
+    };
 
-    btn.addEventListener("mouseleave", () => {
+    btn.onmouseleave = () => {
       refreshButton();
-    });
+    };
 
     const refreshButton = createEditorAwareRefresher(updateStyle);
     buttonRefreshers.push(refreshButton);

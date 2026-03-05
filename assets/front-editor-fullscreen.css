@@ -2,7 +2,7 @@ body.mfe-no-scroll {
   overflow: hidden;
 }
 
-.mfe-view-fullscreen .mfe-overlay {
+.mfe-state-fullscreen-open .mfe-overlay {
   position: fixed;
   top: 0;
   left: 0;
@@ -15,13 +15,13 @@ body.mfe-no-scroll {
   overflow: hidden;
 }
 
-.mfe-view-fullscreen .mfe-editor-shell {
+.mfe-state-fullscreen-open .mfe-editor-shell {
   display: flex;
   gap: 0;
   --mfe-split-secondary-size: 46%;
 }
 
-.mfe-view-fullscreen .mfe-editor-pane {
+.mfe-state-fullscreen-open .mfe-editor-pane {
   flex: 1 1 0;
   min-width: 0;
   position: relative;
@@ -29,12 +29,12 @@ body.mfe-no-scroll {
   margin-top: 0;
 }
 
-.mfe-view-fullscreen .mfe-editor-pane--secondary {
+.mfe-state-fullscreen-open .mfe-editor-pane--secondary {
   flex: 1 1 auto;
   min-width: 0;
 }
 
-.mfe-view-fullscreen .mfe-editor-split-region {
+.mfe-state-fullscreen-open .mfe-editor-split-region {
   flex: 0 0 var(--mfe-split-secondary-size);
   width: var(--mfe-split-secondary-size);
   min-width: 320px;
@@ -44,7 +44,7 @@ body.mfe-no-scroll {
   min-height: 0;
 }
 
-.mfe-view-fullscreen .mfe-editor-split-handle {
+.mfe-state-fullscreen-open .mfe-editor-split-handle {
   width: 30px;
   min-width: 30px;
   margin: 0 6px;
@@ -66,7 +66,7 @@ body.mfe-no-scroll {
     box-shadow 0.12s ease;
 }
 
-.mfe-view-fullscreen .mfe-editor-split-handle::before {
+.mfe-state-fullscreen-open .mfe-editor-split-handle::before {
   content: "";
   position: absolute;
   top: 8px;
@@ -78,24 +78,24 @@ body.mfe-no-scroll {
   transition: background-color 0.12s ease;
 }
 
-.mfe-view-fullscreen .mfe-editor-split-handle:hover,
-.mfe-view-fullscreen .mfe-editor-split-handle:focus-visible,
+.mfe-state-fullscreen-open .mfe-editor-split-handle:hover,
+.mfe-state-fullscreen-open .mfe-editor-split-handle:focus-visible,
 body.mfe-split-resizing .mfe-editor-split-handle {
   color: rgba(59, 130, 246, 0.85);
   background: transparent;
 }
 
-.mfe-view-fullscreen .mfe-editor-split-handle:hover::before,
-.mfe-view-fullscreen .mfe-editor-split-handle:focus-visible::before,
+.mfe-state-fullscreen-open .mfe-editor-split-handle:hover::before,
+.mfe-state-fullscreen-open .mfe-editor-split-handle:focus-visible::before,
 body.mfe-split-resizing .mfe-editor-split-handle::before {
   background: rgba(59, 130, 246, 0.55);
 }
 
-.mfe-view-fullscreen .mfe-editor-split-handle:focus-visible {
+.mfe-state-fullscreen-open .mfe-editor-split-handle:focus-visible {
   outline: none;
 }
 
-.mfe-view-fullscreen .mfe-editor-split-handle svg {
+.mfe-state-fullscreen-open .mfe-editor-split-handle svg {
   width: 16px;
   height: 16px;
   border: 1px solid rgba(148, 163, 184, 0.42);
@@ -112,17 +112,19 @@ body.mfe-split-resizing .mfe-editor-split-handle::before {
     box-shadow 0.12s ease;
 }
 
-.mfe-view-fullscreen .mfe-editor-split-handle:hover svg,
-.mfe-view-fullscreen .mfe-editor-split-handle:focus-visible svg,
+.mfe-state-fullscreen-open .mfe-editor-split-handle:hover svg,
+.mfe-state-fullscreen-open .mfe-editor-split-handle:focus-visible svg,
 body.mfe-split-resizing .mfe-editor-split-handle svg {
   border-color: rgba(59, 130, 246, 0.42);
 }
 
-.mfe-view-fullscreen .mfe-editor-shell--split .mfe-editor-pane--primary {
+.mfe-state-fullscreen-open .mfe-editor-shell--split .mfe-editor-pane--primary {
   padding-right: 10px;
 }
 
-.mfe-view-fullscreen .mfe-editor-shell--split .mfe-editor-pane--secondary {
+.mfe-state-fullscreen-open
+  .mfe-editor-shell--split
+  .mfe-editor-pane--secondary {
   padding-left: 10px;
 }
 
@@ -131,7 +133,7 @@ body.mfe-split-resizing {
   user-select: none;
 }
 
-.mfe-view-fullscreen .mfe-editor-pane-header {
+.mfe-state-fullscreen-open .mfe-editor-pane-header {
   position: static;
   display: flex;
   align-items: center;
@@ -142,16 +144,16 @@ body.mfe-split-resizing {
   margin-bottom: 48px;
 }
 
-.mfe-view-fullscreen .mfe-editor-pane-header--spacer {
+.mfe-state-fullscreen-open .mfe-editor-pane-header--spacer {
   visibility: hidden;
 }
 
-.mfe-view-fullscreen .mfe-editor-pane-label {
+.mfe-state-fullscreen-open .mfe-editor-pane-label {
   font-size: 12px;
   color: #64748b;
 }
 
-.mfe-view-fullscreen .mfe-editor-pane-select {
+.mfe-state-fullscreen-open .mfe-editor-pane-select {
   border: 1px solid rgba(148, 163, 184, 0.4);
   background: #fff;
   color: #334155;
@@ -160,11 +162,11 @@ body.mfe-split-resizing {
   border-radius: 8px;
 }
 
-.mfe-view-fullscreen .mfe-editor-pane-body {
+.mfe-state-fullscreen-open .mfe-editor-pane-body {
   min-height: 200px;
 }
 
-.mfe-view-fullscreen .mfe-backdrop {
+.mfe-state-fullscreen-open .mfe-backdrop {
   position: fixed;
   top: 0;
   left: 0;
@@ -174,7 +176,7 @@ body.mfe-split-resizing {
   z-index: 9999;
 }
 
-.mfe-view-fullscreen .mfe-container {
+.mfe-state-fullscreen-open .mfe-container {
   position: relative;
   width: 100%;
   max-width: none;
@@ -188,26 +190,26 @@ body.mfe-split-resizing {
   scrollbar-color: rgba(15, 23, 42, 0.2) transparent;
 }
 
-.mfe-view-fullscreen .mfe-container::-webkit-scrollbar {
+.mfe-state-fullscreen-open .mfe-container::-webkit-scrollbar {
   width: 8px;
 }
 
-.mfe-view-fullscreen .mfe-container::-webkit-scrollbar-track {
+.mfe-state-fullscreen-open .mfe-container::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.mfe-view-fullscreen .mfe-container::-webkit-scrollbar-thumb {
+.mfe-state-fullscreen-open .mfe-container::-webkit-scrollbar-thumb {
   background-color: rgba(15, 23, 42, 0.18);
   border-radius: 999px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
 
-.mfe-view-fullscreen .mfe-container::-webkit-scrollbar-thumb:hover {
+.mfe-state-fullscreen-open .mfe-container::-webkit-scrollbar-thumb:hover {
   background-color: rgba(15, 23, 42, 0.32);
 }
 
-.mfe-view-fullscreen .mfe-editor {
+.mfe-state-fullscreen-open .mfe-editor {
   font-size: 16px;
   line-height: 1.7;
   max-width: none;
@@ -215,17 +217,17 @@ body.mfe-split-resizing {
   color: #1f2937;
 }
 
-.mfe-view-fullscreen .mfe-editor-pane--primary .mfe-editor,
-.mfe-view-fullscreen .mfe-editor-pane--secondary .mfe-editor {
+.mfe-state-fullscreen-open .mfe-editor-pane--primary .mfe-editor,
+.mfe-state-fullscreen-open .mfe-editor-pane--secondary .mfe-editor {
   padding-left: 0;
   padding-right: 0;
 }
 
-.mfe-view-fullscreen .mfe-editor a {
+.mfe-state-fullscreen-open .mfe-editor a {
   pointer-events: none;
 }
 
-.mfe-view-fullscreen {
+.mfe-state-fullscreen-open {
   --mfe-doc-neutral: rgba(15, 23, 42, 0.09);
   --mfe-doc-neutral-strong: rgba(15, 23, 42, 0.16);
   --mfe-doc-surface: rgba(15, 23, 42, 0.03);
@@ -239,92 +241,97 @@ body.mfe-split-resizing {
   --mfe-doc-rail-bleed: 8px;
 }
 
-.mfe-view-fullscreen .mfe-window-breadcrumbs .mfe-window-inner,
-.mfe-view-fullscreen .mfe-window-content-inner {
+.mfe-state-fullscreen-open .mfe-window-breadcrumbs .mfe-window-inner,
+.mfe-state-fullscreen-open .mfe-window-content-inner {
   box-sizing: border-box;
   padding-left: var(--mfe-doc-gutter);
   padding-right: var(--mfe-doc-gutter);
 }
 
-.mfe-view-fullscreen .mfe-window-breadcrumbs .mfe-window-inner {
+/* Menubar offset should be shared between inline and fullscreen modes. The
+   menubar component always uses top: var(--mfe-menubar-top, 0px); this rule
+   establishes the same default for fullscreen via the shared offset variable. */
+.mfe-state-fullscreen-open .mfe-window-menubar {
+  --mfe-menubar-top: var(--mfe-menubar-offset);
+}
+
+.mfe-state-fullscreen-open .mfe-window-breadcrumbs .mfe-window-inner {
   padding-left: var(--mfe-doc-segment-gutter);
 }
 
-.mfe-view-fullscreen:not(.mfe-document-mode) .mfe-marker {
+.mfe-state-fullscreen-open:not(.mfe-state-document-mode) .mfe-marker {
   display: none;
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-segment {
+.mfe-state-fullscreen-open.mfe-state-document-mode .mfe-doc-segment {
   position: relative;
   display: block;
   overflow: visible;
   margin-left: 0;
   padding-left: var(--mfe-doc-segment-gutter);
   border-left: 2px solid transparent;
-  transition: border-color 0.16s ease;
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-segment::before {
+.mfe-state-fullscreen-open.mfe-state-document-mode .mfe-doc-segment::before {
   content: none;
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-segment ul,
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-segment ol {
+.mfe-state-fullscreen-open.mfe-state-document-mode .mfe-doc-segment ul,
+.mfe-state-fullscreen-open.mfe-state-document-mode .mfe-doc-segment ol {
   margin-left: 0;
   padding-left: var(--mfe-doc-list-offset);
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-segment--dim {
+.mfe-state-fullscreen-open.mfe-state-document-mode .mfe-doc-segment--dim {
   border-left-color: transparent;
   background: transparent;
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-segment--active {
+.mfe-state-fullscreen-open.mfe-state-document-mode .mfe-doc-segment--active {
   border-left-color: transparent;
   background: transparent;
 }
 
-.mfe-view-fullscreen.mfe-document-mode
+.mfe-state-fullscreen-open.mfe-state-document-mode
   .mfe-doc-segment--active.mfe-doc-segment--group-single::before,
-.mfe-view-fullscreen.mfe-document-mode
+.mfe-state-fullscreen-open.mfe-state-document-mode
   .mfe-doc-segment--active.mfe-doc-segment--group-start::before,
-.mfe-view-fullscreen.mfe-document-mode
+.mfe-state-fullscreen-open.mfe-state-document-mode
   .mfe-doc-segment--active.mfe-doc-segment--group-middle::before,
-.mfe-view-fullscreen.mfe-document-mode
+.mfe-state-fullscreen-open.mfe-state-document-mode
   .mfe-doc-segment--active.mfe-doc-segment--group-end::before {
   content: "";
   position: absolute;
   left: 0;
   width: 2px;
-  background: color-mix(in srgb, var(--mfe-doc-active) 38%, #94a3b8);
-  pointer-events: none;
+  background: var(--mfe-doc-active);
 }
 
-.mfe-view-fullscreen.mfe-document-mode
+.mfe-state-fullscreen-open.mfe-state-document-mode
   .mfe-doc-segment--active.mfe-doc-segment--group-single::before {
   top: 0;
   bottom: 0;
 }
 
-.mfe-view-fullscreen.mfe-document-mode
+.mfe-state-fullscreen-open.mfe-state-document-mode
   .mfe-doc-segment--active.mfe-doc-segment--group-start::before {
   top: 0;
   bottom: calc(-1 * var(--mfe-doc-rail-bleed));
 }
 
-.mfe-view-fullscreen.mfe-document-mode
+.mfe-state-fullscreen-open.mfe-state-document-mode
   .mfe-doc-segment--active.mfe-doc-segment--group-middle::before {
   top: calc(-1 * var(--mfe-doc-rail-bleed));
   bottom: calc(-1 * var(--mfe-doc-rail-bleed));
 }
 
-.mfe-view-fullscreen.mfe-document-mode
+.mfe-state-fullscreen-open.mfe-state-document-mode
   .mfe-doc-segment--active.mfe-doc-segment--group-end::before {
   top: calc(-1 * var(--mfe-doc-rail-bleed));
   bottom: 0;
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-marker {
+.mfe-state-fullscreen-open.mfe-state-document-mode .mfe-marker {
   margin: 14px 0;
   padding: 0;
   border: 0;
@@ -333,7 +340,7 @@ body.mfe-split-resizing {
   line-height: 1;
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-marker::before {
+.mfe-state-fullscreen-open.mfe-state-document-mode .mfe-marker::before {
   content: "";
   display: block;
   width: 100%;
@@ -341,11 +348,11 @@ body.mfe-split-resizing {
   border-top: 1px dotted var(--mfe-doc-neutral);
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker {
+.mfe-state-fullscreen-open.mfe-state-document-mode .mfe-doc-marker {
   position: relative;
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--section {
+.mfe-state-fullscreen-open.mfe-state-document-mode .mfe-doc-marker--section {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -355,7 +362,7 @@ body.mfe-split-resizing {
   padding-bottom: 0;
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--subsection {
+.mfe-state-fullscreen-open.mfe-state-document-mode .mfe-doc-marker--subsection {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -365,7 +372,7 @@ body.mfe-split-resizing {
   padding-bottom: 0;
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker::after {
+.mfe-state-fullscreen-open.mfe-state-document-mode .mfe-doc-marker::after {
   content: attr(data-mfe-doc-label);
   position: absolute;
   left: 50%;
@@ -383,8 +390,10 @@ body.mfe-split-resizing {
   white-space: nowrap;
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--section::after,
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--subsection::after {
+.mfe-state-fullscreen-open.mfe-state-document-mode
+  .mfe-doc-marker--section::after,
+.mfe-state-fullscreen-open.mfe-state-document-mode
+  .mfe-doc-marker--subsection::after {
   position: static;
   left: auto;
   top: auto;
@@ -395,26 +404,32 @@ body.mfe-split-resizing {
   order: 1;
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--section::before,
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--subsection::before {
+.mfe-state-fullscreen-open.mfe-state-document-mode
+  .mfe-doc-marker--section::before,
+.mfe-state-fullscreen-open.mfe-state-document-mode
+  .mfe-doc-marker--subsection::before {
   order: 2;
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--active::before {
+.mfe-state-fullscreen-open.mfe-state-document-mode
+  .mfe-doc-marker--active::before {
   border-top-color: color-mix(in srgb, var(--mfe-doc-active) 50%, #94a3b8);
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--active::after {
+.mfe-state-fullscreen-open.mfe-state-document-mode
+  .mfe-doc-marker--active::after {
   color: var(--mfe-doc-active);
   border-color: color-mix(in srgb, var(--mfe-doc-active) 32%, #ffffff);
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--field::before {
+.mfe-state-fullscreen-open.mfe-state-document-mode
+  .mfe-doc-marker--field::before {
   width: 0;
   border-top: 0;
 }
 
-.mfe-view-fullscreen.mfe-document-mode .mfe-doc-marker--field::after {
+.mfe-state-fullscreen-open.mfe-state-document-mode
+  .mfe-doc-marker--field::after {
   position: static;
   transform: none;
   display: inline-block;
@@ -426,46 +441,46 @@ body.mfe-split-resizing {
   border-color: var(--mfe-doc-neutral);
 }
 
-.mfe-view-fullscreen.mfe-document-mode
+.mfe-state-fullscreen-open.mfe-state-document-mode
   .mfe-doc-marker--field.mfe-doc-marker--active::after,
-.mfe-view-fullscreen.mfe-document-mode
+.mfe-state-fullscreen-open.mfe-state-document-mode
   .mfe-doc-marker--field.mfe-doc-marker--dim::after {
   border-radius: var(--mfe-doc-field-marker-radius);
 }
 
-.mfe-view-fullscreen .ProseMirror > * {
+.mfe-state-fullscreen-open .ProseMirror > * {
   margin-left: 0;
 }
 
-.mfe-view-fullscreen .ProseMirror > :not(.mfe-doc-segment) {
+.mfe-state-fullscreen-open .ProseMirror > :not(.mfe-doc-segment) {
   box-sizing: border-box;
   padding-left: var(--mfe-doc-segment-gutter);
 }
 
-.mfe-view-fullscreen .ProseMirror {
+.mfe-state-fullscreen-open .ProseMirror {
   overflow: visible;
 }
 
-.mfe-view-fullscreen .ProseMirror ul,
-.mfe-view-fullscreen .ProseMirror ol {
+.mfe-state-fullscreen-open .ProseMirror ul,
+.mfe-state-fullscreen-open .ProseMirror ol {
   margin-left: 0;
   padding-left: var(--mfe-doc-list-offset);
 }
 
-.mfe-view-fullscreen .ProseMirror li {
+.mfe-state-fullscreen-open .ProseMirror li {
   margin-left: 0;
 }
 
-.mfe-view-fullscreen .ProseMirror pre,
-.mfe-view-fullscreen .ProseMirror blockquote {
+.mfe-state-fullscreen-open .ProseMirror pre,
+.mfe-state-fullscreen-open .ProseMirror blockquote {
   margin-left: 0;
 }
 
-.mfe-view-fullscreen .ProseMirror blockquote {
+.mfe-state-fullscreen-open .ProseMirror blockquote {
   margin-right: 0;
 }
 
-.mfe-view-fullscreen .mfe-inline-html {
+.mfe-state-fullscreen-open .mfe-inline-html {
   display: inline-block;
   padding: 1px 6px;
   border-radius: 6px;
@@ -482,7 +497,7 @@ body.mfe-split-resizing {
 
 /* OLD: Toolbar styles removed - now handled in front-editor.css for menubar */
 /*
-.mfe-view-fullscreen .mfe-toolbar {
+.mfe-state-fullscreen-open .mfe-toolbar {
   display: flex;
   gap: 4px;
   align-items: center;
@@ -504,11 +519,11 @@ body.mfe-split-resizing {
 }
 */
 
-.mfe-view-fullscreen .mfe-toolbar .editor-toolbar-btn {
+.mfe-state-fullscreen-open .mfe-toolbar .editor-toolbar-btn {
   padding: 4px 8px;
 }
 
-.mfe-view-fullscreen .editor-toolbar-btn {
+.mfe-state-fullscreen-open .editor-toolbar-btn {
   padding: 6px 10px;
   border: 0;
   background: transparent;
@@ -531,27 +546,27 @@ body.mfe-split-resizing {
   outline: none;
 }
 
-.mfe-view-fullscreen .editor-toolbar-btn:focus-visible {
+.mfe-state-fullscreen-open .editor-toolbar-btn:focus-visible {
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
 }
 
-.mfe-view-fullscreen .editor-toolbar-btn svg {
+.mfe-state-fullscreen-open .editor-toolbar-btn svg {
   width: 16px;
   height: 16px;
   display: block;
 }
 
-.mfe-view-fullscreen .editor-toolbar-save {
+.mfe-state-fullscreen-open .editor-toolbar-save {
   background: #f8fafc;
   border: 1px solid rgba(148, 163, 184, 0.35);
   box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
 }
 
-.mfe-view-fullscreen .editor-toolbar-save:hover {
+.mfe-state-fullscreen-open .editor-toolbar-save:hover {
   background: #eef2f7;
 }
 
-.mfe-view-fullscreen .editor-toolbar-status {
+.mfe-state-fullscreen-open .editor-toolbar-status {
   font-size: 11px;
   color: #64748b;
   opacity: 0;
@@ -559,34 +574,38 @@ body.mfe-split-resizing {
   margin-right: 8px;
 }
 
-.mfe-view-fullscreen .editor-toolbar-status.is-saved {
+.mfe-state-fullscreen-open .editor-toolbar-status.is-saved {
   color: #15803d;
 }
 
-.mfe-view-fullscreen .editor-toolbar-status.is-unchanged {
+.mfe-state-fullscreen-open .editor-toolbar-status.is-unchanged {
   color: #0f172a;
 }
 
-.mfe-view-fullscreen .editor-toolbar-status.is-draft {
+.mfe-state-fullscreen-open .editor-toolbar-status.is-draft {
   color: #b45309;
 }
 
-.mfe-view-fullscreen .editor-toolbar-status.is-error {
+.mfe-state-fullscreen-open .editor-toolbar-status.is-error {
   color: #b91c1c;
 }
 
-.mfe-view-fullscreen .editor-toolbar-status.is-visible {
+.mfe-state-fullscreen-open .editor-toolbar-status.is-processing {
+  color: #0369a1;
+}
+
+.mfe-state-fullscreen-open .editor-toolbar-status.is-visible {
   opacity: 1;
 }
 
-.mfe-view-fullscreen .editor-toolbar-separator {
+.mfe-state-fullscreen-open .editor-toolbar-separator {
   width: 1px;
   height: 18px;
   background: rgba(148, 163, 184, 0.5);
   margin: 0 6px;
 }
 
-.mfe-view-fullscreen .editor-toolbar-spacer {
+.mfe-state-fullscreen-open .editor-toolbar-spacer {
   flex: 1 1 auto;
   min-width: 40px;
 }
@@ -595,37 +614,37 @@ body.mfe-split-resizing {
 
 /* Show warning separator line after first child block when there are multiple blocks */
 /* Target first p/h1-h6 child that is not the only child (i.e., has siblings) */
-.mfe-view-fullscreen
+.mfe-state-fullscreen-open
   .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
   > p:nth-child(1):not(:only-child)::after,
-.mfe-view-fullscreen
+.mfe-state-fullscreen-open
   .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
   > h1:nth-child(1):not(:only-child)::after,
-.mfe-view-fullscreen
+.mfe-state-fullscreen-open
   .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
   > h2:nth-child(1):not(:only-child)::after,
-.mfe-view-fullscreen
+.mfe-state-fullscreen-open
   .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
   > h3:nth-child(1):not(:only-child)::after,
-.mfe-view-fullscreen
+.mfe-state-fullscreen-open
   .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
   > h4:nth-child(1):not(:only-child)::after,
-.mfe-view-fullscreen
+.mfe-state-fullscreen-open
   .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
   > h5:nth-child(1):not(:only-child)::after,
-.mfe-view-fullscreen
+.mfe-state-fullscreen-open
   .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
   > h6:nth-child(1):not(:only-child)::after,
-.mfe-view-fullscreen
+.mfe-state-fullscreen-open
   .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
   > blockquote:nth-child(1):not(:only-child)::after,
-.mfe-view-fullscreen
+.mfe-state-fullscreen-open
   .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
   > ul:nth-child(1):not(:only-child)::after,
-.mfe-view-fullscreen
+.mfe-state-fullscreen-open
   .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
   > ol:nth-child(1):not(:only-child)::after,
-.mfe-view-fullscreen
+.mfe-state-fullscreen-open
   .ProseMirror[data-extra-warning="true"][data-extra-warning-active="true"]
   > pre:nth-child(1):not(:only-child)::after {
   content: "Only the first line will be saved. Remove extra lines to continue.";
@@ -645,12 +664,12 @@ body.mfe-split-resizing {
 }
 
 /* Hide ProseMirror trailing break placeholder */
-.mfe-view-fullscreen .ProseMirror .ProseMirror-trailingBreak {
+.mfe-state-fullscreen-open .ProseMirror .ProseMirror-trailingBreak {
   opacity: 0;
   height: 0;
 }
 
-.mfe-view-fullscreen .ProseMirror {
+.mfe-state-fullscreen-open .ProseMirror {
   position: relative;
   word-wrap: break-word;
   white-space: pre-wrap;
@@ -661,65 +680,65 @@ body.mfe-split-resizing {
   outline: none;
 }
 
-.mfe-view-fullscreen .ProseMirror p {
+.mfe-state-fullscreen-open .ProseMirror p {
   margin: 0.5em 0;
 }
 
-.mfe-view-fullscreen .ProseMirror p:first-child {
+.mfe-state-fullscreen-open .ProseMirror p:first-child {
   margin-top: 0;
 }
 
-.mfe-view-fullscreen .ProseMirror p:last-child {
+.mfe-state-fullscreen-open .ProseMirror p:last-child {
   margin-bottom: 0;
 }
 
-.mfe-view-fullscreen .ProseMirror h1 {
+.mfe-state-fullscreen-open .ProseMirror h1 {
   font-size: 2em;
   margin: 0.67em 0;
   font-weight: bold;
 }
 
-.mfe-view-fullscreen .ProseMirror h2 {
+.mfe-state-fullscreen-open .ProseMirror h2 {
   font-size: 1.5em;
   margin: 0.75em 0;
   font-weight: bold;
 }
 
-.mfe-view-fullscreen .ProseMirror h3 {
+.mfe-state-fullscreen-open .ProseMirror h3 {
   font-size: 1.17em;
   margin: 0.83em 0;
   font-weight: bold;
 }
 
-.mfe-view-fullscreen .ProseMirror h4 {
+.mfe-state-fullscreen-open .ProseMirror h4 {
   font-size: 1em;
   margin: 1em 0;
   font-weight: bold;
 }
 
-.mfe-view-fullscreen .ProseMirror h5 {
+.mfe-state-fullscreen-open .ProseMirror h5 {
   font-size: 0.83em;
   margin: 1em 0;
   font-weight: bold;
 }
 
-.mfe-view-fullscreen .ProseMirror h6 {
+.mfe-state-fullscreen-open .ProseMirror h6 {
   font-size: 0.67em;
   margin: 1em 0;
   font-weight: bold;
 }
 
-.mfe-view-fullscreen .ProseMirror ul,
-.mfe-view-fullscreen .ProseMirror ol {
+.mfe-state-fullscreen-open .ProseMirror ul,
+.mfe-state-fullscreen-open .ProseMirror ol {
   padding-left: 2em;
   margin: 0.5em 0;
 }
 
-.mfe-view-fullscreen .ProseMirror li {
+.mfe-state-fullscreen-open .ProseMirror li {
   margin: 0.25em 0;
 }
 
-.mfe-view-fullscreen .ProseMirror code {
+.mfe-state-fullscreen-open .ProseMirror code {
   background: rgba(0, 0, 0, 0.06);
   padding: 2px 4px;
   border-radius: 3px;
@@ -727,7 +746,7 @@ body.mfe-split-resizing {
   font-size: 0.9em;
 }
 
-.mfe-view-fullscreen .ProseMirror pre {
+.mfe-state-fullscreen-open .ProseMirror pre {
   background: rgba(0, 0, 0, 0.04);
   padding: 12px;
   border-radius: 4px;
@@ -735,51 +754,51 @@ body.mfe-split-resizing {
   margin: 0.5em 0;
 }
 
-.mfe-view-fullscreen .ProseMirror pre code {
+.mfe-state-fullscreen-open .ProseMirror pre code {
   background: none;
   padding: 0;
 }
 
 /* Code block syntax highlighting (lowlight / highlight.js classes) */
-.mfe-view-fullscreen .ProseMirror pre code.hljs {
+.mfe-state-fullscreen-open .ProseMirror pre code.hljs {
   color: #0f172a;
 }
 
-.mfe-view-fullscreen .ProseMirror .hljs-comment,
-.mfe-view-fullscreen .ProseMirror .hljs-quote {
+.mfe-state-fullscreen-open .ProseMirror .hljs-comment,
+.mfe-state-fullscreen-open .ProseMirror .hljs-quote {
   color: #64748b;
 }
 
-.mfe-view-fullscreen .ProseMirror .hljs-keyword,
-.mfe-view-fullscreen .ProseMirror .hljs-selector-tag,
-.mfe-view-fullscreen .ProseMirror .hljs-literal,
-.mfe-view-fullscreen .ProseMirror .hljs-section,
-.mfe-view-fullscreen .ProseMirror .hljs-link {
+.mfe-state-fullscreen-open .ProseMirror .hljs-keyword,
+.mfe-state-fullscreen-open .ProseMirror .hljs-selector-tag,
+.mfe-state-fullscreen-open .ProseMirror .hljs-literal,
+.mfe-state-fullscreen-open .ProseMirror .hljs-section,
+.mfe-state-fullscreen-open .ProseMirror .hljs-link {
   color: #7c3aed;
 }
 
-.mfe-view-fullscreen .ProseMirror .hljs-function,
-.mfe-view-fullscreen .ProseMirror .hljs-title,
-.mfe-view-fullscreen .ProseMirror .hljs-name,
-.mfe-view-fullscreen .ProseMirror .hljs-selector-id,
-.mfe-view-fullscreen .ProseMirror .hljs-selector-class {
+.mfe-state-fullscreen-open .ProseMirror .hljs-function,
+.mfe-state-fullscreen-open .ProseMirror .hljs-title,
+.mfe-state-fullscreen-open .ProseMirror .hljs-name,
+.mfe-state-fullscreen-open .ProseMirror .hljs-selector-id,
+.mfe-state-fullscreen-open .ProseMirror .hljs-selector-class {
   color: #2563eb;
 }
 
-.mfe-view-fullscreen .ProseMirror .hljs-string,
-.mfe-view-fullscreen .ProseMirror .hljs-symbol,
-.mfe-view-fullscreen .ProseMirror .hljs-bullet,
-.mfe-view-fullscreen .ProseMirror .hljs-addition {
+.mfe-state-fullscreen-open .ProseMirror .hljs-string,
+.mfe-state-fullscreen-open .ProseMirror .hljs-symbol,
+.mfe-state-fullscreen-open .ProseMirror .hljs-bullet,
+.mfe-state-fullscreen-open .ProseMirror .hljs-addition {
   color: #16a34a;
 }
 
-.mfe-view-fullscreen .ProseMirror .hljs-number,
-.mfe-view-fullscreen .ProseMirror .hljs-meta,
-.mfe-view-fullscreen .ProseMirror .hljs-attribute {
+.mfe-state-fullscreen-open .ProseMirror .hljs-number,
+.mfe-state-fullscreen-open .ProseMirror .hljs-meta,
+.mfe-state-fullscreen-open .ProseMirror .hljs-attribute {
   color: #f59e0b;
 }
 
-.mfe-view-fullscreen .ProseMirror blockquote {
+.mfe-state-fullscreen-open .ProseMirror blockquote {
   border-left: 3px solid #ccc;
   padding-left: 1em;
   margin: 0.5em 0 0.5em 0.5em;
@@ -787,36 +806,36 @@ body.mfe-split-resizing {
   font-style: italic;
 }
 
-.mfe-view-fullscreen .ProseMirror strong {
+.mfe-state-fullscreen-open .ProseMirror strong {
   font-weight: bold;
 }
 
-.mfe-view-fullscreen .ProseMirror em {
+.mfe-state-fullscreen-open .ProseMirror em {
   font-style: italic;
 }
 
-.mfe-view-fullscreen .ProseMirror a {
+.mfe-state-fullscreen-open .ProseMirror a {
   color: #0066cc;
   text-decoration: underline;
 }
 
-.mfe-view-fullscreen .ProseMirror a:hover {
+.mfe-state-fullscreen-open .ProseMirror a:hover {
   color: #0052a3;
 }
 
-.mfe-view-fullscreen .ProseMirror img {
+.mfe-state-fullscreen-open .ProseMirror img {
   max-width: var(--mfe-image-max-width, 100%);
   height: auto;
 }
 
 /* Keep title/heading fields WYSIWYG (no auto-resize from editor defaults) */
-.mfe-view-fullscreen .fe-editor-host.fe-type-title .ProseMirror h1,
-.mfe-view-fullscreen .fe-editor-host.fe-type-heading .ProseMirror h1,
-.mfe-view-fullscreen .fe-editor-host.fe-type-heading .ProseMirror h2,
-.mfe-view-fullscreen .fe-editor-host.fe-type-heading .ProseMirror h3,
-.mfe-view-fullscreen .fe-editor-host.fe-type-heading .ProseMirror h4,
-.mfe-view-fullscreen .fe-editor-host.fe-type-heading .ProseMirror h5,
-.mfe-view-fullscreen .fe-editor-host.fe-type-heading .ProseMirror h6 {
+.mfe-state-fullscreen-open .fe-editor-host.fe-type-title .ProseMirror h1,
+.mfe-state-fullscreen-open .fe-editor-host.fe-type-heading .ProseMirror h1,
+.mfe-state-fullscreen-open .fe-editor-host.fe-type-heading .ProseMirror h2,
+.mfe-state-fullscreen-open .fe-editor-host.fe-type-heading .ProseMirror h3,
+.mfe-state-fullscreen-open .fe-editor-host.fe-type-heading .ProseMirror h4,
+.mfe-state-fullscreen-open .fe-editor-host.fe-type-heading .ProseMirror h5,
+.mfe-state-fullscreen-open .fe-editor-host.fe-type-heading .ProseMirror h6 {
   font-size: 1em;
   margin: 0;
 }

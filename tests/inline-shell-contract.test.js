@@ -22,8 +22,8 @@ describe("Inline shell contract", () => {
     setInlineShellOpen(true);
     setInlineShellOpen(false);
 
-    expect(add).toHaveBeenCalledWith("mfe-view-inline");
-    expect(remove).toHaveBeenCalledWith("mfe-view-inline");
+    expect(add).toHaveBeenCalledWith("mfe-state-inline-open");
+    expect(remove).toHaveBeenCalledWith("mfe-state-inline-open");
   });
 
   test("applies inline debug shell classes", () => {

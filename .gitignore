@@ -5,3 +5,8 @@ dist/
 ddev
 .ddev
 todo.md
+tests/e2e/.mfe-e2e.local.json
+tests/e2e/.mfe-e2e.example.json
+tests/e2e/.auth/
+tests/test-results/
+test-results/
