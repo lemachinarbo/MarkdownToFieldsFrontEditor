@@ -8708,7 +8708,37 @@ function getPayloadFromElement(target) {
     pageId,
   };
   const derivedFieldId = buildPayloadFieldId(payloadMeta);
-  const resolvedOriginKey = canonicalStampedKey || derivedFieldId;
+  const stampedOriginMeta = parseOriginScopeMeta(canonicalStampedKey);
+  const expectedScopeKey = buildScopeKeyFromMeta({
+    scopeKind: fieldScope,
+    section: fieldSection,
+    subsection: fieldSubsection,
+    name: fieldName || "document",
+  });
+  const stampedScopeKey = stampedOriginMeta
+    ? buildScopeKeyFromMeta(stampedOriginMeta)
+    : "";
+  const stampedShapeMismatch =
+    fieldScope !== "document" &&
+    Boolean(canonicalStampedKey) &&
+    Boolean(expectedScopeKey) &&
+    Boolean(stampedScopeKey) &&
+    stampedScopeKey !== expectedScopeKey;
+  if (stampedShapeMismatch) {
+    emitRuntimeShapeLog("MFE_STAMPED_KEY_SHAPE_MISMATCH", {
+      stampedKey: canonicalStampedKey,
+      stampedScopeKey,
+      expectedScopeKey,
+      fieldScope,
+      fieldSection,
+      fieldSubsection,
+      fieldName,
+    });
+  }
+  const resolvedOriginKey =
+    canonicalStampedKey && !stampedShapeMismatch
+      ? canonicalStampedKey
+      : derivedFieldId;
   return {
     ...payloadMeta,
     fieldId: derivedFieldId,
