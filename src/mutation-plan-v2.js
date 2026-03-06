@@ -1102,7 +1102,7 @@ export function applyScopedEditV2({
     startOffset: rangeBefore.contentStart,
     endOffset:
       scopeKind === "field"
-        ? rangeBefore.contentStart + replacementMarkdown.length
+        ? rangeBefore.contentEnd
         : rangeBefore.contentEnd,
     safety: {
       hasNextMarker: rangeBefore.hasNextMarker,

@@ -5,6 +5,7 @@ import {
   assertStructuralMarkerGraphEqual,
   hasStructuralMarkerBoundaryViolations,
   parseStructuralDocument,
+  resolveStructuralScopeRange,
 } from "../src/structural-document.js";
 import { applyScopedEditV2 } from "../src/mutation-plan-v2.js";
 import {
@@ -55,6 +56,16 @@ const CANONICAL_WITH_SUBSECTIONS = [
   "Every harvest stays **predictable**.",
 ].join("\n");
 
+const CANONICAL_WITH_PLAIN_TAG_FIELD = [
+  "<!-- section:edgecases -->",
+  "",
+  "<!-- plain -->",
+  "Alpha beta gamma",
+  "",
+  "<!-- after -->",
+  "After marker stays untouched.",
+].join("\n");
+
 const COMPLEX_CANONICAL_BODY = fs
   .readFileSync(
     path.join(process.cwd(), "tests/fixtures/en-home.baseline.md"),
@@ -84,6 +95,62 @@ describe("mutation-plan-v2", () => {
     expect(result.ok).toBe(true);
     expect(result.canonicalBody).toMatch(/# The Urban <br>Far\n+<!-- intro\.\.\. -->/);
     expect(result.canonicalBody).not.toContain("Far<!-- intro... -->");
+    expect(hasStructuralMarkerBoundaryViolations(result.canonicalBody)).toBe(false);
+  });
+
+  test.each([
+    {
+      label: "whole replacement",
+      editorContent: "Omega field replacement",
+      expectedFieldText: "Omega field replacement",
+    },
+    {
+      label: "start replacement",
+      editorContent: "Omega beta gamma",
+      expectedFieldText: "Omega beta gamma",
+    },
+    {
+      label: "end replacement",
+      editorContent: "Alpha beta delta",
+      expectedFieldText: "Alpha beta delta",
+    },
+  ])("plain tag field adjacent edits keep range inside scope: $label", ({
+    editorContent,
+    expectedFieldText,
+  }) => {
+    const scopeMeta = {
+      scopeKind: "field",
+      section: "edgecases",
+      subsection: "",
+      name: "plain",
+    };
+    const session = createScopeSession({
+      stateId: "plain|en",
+      lang: "en",
+      scopeMeta,
+    });
+    const result = applyScopedEditV2({
+      session,
+      structuralDocument: parseStructuralDocument(CANONICAL_WITH_PLAIN_TAG_FIELD),
+      editorContent,
+    });
+
+    const beforeRange = resolveStructuralScopeRange(
+      parseStructuralDocument(CANONICAL_WITH_PLAIN_TAG_FIELD),
+      scopeMeta,
+    );
+    const afterRange = resolveStructuralScopeRange(
+      parseStructuralDocument(result.canonicalBody),
+      scopeMeta,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.canonicalBody).toContain(`<!-- plain -->\n${expectedFieldText}\n\n<!-- after -->`);
+    expect(result.canonicalBody).toContain("<!-- after -->\nAfter marker stays untouched.");
+    expect(result.startOffset).toBe(beforeRange.contentStart);
+    expect(result.endOffset).toBe(beforeRange.contentEnd);
+    expect(afterRange.trimmedContentEnd).toBeGreaterThanOrEqual(result.startOffset);
+    expect(result.scopedComparableMarkdown).toBe(expectedFieldText);
     expect(hasStructuralMarkerBoundaryViolations(result.canonicalBody)).toBe(false);
   });
 

@@ -144,6 +144,24 @@ async function appendOutlineOrderingFixture() {
   await fs.writeFile(EN_FILE, `${current.replace(/\s*$/, "")}${block}`, "utf8");
 }
 
+async function appendPlainTagFieldFixture() {
+  const current = String(await readEn());
+  if (current.includes("<!-- section:edgecases -->")) return;
+  const block = [
+    "",
+    "",
+    "<!-- section:edgecases -->",
+    "",
+    "<!-- plain -->",
+    "Alpha beta gamma",
+    "",
+    "<!-- after -->",
+    "After marker stays untouched.",
+    "",
+  ].join("\n");
+  await fs.writeFile(EN_FILE, `${current.replace(/\s*$/, "")}${block}`, "utf8");
+}
+
 async function resetHomeFromFixture(fixturePath) {
   const [enBaseline, esBaseline] = await Promise.all([
     fs.readFile(fixturePath, "utf8"),
@@ -518,6 +536,101 @@ async function appendTokenInOpenEditor(page, token) {
     }
   }
   await page.keyboard.type(` ${token}`);
+}
+
+async function focusPrimaryEditorText(page) {
+  const activeTextbox = getActivePrimaryEditor(page);
+  await expect(activeTextbox).toBeVisible();
+  const textTarget = activeTextbox.locator("p, h1, h2, h3, h4, h5, h6").first();
+  if (await textTarget.isVisible().catch(() => false)) {
+    await textTarget.click();
+    return activeTextbox;
+  }
+  await activeTextbox.click();
+  return activeTextbox;
+}
+
+async function selectPrimaryEditorTextRange(page, startOffset, endOffset) {
+  await focusPrimaryEditorText(page);
+  const selected = await page.evaluate(
+    ({ startOffset, endOffset }) => {
+      const root = document.querySelector(
+        '.mfe-editor-pane--primary .mfe-editor[contenteditable="true"], .mfe-editor-pane--primary [role="textbox"][contenteditable="true"], .mfe-editor-pane--primary [contenteditable="true"]',
+      );
+      if (!(root instanceof HTMLElement)) return false;
+
+      const textNodes = [];
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node) {
+        textNodes.push(node);
+        node = walker.nextNode();
+      }
+      if (!textNodes.length) return false;
+
+      const totalLength = textNodes.reduce(
+        (sum, textNode) => sum + String(textNode.textContent || "").length,
+        0,
+      );
+      const start = Math.max(0, Math.min(totalLength, Number(startOffset || 0)));
+      const end = Math.max(start, Math.min(totalLength, Number(endOffset || 0)));
+
+      function locate(offset) {
+        let consumed = 0;
+        for (const textNode of textNodes) {
+          const length = String(textNode.textContent || "").length;
+          const nextConsumed = consumed + length;
+          if (offset <= nextConsumed) {
+            return {
+              node: textNode,
+              offset: Math.max(0, Math.min(length, offset - consumed)),
+            };
+          }
+          consumed = nextConsumed;
+        }
+        const lastNode = textNodes[textNodes.length - 1];
+        return {
+          node: lastNode,
+          offset: String(lastNode.textContent || "").length,
+        };
+      }
+
+      const startPos = locate(start);
+      const endPos = locate(end);
+      const selection = window.getSelection();
+      if (!selection) return false;
+      const range = document.createRange();
+      range.setStart(startPos.node, startPos.offset);
+      range.setEnd(endPos.node, endPos.offset);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      root.focus();
+      return selection.toString().length === end - start;
+    },
+    { startOffset, endOffset },
+  );
+  expect(selected).toBe(true);
+}
+
+async function replaceEntirePrimaryEditorText(page, nextText) {
+  const currentText = String((await getActivePrimaryEditor(page).textContent()) || "");
+  await selectPrimaryEditorTextRange(page, 0, currentText.length);
+  await page.keyboard.type(String(nextText || ""));
+}
+
+async function replacePrimaryEditorBoundaryText(page, direction, charCount, nextText) {
+  const currentText = String((await getActivePrimaryEditor(page).textContent()) || "");
+  const safeCount = Math.max(0, Math.min(currentText.length, Number(charCount || 0)));
+  if (direction === "start") {
+    await selectPrimaryEditorTextRange(page, 0, safeCount);
+  } else {
+    await selectPrimaryEditorTextRange(
+      page,
+      Math.max(0, currentText.length - safeCount),
+      currentText.length,
+    );
+  }
+  await page.keyboard.type(String(nextText || ""));
 }
 
 async function appendTokenAndAssertVisible(page, token, maxAttempts = 3) {
@@ -2040,6 +2153,100 @@ test.describe("document save roundtrip", () => {
         step.label,
       );
       await assertNoMarkerTextLeakInEditor(page, `${step.label}:after-save`);
+    }
+  });
+
+  test("plain tag field boundary edits save without scope leaks", async ({
+    page,
+  }) => {
+    await resetHomesFromFixtures();
+    await appendPlainTagFieldFixture();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    const criticalConsoleIssues = [];
+    const criticalPageErrors = [];
+    page.on("console", (msg) => {
+      const text = String(msg.text() || "");
+      if (
+        /apply scope leak|STATE_SAVE_FAILED|MFE_SAVE_SAFETY_BLOCKED|Save promise error/i.test(
+          text,
+        )
+      ) {
+        criticalConsoleIssues.push(`${msg.type()}: ${text}`);
+      }
+    });
+    page.on("pageerror", (error) => {
+      const text = String(error?.message || error || "");
+      if (/apply scope leak|STATE_SAVE_FAILED|MFE_SAVE_SAFETY_BLOCKED/i.test(text)) {
+        criticalPageErrors.push(text);
+      }
+    });
+
+    await page.goto("/");
+    const opened = await openFullscreenEditor(page);
+    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+
+    const cases = [
+      {
+        label: "replace-all",
+        apply: async () => {
+          await replaceEntirePrimaryEditorText(page, "Omega field replacement");
+        },
+        expected: "Omega field replacement",
+      },
+      {
+        label: "replace-start",
+        apply: async () => {
+          await replacePrimaryEditorBoundaryText(page, "start", 5, "Omega");
+        },
+        expected: "Omega beta gamma",
+      },
+      {
+        label: "replace-end",
+        apply: async () => {
+          await replacePrimaryEditorBoundaryText(page, "end", 5, "delta");
+        },
+        expected: "Alpha beta delta",
+      },
+    ];
+
+    for (const entry of cases) {
+      await resetHomesFromFixtures();
+      await appendPlainTagFieldFixture();
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await openScopeFromCanonical(page, {
+        scope: "field",
+        name: "plain",
+        section: "edgecases",
+        subsection: "",
+        readyContains: "Alpha beta gamma",
+      });
+
+      const consoleCursor = criticalConsoleIssues.length;
+      const pageErrorCursor = criticalPageErrors.length;
+      await entry.apply();
+      await expect
+        .poll(async () => String((await getActivePrimaryEditor(page).textContent()) || ""))
+        .toContain(entry.expected);
+      await page.getByRole("button", { name: /Save changes/i }).click();
+      await expect
+        .poll(async () => String(await readEn()))
+        .toContain(`<!-- plain -->\n${entry.expected}\n\n<!-- after -->`);
+      await expect
+        .poll(async () => String(await readEn()))
+        .toContain("<!-- after -->\nAfter marker stays untouched.");
+      await assertNoCriticalDocStateEvents(page, entry.label);
+      assertNoCriticalConsoleSince(
+        criticalConsoleIssues,
+        consoleCursor,
+        entry.label,
+      );
+      expect(
+        criticalPageErrors.slice(pageErrorCursor),
+        `${entry.label}: critical page errors detected`,
+      ).toEqual([]);
     }
   });
 });
