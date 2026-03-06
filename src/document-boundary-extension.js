@@ -21,8 +21,14 @@ function mapDocPosToDisplayOffset(docPos, docSize, displayLength) {
   return clamp(Math.round(ratio * displayLength), 0, displayLength);
 }
 
-function mapBoundaryDocPositionsWithTransaction(boundaryDocPositions, tr, docSize) {
-  const source = Array.isArray(boundaryDocPositions) ? boundaryDocPositions : [];
+function mapBoundaryDocPositionsWithTransaction(
+  boundaryDocPositions,
+  tr,
+  docSize,
+) {
+  const source = Array.isArray(boundaryDocPositions)
+    ? boundaryDocPositions
+    : [];
   const mapped = source.map((position) => {
     const mappedPosition = tr.mapping.map(Number(position || 1), 1);
     return clamp(mappedPosition, 1, Math.max(1, docSize));
@@ -78,7 +84,8 @@ export function mapEditableBoundariesWithTransaction(
 }
 
 function normalizeProjectionPayload(projection, doc) {
-  const payload = projection && typeof projection === "object" ? projection : {};
+  const payload =
+    projection && typeof projection === "object" ? projection : {};
   const displayText = String(payload.displayText || "");
   const displayLength = displayText.length;
   const docSize = Math.max(1, Number(doc?.content?.size || 0));
@@ -113,7 +120,9 @@ function normalizeProjectionPayload(projection, doc) {
     boundaryDocPositions,
     markerDocAnchors,
     projectionMeta: {
-      updateMode: String(nextProjectionMeta.updateMode || "deterministic-recompute"),
+      updateMode: String(
+        nextProjectionMeta.updateMode || "deterministic-recompute",
+      ),
       deterministicRecomputeCount: Number(
         nextProjectionMeta.deterministicRecomputeCount || 0,
       ),
@@ -256,6 +265,19 @@ function buildLabel(ctx) {
   return "document";
 }
 
+function buildShortMarkerLabel(ctx) {
+  if (ctx.field) {
+    return String(ctx.field || "");
+  }
+  if (ctx.subsection) {
+    return `subsection:${ctx.subsection}`;
+  }
+  if (ctx.section) {
+    return `section:${ctx.section}`;
+  }
+  return "document";
+}
+
 function buildClassName(ctx) {
   if (ctx.field) return "mfe-doc-segment mfe-doc-segment--field";
   if (ctx.subsection) return "mfe-doc-segment mfe-doc-segment--subsection";
@@ -358,17 +380,26 @@ export function createDocumentBoundaryExtension(getMode) {
                   ? pluginState
                   : { canonicalProjection: null };
               const meta = tr.getMeta(DOCUMENT_BOUNDARY_PLUGIN_KEY);
-              if (meta && typeof meta === "object" && meta.type === "setCanonicalProjection") {
+              if (
+                meta &&
+                typeof meta === "object" &&
+                meta.type === "setCanonicalProjection"
+              ) {
                 const nextProjection = normalizeProjectionPayload(
                   meta.projection || null,
                   tr.doc,
                 );
-                if (typeof console !== "undefined" && typeof console.info === "function") {
+                if (
+                  typeof console !== "undefined" &&
+                  typeof console.info === "function"
+                ) {
                   console.info(
                     "MFE_RUNTIME_BOUNDARY_WRITE_TRACE",
                     JSON.stringify({
                       reason: "document-boundary:setCanonicalProjection",
-                      mode: String(nextProjection?.projectionMeta?.updateMode || ""),
+                      mode: String(
+                        nextProjection?.projectionMeta?.updateMode || "",
+                      ),
                       trDocChanged: Boolean(tr.docChanged),
                       selectionFrom: Number(newState?.selection?.from ?? -1),
                       selectionTo: Number(newState?.selection?.to ?? -1),
@@ -383,10 +414,15 @@ export function createDocumentBoundaryExtension(getMode) {
                         ? nextProjection.editableBoundaries
                         : [],
                       deterministicBoundaries: [],
-                      stateId: String(nextProjection?.projectionMeta?.stateId || ""),
-                      scopeKey: String(nextProjection?.projectionMeta?.scopeKey || ""),
+                      stateId: String(
+                        nextProjection?.projectionMeta?.stateId || "",
+                      ),
+                      scopeKey: String(
+                        nextProjection?.projectionMeta?.scopeKey || "",
+                      ),
                       runtimeBoundariesTrusted: Boolean(
-                        nextProjection?.projectionMeta?.runtimeBoundariesTrusted || false,
+                        nextProjection?.projectionMeta
+                          ?.runtimeBoundariesTrusted || false,
                       ),
                     }),
                   );
@@ -398,7 +434,8 @@ export function createDocumentBoundaryExtension(getMode) {
               }
               if (tr.docChanged && prev.canonicalProjection) {
                 const previousProjection =
-                  prev.canonicalProjection && typeof prev.canonicalProjection === "object"
+                  prev.canonicalProjection &&
+                  typeof prev.canonicalProjection === "object"
                     ? prev.canonicalProjection
                     : null;
                 const previousDisplayLength = String(
@@ -410,7 +447,9 @@ export function createDocumentBoundaryExtension(getMode) {
                 );
                 const newDocSize = Math.max(
                   1,
-                  Number(newState?.doc?.content?.size || tr.doc?.content?.size || 0),
+                  Number(
+                    newState?.doc?.content?.size || tr.doc?.content?.size || 0,
+                  ),
                 );
                 const estimatedDisplayLength = Math.max(
                   0,
@@ -420,21 +459,24 @@ export function createDocumentBoundaryExtension(getMode) {
                   previousProjection,
                   tr.doc,
                 );
-                const mappedBoundaryDocPositions = mapBoundaryDocPositionsWithTransaction(
-                  currentProjection.boundaryDocPositions,
-                  tr,
-                  Math.max(1, Number(tr.doc?.content?.size || 0)),
-                );
-                const mappedMarkerDocAnchors = mapMarkerDocAnchorsWithTransaction(
-                  currentProjection.markerDocAnchors,
-                  tr,
-                  Math.max(1, Number(tr.doc?.content?.size || 0)),
-                );
-                const mappedEditableBoundaries = mapEditableBoundariesWithTransaction(
-                  currentProjection.editableBoundaries,
-                  tr,
-                  estimatedDisplayLength,
-                );
+                const mappedBoundaryDocPositions =
+                  mapBoundaryDocPositionsWithTransaction(
+                    currentProjection.boundaryDocPositions,
+                    tr,
+                    Math.max(1, Number(tr.doc?.content?.size || 0)),
+                  );
+                const mappedMarkerDocAnchors =
+                  mapMarkerDocAnchorsWithTransaction(
+                    currentProjection.markerDocAnchors,
+                    tr,
+                    Math.max(1, Number(tr.doc?.content?.size || 0)),
+                  );
+                const mappedEditableBoundaries =
+                  mapEditableBoundariesWithTransaction(
+                    currentProjection.editableBoundaries,
+                    tr,
+                    estimatedDisplayLength,
+                  );
                 const prevMetaProjection =
                   currentProjection.projectionMeta &&
                   typeof currentProjection.projectionMeta === "object"
@@ -446,7 +488,10 @@ export function createDocumentBoundaryExtension(getMode) {
                   .map((key) => String(key || ""))
                   .filter(Boolean)
                   .slice(0, 12);
-                if (typeof console !== "undefined" && typeof console.info === "function") {
+                if (
+                  typeof console !== "undefined" &&
+                  typeof console.info === "function"
+                ) {
                   console.info(
                     "MFE_RUNTIME_BOUNDARY_WRITE_TRACE",
                     JSON.stringify({
@@ -460,7 +505,9 @@ export function createDocumentBoundaryExtension(getMode) {
                       )
                         ? currentProjection.editableBoundaries
                         : [],
-                      newRuntimeBoundaries: Array.isArray(mappedEditableBoundaries)
+                      newRuntimeBoundaries: Array.isArray(
+                        mappedEditableBoundaries,
+                      )
                         ? mappedEditableBoundaries
                         : [],
                       deterministicBoundaries: [],
@@ -498,7 +545,9 @@ export function createDocumentBoundaryExtension(getMode) {
                       stateId: String(prevMetaProjection.stateId || ""),
                       scopeKey: String(prevMetaProjection.scopeKey || ""),
                       lastDocChangeTrace: {
-                        stepsLength: Array.isArray(tr.steps) ? tr.steps.length : 0,
+                        stepsLength: Array.isArray(tr.steps)
+                          ? tr.steps.length
+                          : 0,
                         mappingMapsLength:
                           tr.mapping && Array.isArray(tr.mapping.maps)
                             ? tr.mapping.maps.length
@@ -547,7 +596,8 @@ export function createDocumentBoundaryExtension(getMode) {
                 fieldIsContainer: false,
               };
               const selectionPos = state.selection?.from || 0;
-              const selectionHeadPos = state.selection?.$head?.pos || selectionPos;
+              const selectionHeadPos =
+                state.selection?.$head?.pos || selectionPos;
 
               state.doc.forEach((node, offset) => {
                 const from = offset;
@@ -588,7 +638,11 @@ export function createDocumentBoundaryExtension(getMode) {
                   field: "",
                   fieldIsContainer: false,
                 };
-                for (let markerOrdinal = 0; markerOrdinal < projectionProtectedSpans.length; markerOrdinal += 1) {
+                for (
+                  let markerOrdinal = 0;
+                  markerOrdinal < projectionProtectedSpans.length;
+                  markerOrdinal += 1
+                ) {
                   const span = projectionProtectedSpans[markerOrdinal] || null;
                   const hasMarkerMeta =
                     String(span?.markerRawName || "").trim().length > 0 ||
@@ -634,7 +688,9 @@ export function createDocumentBoundaryExtension(getMode) {
               const resolvedTopLevelIndex =
                 resolvedHeadIndex >= 0
                   ? resolvedHeadIndex
-                  : segmentNodes.findIndex((segment) => segment.from === topLevelFrom);
+                  : segmentNodes.findIndex(
+                      (segment) => segment.from === topLevelFrom,
+                    );
               const activeSegmentIndex =
                 resolvedTopLevelIndex >= 0
                   ? resolvedTopLevelIndex
@@ -642,7 +698,9 @@ export function createDocumentBoundaryExtension(getMode) {
                     ? 0
                     : -1;
               const activeSegment =
-                activeSegmentIndex >= 0 ? segmentNodes[activeSegmentIndex] : null;
+                activeSegmentIndex >= 0
+                  ? segmentNodes[activeSegmentIndex]
+                  : null;
               const activeContext = activeSegment
                 ? activeSegment.context
                 : {
@@ -700,7 +758,8 @@ export function createDocumentBoundaryExtension(getMode) {
                 const className = `${buildMarkerClassName(marker.context)} ${
                   isActive ? "mfe-doc-marker--active" : "mfe-doc-marker--dim"
                 }`;
-                const markerLabel = buildLabel(marker.context);
+                const markerLabelFull = buildLabel(marker.context);
+                const markerLabelShort = buildShortMarkerLabel(marker.context);
                 if (marker.synthetic) {
                   decorations.push(
                     Decoration.widget(
@@ -708,27 +767,34 @@ export function createDocumentBoundaryExtension(getMode) {
                       () => {
                         const markerEl = document.createElement("div");
                         markerEl.className = `mfe-marker ${className}`;
-                        markerEl.setAttribute("data-mfe-doc-label", markerLabel);
+                        markerEl.setAttribute(
+                          "data-mfe-doc-label",
+                          markerLabelShort,
+                        );
                         markerEl.setAttribute(
                           "data-mfe-marker",
-                          marker.rawName || markerLabel,
+                          marker.rawName || markerLabelShort,
                         );
+
                         markerEl.setAttribute("data-mfe-marker-synth", "1");
                         return markerEl;
                       },
                       {
                         side: -1,
-                        key: `mfe-doc-marker:${marker.from}:${marker.index || 0}:${markerLabel}`,
+                        key: `mfe-doc-marker:${marker.from}:${marker.index || 0}:${markerLabelFull}`,
                       },
                     ),
                   );
                   return;
                 }
+                const nodeAttrs = {
+                  class: className,
+                  "data-mfe-doc-label": markerLabelShort,
+                  "data-mfe-marker": markerLabelShort,
+                };
+
                 decorations.push(
-                  Decoration.node(marker.from, marker.to, {
-                    class: className,
-                    "data-mfe-doc-label": markerLabel,
-                  }),
+                  Decoration.node(marker.from, marker.to, nodeAttrs),
                 );
               });
 

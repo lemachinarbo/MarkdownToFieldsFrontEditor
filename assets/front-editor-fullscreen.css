@@ -15,6 +15,12 @@ body.mfe-no-scroll {
   overflow: hidden;
 }
 
+/* Reserve top spacing so fixed menubar doesn't overlap scrolling content in
+   fullscreen mode. Uses menubar top offset plus menubar height (48px). */
+.mfe-state-fullscreen-open .mfe-window-container {
+  padding-top: calc(var(--mfe-menubar-top, 0px) + 64px);
+}
+
 .mfe-state-fullscreen-open .mfe-editor-shell {
   display: flex;
   gap: 0;
@@ -256,7 +262,7 @@ body.mfe-split-resizing {
 }
 
 .mfe-state-fullscreen-open .mfe-window-breadcrumbs .mfe-window-inner {
-  padding-left: var(--mfe-doc-segment-gutter);
+  /* padding-left: var(--mfe-doc-segment-gutter); */
 }
 
 .mfe-state-fullscreen-open:not(.mfe-state-document-mode) .mfe-marker {
@@ -360,6 +366,8 @@ body.mfe-split-resizing {
   margin-bottom: 12px;
   padding-top: 0;
   padding-bottom: 0;
+  border: 0;
+  border-bottom: 1px dashed var(--mfe-doc-active);
 }
 
 .mfe-state-fullscreen-open.mfe-state-document-mode .mfe-doc-marker--subsection {
@@ -370,6 +378,10 @@ body.mfe-split-resizing {
   margin-bottom: 10px;
   padding-top: 0;
   padding-bottom: 0;
+  border: 0;
+  border-bottom: 1px dashed
+    color-mix(in srgb, var(--mfe-doc-active) 24%, var(--mfe-doc-neutral));
+  padding: 4px 8px 2px 8px;
 }
 
 .mfe-state-fullscreen-open.mfe-state-document-mode .mfe-doc-marker::after {
@@ -383,7 +395,7 @@ body.mfe-split-resizing {
   background: #fff;
   color: var(--mfe-doc-label-neutral);
   border: 1px solid transparent;
-  font-size: 14px;
+  font-size: 16px;
   line-height: 18px;
   letter-spacing: 0.03em;
   text-transform: lowercase;
@@ -402,6 +414,11 @@ body.mfe-split-resizing {
   width: max-content;
   margin: 0 0 6px 0;
   order: 1;
+}
+
+.mfe-state-fullscreen-open.mfe-state-document-mode
+  .mfe-doc-marker--section::after {
+  color: var(--mfe-doc-active);
 }
 
 .mfe-state-fullscreen-open.mfe-state-document-mode
@@ -435,10 +452,11 @@ body.mfe-split-resizing {
   display: inline-block;
   margin-top: 0;
   margin-left: 0;
-  padding: 0 8px;
+  padding: 3px 16px 3px 30px;
   border-radius: var(--mfe-doc-field-marker-radius);
   background: rgba(15, 23, 42, 0.04);
-  border-color: var(--mfe-doc-neutral);
+  border-bottom-color: var(--mfe-doc-neutral);
+  border-left: 4px solid var(--mfe-doc-neutral);
 }
 
 .mfe-state-fullscreen-open.mfe-state-document-mode
@@ -454,7 +472,7 @@ body.mfe-split-resizing {
 
 .mfe-state-fullscreen-open .ProseMirror > :not(.mfe-doc-segment) {
   box-sizing: border-box;
-  padding-left: var(--mfe-doc-segment-gutter);
+  /* padding-left: var(--mfe-doc-segment-gutter); */
 }
 
 .mfe-state-fullscreen-open .ProseMirror {
