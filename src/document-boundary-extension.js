@@ -36,6 +36,15 @@ function mapBoundaryDocPositionsWithTransaction(boundaryDocPositions, tr, docSiz
   return mapped;
 }
 
+function mapMarkerDocAnchorsWithTransaction(markerDocAnchors, tr, docSize) {
+  const source = Array.isArray(markerDocAnchors) ? markerDocAnchors : [];
+  const mapped = source.map((position) => {
+    const mappedPosition = tr.mapping.map(Number(position || 0), 1);
+    return clamp(mappedPosition, 0, Math.max(1, docSize));
+  });
+  return mapped;
+}
+
 function normalizeStrictIncreasingBoundaries(boundaries, maxOffset) {
   const source = Array.isArray(boundaries) ? boundaries : [];
   const max = Math.max(0, Number(maxOffset || 0));
@@ -88,6 +97,11 @@ function normalizeProjectionPayload(projection, doc) {
       : editableBoundaries.map((offset) =>
           mapDisplayOffsetToDocPos(offset, displayLength, docSize),
         );
+  const markerDocAnchors = Array.isArray(payload.markerDocAnchors)
+    ? payload.markerDocAnchors.map((value) =>
+        clamp(Number(value || 0), 0, docSize),
+      )
+    : [];
   const nextProjectionMeta =
     payload.projectionMeta && typeof payload.projectionMeta === "object"
       ? payload.projectionMeta
@@ -97,6 +111,7 @@ function normalizeProjectionPayload(projection, doc) {
     displayText,
     editableBoundaries,
     boundaryDocPositions,
+    markerDocAnchors,
     projectionMeta: {
       updateMode: String(nextProjectionMeta.updateMode || "deterministic-recompute"),
       deterministicRecomputeCount: Number(
@@ -255,17 +270,6 @@ function buildMarkerClassName(ctx) {
   return "mfe-doc-marker mfe-doc-marker--document";
 }
 
-function resolveSyntheticMarkerPosition(state, rawPosition) {
-  const docSize = Math.max(0, Number(state?.doc?.content?.size || 0));
-  if (docSize <= 0) return 0;
-  const candidate = clamp(Math.round(Number(rawPosition || 0)), 0, docSize);
-  const resolved = state.doc.resolve(candidate);
-  if (resolved.depth >= 1) {
-    return resolved.before(1);
-  }
-  return candidate;
-}
-
 function resolveMarkerContextFromProtectedSpan(span, fallbackContext) {
   const fallback =
     fallbackContext && typeof fallbackContext === "object"
@@ -421,6 +425,11 @@ export function createDocumentBoundaryExtension(getMode) {
                   tr,
                   Math.max(1, Number(tr.doc?.content?.size || 0)),
                 );
+                const mappedMarkerDocAnchors = mapMarkerDocAnchorsWithTransaction(
+                  currentProjection.markerDocAnchors,
+                  tr,
+                  Math.max(1, Number(tr.doc?.content?.size || 0)),
+                );
                 const mappedEditableBoundaries = mapEditableBoundariesWithTransaction(
                   currentProjection.editableBoundaries,
                   tr,
@@ -466,6 +475,7 @@ export function createDocumentBoundaryExtension(getMode) {
                   canonicalProjection: {
                     ...currentProjection,
                     boundaryDocPositions: mappedBoundaryDocPositions,
+                    markerDocAnchors: mappedMarkerDocAnchors,
                     editableBoundaries: mappedEditableBoundaries,
                     projectionMeta: {
                       updateMode: "tr-mapping",
@@ -524,10 +534,10 @@ export function createDocumentBoundaryExtension(getMode) {
               )
                 ? canonicalProjection.protectedSpans
                 : [];
-              const projectionBoundaryDocPositions = Array.isArray(
-                canonicalProjection?.boundaryDocPositions,
+              const projectionMarkerDocAnchors = Array.isArray(
+                canonicalProjection?.markerDocAnchors,
               )
-                ? canonicalProjection.boundaryDocPositions
+                ? canonicalProjection.markerDocAnchors
                 : [];
               const firstFieldSegmentFromByKey = new Map();
               let context = {
@@ -572,40 +582,34 @@ export function createDocumentBoundaryExtension(getMode) {
               });
 
               if (!markerNodes.length && projectionProtectedSpans.length) {
-                const markerCount = Math.max(
-                  0,
-                  Math.min(
-                    projectionProtectedSpans.length,
-                    projectionBoundaryDocPositions.length ||
-                      projectionProtectedSpans.length,
-                  ),
-                );
                 let syntheticContext = {
                   section: "",
                   subsection: "",
                   field: "",
                   fieldIsContainer: false,
                 };
-                for (let index = 0; index < markerCount; index += 1) {
-                  const span = projectionProtectedSpans[index] || null;
+                for (let markerOrdinal = 0; markerOrdinal < projectionProtectedSpans.length; markerOrdinal += 1) {
+                  const span = projectionProtectedSpans[markerOrdinal] || null;
+                  const hasMarkerMeta =
+                    String(span?.markerRawName || "").trim().length > 0 ||
+                    String(span?.markerKind || "").trim().length > 0 ||
+                    String(span?.markerName || "").trim().length > 0;
+                  if (!hasMarkerMeta) continue;
                   syntheticContext = resolveMarkerContextFromProtectedSpan(
                     span,
                     syntheticContext,
                   );
-                  const rawPosition =
-                    projectionBoundaryDocPositions.length > 0
-                      ? projectionBoundaryDocPositions[index]
-                      : 0;
-                  const markerPos = resolveSyntheticMarkerPosition(
-                    state,
-                    rawPosition,
+                  const anchoredMarkerPos = clamp(
+                    Number(projectionMarkerDocAnchors[markerOrdinal] || 0),
+                    0,
+                    Math.max(1, Number(state.doc?.content?.size || 1)),
                   );
                   markerNodes.push({
-                    from: markerPos,
-                    to: markerPos,
+                    from: anchoredMarkerPos,
+                    to: anchoredMarkerPos,
                     context: { ...syntheticContext },
                     synthetic: true,
-                    index,
+                    index: markerOrdinal,
                     rawName: String(span?.markerRawName || ""),
                   });
                 }

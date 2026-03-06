@@ -2217,6 +2217,112 @@ function getCanonicalMutationSessionForState(stateId) {
   return canonicalMutationSessionByStateId.get(key) || null;
 }
 
+function clampDocPosition(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function mapDisplayOffsetToDocPosForProjection(offset, displayLength, docSize) {
+  if (docSize <= 0) return 1;
+  if (displayLength <= 0) return clampDocPosition(1, 1, docSize);
+  const ratio = clampDocPosition(Number(offset || 0) / displayLength, 0, 1);
+  return clampDocPosition(Math.round(ratio * docSize), 1, docSize);
+}
+
+function resolveMarkerAnchorFromDocBoundary(
+  doc,
+  rawPosition,
+  preferPreviousAtTopBoundary = false,
+) {
+  const docSize = Math.max(0, Number(doc?.content?.size || 0));
+  if (docSize <= 0) return 0;
+  const candidate = clampDocPosition(Math.round(Number(rawPosition || 0)), 0, docSize);
+  if (candidate <= 0 || candidate >= docSize) return candidate;
+  const resolved = doc.resolve(candidate);
+  if (resolved.depth < 1) {
+    if (!preferPreviousAtTopBoundary) return candidate;
+    let previousStart = candidate;
+    doc.forEach((node, offset) => {
+      const to = offset + node.nodeSize;
+      if (to === candidate) {
+        previousStart = offset;
+      }
+    });
+    return clampDocPosition(previousStart, 0, docSize);
+  }
+  const start = clampDocPosition(resolved.before(1), 0, docSize);
+  const end = clampDocPosition(resolved.after(1), 0, docSize);
+  if (
+    preferPreviousAtTopBoundary &&
+    String(resolved.node(1)?.type?.name || "") === "heading"
+  ) {
+    return start;
+  }
+  if (candidate === start) return start;
+  if (candidate === end && end > start) return start;
+  const toStart = Math.abs(candidate - start);
+  const toEnd = Math.abs(end - candidate);
+  return toStart <= toEnd ? start : end;
+}
+
+function resolveProjectionMarkerDocAnchors(editor, projection) {
+  const doc = editor?.state?.doc;
+  if (!doc || !projection || typeof projection !== "object") return [];
+  const spans = Array.isArray(projection?.protectedSpans) ? projection.protectedSpans : [];
+  if (!spans.length) return [];
+  const docBlockStarts = [];
+  doc.forEach((node, offset) => {
+    if (node?.type?.isBlock) docBlockStarts.push(offset);
+  });
+  const docSize = Math.max(1, Number(doc?.content?.size || 0));
+  const displayTextLength = String(projection?.displayText || "").length;
+  const boundaries = Array.isArray(projection?.boundaryDocPositions)
+    ? projection.boundaryDocPositions
+    : [];
+  const editableBoundaries = Array.isArray(projection?.editableBoundaries)
+    ? projection.editableBoundaries
+    : [];
+  const anchors = [];
+  for (let index = 0; index < spans.length; index += 1) {
+    const span = spans[index] || {};
+    const spanAnchorOrdinal = Number(span?.anchorBlockOrdinal ?? -1);
+    if (spanAnchorOrdinal >= 0 && spanAnchorOrdinal < docBlockStarts.length) {
+      anchors.push(
+        clampDocPosition(Number(docBlockStarts[spanAnchorOrdinal] || 0), 0, docSize),
+      );
+      continue;
+    }
+    const boundaryDocPos =
+      Number.isFinite(Number(boundaries[index])) &&
+      Number(boundaries[index]) > 0
+        ? Number(boundaries[index])
+        : mapDisplayOffsetToDocPosForProjection(
+            Number(editableBoundaries[index] || 0),
+            displayTextLength,
+            docSize,
+          );
+    const preferPreviousAtTopBoundary =
+      String(span?.markerKind || "") === "section" ||
+      String(span?.markerKind || "") === "subsection";
+    anchors.push(
+      resolveMarkerAnchorFromDocBoundary(
+        doc,
+        boundaryDocPos,
+        preferPreviousAtTopBoundary,
+      ),
+    );
+  }
+  return anchors;
+}
+
+function buildProjectionWithResolvedMarkerAnchors(editor, projection) {
+  const baseProjection = projection && typeof projection === "object" ? projection : {};
+  const markerDocAnchors = resolveProjectionMarkerDocAnchors(editor, baseProjection);
+  return {
+    ...baseProjection,
+    markerDocAnchors,
+  };
+}
+
 function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
   const key = String(stateId || "");
   if (!key || !editor) return null;
@@ -2307,12 +2413,16 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
       scopeKey,
       runtimeBoundariesTrusted: true,
     });
-    writeDocumentBoundaryProjection(editor, preservedProjection);
+    const preservedProjectionWithAnchors = buildProjectionWithResolvedMarkerAnchors(
+      editor,
+      preservedProjection,
+    );
+    writeDocumentBoundaryProjection(editor, preservedProjectionWithAnchors);
     canonicalMutationSessionByStateId.set(key, {
       ...session,
-      runtimeProjection: preservedProjection,
+      runtimeProjection: preservedProjectionWithAnchors,
     });
-    return preservedProjection;
+    return preservedProjectionWithAnchors;
   }
   const docSize = Math.max(1, Number(editor?.state?.doc?.content?.size || 0));
   const mappedDocPositions = Array.isArray(pluginProjection?.boundaryDocPositions)
@@ -2435,12 +2545,16 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
       nextProjection?.projectionMeta?.runtimeBoundariesTrusted,
     ),
   });
-  writeDocumentBoundaryProjection(editor, nextProjection);
+  const nextProjectionWithAnchors = buildProjectionWithResolvedMarkerAnchors(
+    editor,
+    nextProjection,
+  );
+  writeDocumentBoundaryProjection(editor, nextProjectionWithAnchors);
   canonicalMutationSessionByStateId.set(key, {
     ...session,
-    runtimeProjection: nextProjection,
+    runtimeProjection: nextProjectionWithAnchors,
   });
-  return nextProjection;
+  return nextProjectionWithAnchors;
 }
 
 function performCanonicalSeedNormalizationHandshake(stateId, editor) {
@@ -2568,8 +2682,13 @@ function performCanonicalSeedNormalizationHandshake(stateId, editor) {
     scopeKey: buildCanonicalScopeKey(session?.scopeMeta || {}),
     runtimeBoundariesTrusted: true,
   });
-  writeDocumentBoundaryProjection(editor, runtimeProjection);
-  const pluginProjectionAfterWrite = readDocumentBoundaryProjection(editor) || runtimeProjection;
+  const runtimeProjectionWithAnchors = buildProjectionWithResolvedMarkerAnchors(
+    editor,
+    runtimeProjection,
+  );
+  writeDocumentBoundaryProjection(editor, runtimeProjectionWithAnchors);
+  const pluginProjectionAfterWrite =
+    readDocumentBoundaryProjection(editor) || runtimeProjectionWithAnchors;
   const diff = buildDisplayDiffTrace(baselineCanonical, serializedCanonical);
   emitRuntimeShapeLog("MFE_CANONICAL_SESSION_NORMALIZATION_HANDSHAKE", {
     stateId: key,
@@ -5167,16 +5286,23 @@ function setSecondaryLanguage(lang) {
     const canonicalProjectionDisplay = normalizeLineEndingsToLf(
       String(runtimeProjection?.displayText || ""),
     );
-    writeDocumentBoundaryProjection(secondaryEditor, {
+    const secondaryBoundaryProjection = buildProjectionWithResolvedMarkerAnchors(
+      secondaryEditor,
+      {
       displayText: canonicalProjectionDisplay,
       segmentMap: Array.isArray(runtimeProjection?.segmentMap)
         ? runtimeProjection.segmentMap
         : [],
-      protectedSpans: Array.isArray(canonicalSession?.scopeSlice?.protectedSpans)
-        ? canonicalSession.scopeSlice.protectedSpans
+      protectedSpans: Array.isArray(runtimeProjection?.protectedSpans)
+        ? runtimeProjection.protectedSpans
+        : Array.isArray(canonicalSession?.scopeSlice?.protectedSpans)
+          ? canonicalSession.scopeSlice.protectedSpans
         : [],
       editableBoundaries: Array.isArray(runtimeProjection?.editableBoundaries)
         ? runtimeProjection.editableBoundaries
+        : [],
+      boundaryDocPositions: Array.isArray(runtimeProjection?.boundaryDocPositions)
+        ? runtimeProjection.boundaryDocPositions
         : [],
       projectionMeta:
         runtimeProjection?.projectionMeta &&
@@ -5188,7 +5314,9 @@ function setSecondaryLanguage(lang) {
               mappingUpdateCount: 0,
               runtimeBoundariesTrusted: true,
             },
-    });
+      },
+    );
+    writeDocumentBoundaryProjection(secondaryEditor, secondaryBoundaryProjection);
     const seededBuffer = String(getMarkdownFromEditor(secondaryEditor) || "");
     syncCanonicalProjectionRuntimeForEditor(
       String(state.id || ""),
@@ -5830,16 +5958,23 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
       scopeKey: buildCanonicalScopeKey(canonicalSession?.scopeMeta || {}),
       runtimeBoundariesTrusted: true,
     });
-    writeDocumentBoundaryProjection(primaryEditor, {
+    const primaryBoundaryProjection = buildProjectionWithResolvedMarkerAnchors(
+      primaryEditor,
+      {
       displayText: canonicalProjectionDisplay,
       segmentMap: Array.isArray(runtimeProjection?.segmentMap)
         ? runtimeProjection.segmentMap
         : [],
-      protectedSpans: Array.isArray(canonicalSession?.scopeSlice?.protectedSpans)
-        ? canonicalSession.scopeSlice.protectedSpans
+      protectedSpans: Array.isArray(runtimeProjection?.protectedSpans)
+        ? runtimeProjection.protectedSpans
+        : Array.isArray(canonicalSession?.scopeSlice?.protectedSpans)
+          ? canonicalSession.scopeSlice.protectedSpans
         : [],
       editableBoundaries: Array.isArray(runtimeProjection?.editableBoundaries)
         ? runtimeProjection.editableBoundaries
+        : [],
+      boundaryDocPositions: Array.isArray(runtimeProjection?.boundaryDocPositions)
+        ? runtimeProjection.boundaryDocPositions
         : [],
       projectionMeta:
         runtimeProjection?.projectionMeta &&
@@ -5851,7 +5986,9 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
               mappingUpdateCount: 0,
               runtimeBoundariesTrusted: true,
             },
-    });
+      },
+    );
+    writeDocumentBoundaryProjection(primaryEditor, primaryBoundaryProjection);
     emitRuntimeShapeLog("MFE_CANONICAL_SESSION_SEED_DIAGNOSTIC", {
       stateId: String(activeDocumentState?.id || ""),
       projectionDisplayHash: hashStateIdentity(projectionDisplay),

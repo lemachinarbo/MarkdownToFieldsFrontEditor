@@ -311,6 +311,39 @@ export function resolveCanonicalScopeSlice(canonicalMarkdown, scopeMeta = {}) {
 }
 
 export function projectCanonicalSlice(scopeSlice) {
+  const collectMarkdownBlockStarts = (text) => {
+    const source = String(text || "");
+    if (!source) return [];
+    const starts = [];
+    let lineStart = 0;
+    let inBlock = false;
+    for (let index = 0; index <= source.length; index += 1) {
+      const atEnd = index === source.length;
+      if (!atEnd && source.charAt(index) !== "\n") continue;
+      const line = source.slice(lineStart, index);
+      const hasContent = line.trim().length > 0;
+      if (hasContent && !inBlock) {
+        starts.push(lineStart);
+        inBlock = true;
+      } else if (!hasContent) {
+        inBlock = false;
+      }
+      lineStart = index + 1;
+    }
+    return starts;
+  };
+  const findFirstBlockOrdinalInRange = (blockStarts, displayStart, displayEnd) => {
+    const starts = Array.isArray(blockStarts) ? blockStarts : [];
+    const start = Math.max(0, Number(displayStart || 0));
+    const end = Math.max(start, Number(displayEnd || start));
+    for (let index = 0; index < starts.length; index += 1) {
+      const blockStart = Number(starts[index] || 0);
+      if (blockStart < start) continue;
+      if (blockStart >= end) break;
+      return index;
+    }
+    return -1;
+  };
   const canonicalSlice = String(scopeSlice?.canonicalSlice || "");
   const spans = Array.isArray(scopeSlice?.protectedSpans)
     ? scopeSlice.protectedSpans
@@ -361,10 +394,47 @@ export function projectCanonicalSlice(scopeSlice) {
     displayEnd: displayOffset,
   });
 
+  const markdownBlockStarts = collectMarkdownBlockStarts(displayText);
+  const firstBlockOrdinalByEditablePartIndex = new Map();
+  segmentMap.forEach((part, partIndex) => {
+    if (String(part?.kind || "") !== "editable") return;
+    const ordinal = findFirstBlockOrdinalInRange(
+      markdownBlockStarts,
+      Number(part?.displayStart || 0),
+      Number(part?.displayEnd || 0),
+    );
+    if (ordinal >= 0) {
+      firstBlockOrdinalByEditablePartIndex.set(partIndex, ordinal);
+    }
+  });
+  const protectedSpanAnchorOrdinals = new Array(spans.length).fill(-1);
+  let protectedPartCursor = 0;
+  segmentMap.forEach((part, partIndex) => {
+    if (String(part?.kind || "") !== "protected") return;
+    let targetOrdinal = -1;
+    for (
+      let nextPartIndex = partIndex + 1;
+      nextPartIndex < segmentMap.length;
+      nextPartIndex += 1
+    ) {
+      if (!firstBlockOrdinalByEditablePartIndex.has(nextPartIndex)) continue;
+      targetOrdinal = Number(firstBlockOrdinalByEditablePartIndex.get(nextPartIndex));
+      break;
+    }
+    if (protectedPartCursor < protectedSpanAnchorOrdinals.length) {
+      protectedSpanAnchorOrdinals[protectedPartCursor] = targetOrdinal;
+    }
+    protectedPartCursor += 1;
+  });
+  const annotatedSpans = spans.map((span, index) => ({
+    ...span,
+    anchorBlockOrdinal: Number(protectedSpanAnchorOrdinals[index] ?? -1),
+  }));
+
   return {
     displayText,
     segmentMap,
-    protectedSpans: spans,
+    protectedSpans: annotatedSpans,
     editableBoundaries,
     editablePartCount: spans.length + 1,
   };

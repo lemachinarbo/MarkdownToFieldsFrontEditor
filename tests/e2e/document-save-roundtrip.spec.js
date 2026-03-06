@@ -12,6 +12,10 @@ const EN_BASELINE_FILE = path.join(
   process.cwd(),
   "tests/fixtures/en-home.baseline.md",
 );
+const EN_LONG_OUTLINE_BASELINE_FILE = path.join(
+  process.cwd(),
+  "tests/fixtures/en-home-long-outline.baseline.md",
+);
 const ES_BASELINE_FILE = path.join(
   process.cwd(),
   "tests/fixtures/es-home.baseline.md",
@@ -116,6 +120,39 @@ async function normalizeV2MatrixBaseline() {
     "",
   );
   await fs.writeFile(EN_FILE, current, "utf8");
+}
+
+async function appendOutlineOrderingFixture() {
+  const current = String(await readEn());
+  if (current.includes("<!-- section:about -->")) return;
+  const block = [
+    "",
+    "",
+    "<!-- section:about -->",
+    "",
+    "<!-- title -->",
+    "## Chi sono",
+    "",
+    "<!-- description... -->",
+    "Mi chiamo Daniela Fenini.",
+    "",
+    "Sono una donna, una madre, una nonna.",
+    "",
+    "Ho percorso questo cammino anch'io.",
+    "",
+  ].join("\n");
+  await fs.writeFile(EN_FILE, `${current.replace(/\s*$/, "")}${block}`, "utf8");
+}
+
+async function resetHomeFromFixture(fixturePath) {
+  const [enBaseline, esBaseline] = await Promise.all([
+    fs.readFile(fixturePath, "utf8"),
+    fs.readFile(ES_BASELINE_FILE, "utf8"),
+  ]);
+  await Promise.all([
+    fs.writeFile(EN_FILE, enBaseline, "utf8"),
+    fs.writeFile(ES_FILE, esBaseline, "utf8"),
+  ]);
 }
 
 async function ensureAuthenticated(page) {
@@ -1154,6 +1191,176 @@ test.describe("document save roundtrip", () => {
 
     const scopeAfterDisable = await getCurrentBreadcrumbLabel(page);
     expect(scopeAfterDisable).toBe(scopeBefore);
+  });
+
+  test("outline markers render before matched section content in synthetic marker mode", async ({
+    page,
+  }) => {
+    await resetHomesFromFixtures();
+    await appendOutlineOrderingFixture();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    await openScopeFromCanonical(page, {
+      scope: "document",
+      name: "document",
+      readyContains: "The Urban",
+    });
+
+    const outlineBtn = page.getByRole("button", { name: /View outline/i }).first();
+    await expect(outlineBtn).toBeVisible();
+    await outlineBtn.click();
+
+    const order = await page.evaluate(() => {
+      const root = document.querySelector(".mfe-editor-pane--primary .ProseMirror");
+      if (!(root instanceof HTMLElement)) return [];
+      return Array.from(root.children).map((element) => {
+        const marker = String(
+          element.getAttribute?.("data-mfe-marker") ||
+            element.getAttribute?.("data-mfe-doc-label") ||
+            "",
+        );
+        const docLabel = String(element.getAttribute?.("data-mfe-doc-label") || "");
+        const text = String(element.textContent || "").trim();
+        return {
+          tag: String(element.tagName || "").toLowerCase(),
+          marker,
+          docLabel,
+          text,
+        };
+      });
+    });
+
+    const findIndex = (matcher) => order.findIndex((entry) => matcher(entry));
+    const sectionHeroMarkerIndex = findIndex(
+      (entry) => entry.marker === "section:hero",
+    );
+    const fieldHeroTitleMarkerIndex = findIndex(
+      (entry) => entry.marker === "title" && /field:hero\/title/.test(entry.docLabel),
+    );
+    const heroHeadingIndex = findIndex(
+      (entry) => entry.tag === "h1" && entry.text.includes("The Urban"),
+    );
+    const fieldHeroIntroMarkerIndex = findIndex(
+      (entry) =>
+        entry.marker === "intro..." && /field:hero\/intro\.\.\./.test(entry.docLabel),
+    );
+    const heroIntroParagraphIndex = findIndex(
+      (entry) =>
+        entry.tag === "p" &&
+        entry.text.includes("We grow food and ideas in the city"),
+    );
+    const sectionColumnsMarkerIndex = findIndex(
+      (entry) => entry.marker === "section:columns",
+    );
+    const sectionBodyMarkerIndex = findIndex(
+      (entry) => entry.marker === "section:body",
+    );
+    const sectionBodyHeadingIndex = findIndex(
+      (entry) =>
+        entry.tag === "h2" &&
+        entry.text.includes("Forget"),
+    );
+    const sectionAboutMarkerIndex = findIndex(
+      (entry) => entry.marker === "section:about",
+    );
+    const fieldAboutTitleMarkerIndex = findIndex(
+      (entry) => entry.marker === "title" && /field:about\/title/.test(entry.docLabel),
+    );
+    const sectionAboutHeadingIndex = findIndex(
+      (entry) => entry.tag === "h2" && entry.text === "Chi sono",
+    );
+
+    expect(sectionHeroMarkerIndex).toBeGreaterThanOrEqual(0);
+    expect(fieldHeroTitleMarkerIndex).toBeGreaterThanOrEqual(0);
+    expect(heroHeadingIndex).toBeGreaterThanOrEqual(0);
+    expect(fieldHeroIntroMarkerIndex).toBeGreaterThanOrEqual(0);
+    expect(heroIntroParagraphIndex).toBeGreaterThanOrEqual(0);
+    expect(sectionColumnsMarkerIndex).toBeGreaterThanOrEqual(0);
+    expect(sectionHeroMarkerIndex).toBeLessThan(fieldHeroTitleMarkerIndex);
+    expect(fieldHeroTitleMarkerIndex).toBeLessThan(heroHeadingIndex);
+    expect(heroHeadingIndex).toBeLessThan(fieldHeroIntroMarkerIndex);
+    expect(fieldHeroIntroMarkerIndex).toBeLessThan(heroIntroParagraphIndex);
+    expect(heroIntroParagraphIndex).toBeLessThan(sectionColumnsMarkerIndex);
+    expect(sectionBodyMarkerIndex).toBeGreaterThanOrEqual(0);
+    expect(sectionBodyHeadingIndex).toBeGreaterThanOrEqual(0);
+    expect(sectionAboutMarkerIndex).toBeGreaterThanOrEqual(0);
+    expect(sectionAboutHeadingIndex).toBeGreaterThanOrEqual(0);
+    expect(sectionBodyMarkerIndex).toBeLessThan(sectionBodyHeadingIndex);
+    expect(sectionAboutMarkerIndex).toBeGreaterThan(sectionBodyHeadingIndex);
+    expect(Math.abs(sectionAboutMarkerIndex - sectionAboutHeadingIndex)).toBeLessThanOrEqual(4);
+    if (fieldAboutTitleMarkerIndex >= 0) {
+      expect(Math.abs(fieldAboutTitleMarkerIndex - sectionAboutHeadingIndex)).toBeLessThanOrEqual(3);
+    }
+  });
+
+  test("outline markers keep body/predictable/about order on long mixed document", async ({
+    page,
+  }) => {
+    await resetHomeFromFixture(EN_LONG_OUTLINE_BASELINE_FILE);
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    await openScopeFromCanonical(page, {
+      scope: "document",
+      name: "document",
+      readyContains: "The Urban",
+    });
+
+    const outlineBtn = page.getByRole("button", { name: /View outline/i }).first();
+    await expect(outlineBtn).toBeVisible();
+    await outlineBtn.click();
+
+    const order = await page.evaluate(() => {
+      const root = document.querySelector(".mfe-editor-pane--primary .ProseMirror");
+      if (!(root instanceof HTMLElement)) return [];
+      return Array.from(root.children).map((element) => ({
+        tag: String(element.tagName || "").toLowerCase(),
+        marker: String(element.getAttribute?.("data-mfe-marker") || ""),
+        docLabel: String(element.getAttribute?.("data-mfe-doc-label") || ""),
+        text: String(element.textContent || "").trim(),
+      }));
+    });
+
+    const findIndex = (matcher) => order.findIndex((entry) => matcher(entry));
+    const sectionBodyMarkerIndex = findIndex(
+      (entry) => entry.marker === "section:body",
+    );
+    const sectionBodyHeadingIndex = findIndex(
+      (entry) => entry.tag === "h2" && entry.text.includes("Forget"),
+    );
+    const predictableMarkerIndex = findIndex(
+      (entry) =>
+        entry.marker === "predictable" &&
+        /field:body\/predictable/.test(entry.docLabel),
+    );
+    const predictableParagraphIndex = findIndex(
+      (entry) =>
+        entry.tag === "p" &&
+        entry.text.includes("Every plot starts small"),
+    );
+    const sectionAboutMarkerIndex = findIndex(
+      (entry) => entry.marker === "section:about",
+    );
+    const aboutHeadingIndex = findIndex(
+      (entry) => entry.tag === "h2" && entry.text === "Chi sono",
+    );
+
+    expect(sectionBodyMarkerIndex).toBeGreaterThanOrEqual(0);
+    expect(sectionBodyHeadingIndex).toBeGreaterThanOrEqual(0);
+    expect(predictableMarkerIndex).toBeGreaterThanOrEqual(0);
+    expect(predictableParagraphIndex).toBeGreaterThanOrEqual(0);
+    expect(sectionAboutMarkerIndex).toBeGreaterThanOrEqual(0);
+    expect(aboutHeadingIndex).toBeGreaterThanOrEqual(0);
+
+    expect(sectionBodyMarkerIndex).toBeLessThan(sectionBodyHeadingIndex);
+    expect(predictableMarkerIndex).toBeLessThan(predictableParagraphIndex);
+    expect(predictableMarkerIndex).toBeLessThan(sectionAboutMarkerIndex);
+    expect(sectionAboutMarkerIndex).toBeLessThan(aboutHeadingIndex);
   });
 
   test("outline toggle keeps current scope and applies markers in split secondary editor", async ({
