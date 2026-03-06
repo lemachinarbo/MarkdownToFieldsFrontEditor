@@ -254,6 +254,7 @@ let scopedModeMarkdown = null;
 let scopedModeTarget = null;
 let documentDraftMarkdown = "";
 let editorViewMode = "scoped";
+let outlinePersistForSession = false;
 
 function resolveScopeMetaForSessionLock(scopeMeta = {}) {
   return {
@@ -264,7 +265,11 @@ function resolveScopeMetaForSessionLock(scopeMeta = {}) {
   };
 }
 
-function lockScopeSessionV2ForState(state, scopeMeta = {}, openedFrom = "unknown") {
+function lockScopeSessionV2ForState(
+  state,
+  scopeMeta = {},
+  openedFrom = "unknown",
+) {
   if (!state?.id) return null;
   const stateId = String(state.id || "");
   if (!stateId) return null;
@@ -278,7 +283,9 @@ function lockScopeSessionV2ForState(state, scopeMeta = {}, openedFrom = "unknown
   });
   const existing = scopeSessionV2ByStateId.get(stateId) || null;
   if (existing) {
-    if (String(existing.scopeKey || "") === String(nextSession.scopeKey || "")) {
+    if (
+      String(existing.scopeKey || "") === String(nextSession.scopeKey || "")
+    ) {
       return existing;
     }
     scopeSessionV2ByStateId.set(stateId, nextSession);
@@ -347,6 +354,7 @@ function createSaveSafetyBlockedError() {
 }
 
 let suppressNextCloseConfirm = false;
+let skipOutlineResetDuringClose = false;
 const primaryDraftsByFieldId = new Map();
 const originalMarkdownByFieldId = new Map();
 const draftMarkdownByScopedKey = new Map();
@@ -2116,12 +2124,12 @@ function emitRuntimeBoundaryWriteTrace(payload = {}) {
     mode: String(payload.mode || ""),
     trDocChanged:
       typeof payload.trDocChanged === "boolean" ? payload.trDocChanged : null,
-    selectionFrom:
-      Number.isFinite(Number(payload.selectionFrom))
-        ? Number(payload.selectionFrom)
-        : null,
-    selectionTo:
-      Number.isFinite(Number(payload.selectionTo)) ? Number(payload.selectionTo) : null,
+    selectionFrom: Number.isFinite(Number(payload.selectionFrom))
+      ? Number(payload.selectionFrom)
+      : null,
+    selectionTo: Number.isFinite(Number(payload.selectionTo))
+      ? Number(payload.selectionTo)
+      : null,
     previousRuntimeBoundaries: Array.isArray(payload.previousRuntimeBoundaries)
       ? payload.previousRuntimeBoundaries.map((value) => Number(value || 0))
       : [],
@@ -2140,7 +2148,10 @@ function emitRuntimeBoundaryWriteTrace(payload = {}) {
 function buildCanonicalMutationSession(canonicalBody, scopeMeta = {}) {
   const normalizedBody = normalizeLineEndingsToLf(String(canonicalBody || ""));
   const normalizedScopeMeta = buildCanonicalSessionScopeMeta(scopeMeta);
-  const scopeSlice = resolveCanonicalScopeSlice(normalizedBody, normalizedScopeMeta);
+  const scopeSlice = resolveCanonicalScopeSlice(
+    normalizedBody,
+    normalizedScopeMeta,
+  );
   const baselineProjection = projectCanonicalSlice(scopeSlice);
   const rawDisplayText = String(baselineProjection.displayText || "");
   const normalizedDisplayText = normalizeLineEndingsToLf(
@@ -2171,12 +2182,18 @@ function buildCanonicalMutationSession(canonicalBody, scopeMeta = {}) {
     scopeMeta: normalizedScopeMeta,
     scopeSlice,
     projection,
-    baselineDisplayHash: hashStateIdentity(String(projection.displayText || "")),
+    baselineDisplayHash: hashStateIdentity(
+      String(projection.displayText || ""),
+    ),
     createdAt: Date.now(),
   };
 }
 
-function setCanonicalMutationSessionForState(stateId, canonicalBody, scopeMeta = {}) {
+function setCanonicalMutationSessionForState(
+  stateId,
+  canonicalBody,
+  scopeMeta = {},
+) {
   const key = String(stateId || "");
   if (!key) return null;
   const nextSession = buildCanonicalMutationSession(canonicalBody, scopeMeta);
@@ -2189,7 +2206,8 @@ function setCanonicalMutationSessionForState(stateId, canonicalBody, scopeMeta =
       String(nextSession.scopeMeta?.section || "") &&
     String(existing.scopeMeta?.subsection || "") ===
       String(nextSession.scopeMeta?.subsection || "") &&
-    String(existing.scopeMeta?.name || "") === String(nextSession.scopeMeta?.name || "")
+    String(existing.scopeMeta?.name || "") ===
+      String(nextSession.scopeMeta?.name || "")
   ) {
     return existing;
   }
@@ -2235,7 +2253,11 @@ function resolveMarkerAnchorFromDocBoundary(
 ) {
   const docSize = Math.max(0, Number(doc?.content?.size || 0));
   if (docSize <= 0) return 0;
-  const candidate = clampDocPosition(Math.round(Number(rawPosition || 0)), 0, docSize);
+  const candidate = clampDocPosition(
+    Math.round(Number(rawPosition || 0)),
+    0,
+    docSize,
+  );
   if (candidate <= 0 || candidate >= docSize) return candidate;
   const resolved = doc.resolve(candidate);
   if (resolved.depth < 1) {
@@ -2267,7 +2289,9 @@ function resolveMarkerAnchorFromDocBoundary(
 function resolveProjectionMarkerDocAnchors(editor, projection) {
   const doc = editor?.state?.doc;
   if (!doc || !projection || typeof projection !== "object") return [];
-  const spans = Array.isArray(projection?.protectedSpans) ? projection.protectedSpans : [];
+  const spans = Array.isArray(projection?.protectedSpans)
+    ? projection.protectedSpans
+    : [];
   if (!spans.length) return [];
   const docBlockStarts = [];
   doc.forEach((node, offset) => {
@@ -2287,7 +2311,11 @@ function resolveProjectionMarkerDocAnchors(editor, projection) {
     const spanAnchorOrdinal = Number(span?.anchorBlockOrdinal ?? -1);
     if (spanAnchorOrdinal >= 0 && spanAnchorOrdinal < docBlockStarts.length) {
       anchors.push(
-        clampDocPosition(Number(docBlockStarts[spanAnchorOrdinal] || 0), 0, docSize),
+        clampDocPosition(
+          Number(docBlockStarts[spanAnchorOrdinal] || 0),
+          0,
+          docSize,
+        ),
       );
       continue;
     }
@@ -2315,8 +2343,12 @@ function resolveProjectionMarkerDocAnchors(editor, projection) {
 }
 
 function buildProjectionWithResolvedMarkerAnchors(editor, projection) {
-  const baseProjection = projection && typeof projection === "object" ? projection : {};
-  const markerDocAnchors = resolveProjectionMarkerDocAnchors(editor, baseProjection);
+  const baseProjection =
+    projection && typeof projection === "object" ? projection : {};
+  const markerDocAnchors = resolveProjectionMarkerDocAnchors(
+    editor,
+    baseProjection,
+  );
   return {
     ...baseProjection,
     markerDocAnchors,
@@ -2336,7 +2368,8 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
     : 0;
   const liveProjection = readDocumentBoundaryProjection(editor);
   const liveProjectionMeta =
-    liveProjection?.projectionMeta && typeof liveProjection.projectionMeta === "object"
+    liveProjection?.projectionMeta &&
+    typeof liveProjection.projectionMeta === "object"
       ? liveProjection.projectionMeta
       : {};
   const liveScopeKey = String(liveProjectionMeta.scopeKey || "");
@@ -2346,10 +2379,10 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
     : -1;
   const liveProjectionCompatible = Boolean(
     liveProjection &&
-      (!liveStateId || liveStateId === key) &&
-      (!liveScopeKey || liveScopeKey === scopeKey) &&
-      (liveProtectedSpanCount < 0 ||
-        liveProtectedSpanCount === expectedProtectedSpanCount),
+    (!liveStateId || liveStateId === key) &&
+    (!liveScopeKey || liveScopeKey === scopeKey) &&
+    (liveProtectedSpanCount < 0 ||
+      liveProtectedSpanCount === expectedProtectedSpanCount),
   );
   const pluginProjection = liveProjectionCompatible
     ? liveProjection
@@ -2359,7 +2392,9 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
     String(pluginProjection?.displayText || ""),
   );
   if (nextDisplayText === currentDisplayText) {
-    const protectedSpanCount = Array.isArray(session?.scopeSlice?.protectedSpans)
+    const protectedSpanCount = Array.isArray(
+      session?.scopeSlice?.protectedSpans,
+    )
       ? session.scopeSlice.protectedSpans.length
       : 0;
     const boundaryCount = Array.isArray(pluginProjection?.editableBoundaries)
@@ -2378,7 +2413,9 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
             Math.max(0, Number(value || 0)),
           )
         : [],
-      boundaryDocPositions: Array.isArray(pluginProjection?.boundaryDocPositions)
+      boundaryDocPositions: Array.isArray(
+        pluginProjection?.boundaryDocPositions,
+      )
         ? pluginProjection.boundaryDocPositions.map((value) =>
             Math.max(1, Number(value || 1)),
           )
@@ -2413,10 +2450,8 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
       scopeKey,
       runtimeBoundariesTrusted: true,
     });
-    const preservedProjectionWithAnchors = buildProjectionWithResolvedMarkerAnchors(
-      editor,
-      preservedProjection,
-    );
+    const preservedProjectionWithAnchors =
+      buildProjectionWithResolvedMarkerAnchors(editor, preservedProjection);
     writeDocumentBoundaryProjection(editor, preservedProjectionWithAnchors);
     canonicalMutationSessionByStateId.set(key, {
       ...session,
@@ -2425,7 +2460,9 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
     return preservedProjectionWithAnchors;
   }
   const docSize = Math.max(1, Number(editor?.state?.doc?.content?.size || 0));
-  const mappedDocPositions = Array.isArray(pluginProjection?.boundaryDocPositions)
+  const mappedDocPositions = Array.isArray(
+    pluginProjection?.boundaryDocPositions,
+  )
     ? pluginProjection.boundaryDocPositions.map((value) =>
         Math.max(1, Math.min(docSize, Number(value || 1))),
       )
@@ -2433,7 +2470,9 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
   const protectedSpanCount = Array.isArray(session?.scopeSlice?.protectedSpans)
     ? session.scopeSlice.protectedSpans.length
     : 0;
-  const mappedDisplayBoundaries = Array.isArray(pluginProjection?.editableBoundaries)
+  const mappedDisplayBoundaries = Array.isArray(
+    pluginProjection?.editableBoundaries,
+  )
     ? pluginProjection.editableBoundaries.map((value) =>
         Math.max(0, Number(value || 0)),
       )
@@ -2448,7 +2487,10 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
     normalized[0] = 0;
     for (let index = 1; index < targetCount; index += 1) {
       const minAllowed = normalized[index - 1] + 1;
-      const maxAllowed = Math.max(minAllowed, maxOffset - (targetCount - 1 - index));
+      const maxAllowed = Math.max(
+        minAllowed,
+        maxOffset - (targetCount - 1 - index),
+      );
       normalized[index] = Math.min(
         maxAllowed,
         Math.max(minAllowed, Math.round(Number(input[index] || 0))),
@@ -2459,7 +2501,8 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
   const mappedFromDocPositions =
     mappedDocPositions.length === protectedSpanCount &&
     pluginProjection?.projectionUtils &&
-    typeof pluginProjection.projectionUtils.mapDocPosToDisplayOffset === "function"
+    typeof pluginProjection.projectionUtils.mapDocPosToDisplayOffset ===
+      "function"
       ? mappedDocPositions.map((position, index) =>
           index === 0
             ? 0
@@ -2509,7 +2552,7 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
       scopeKey,
       runtimeBoundariesTrusted: Boolean(
         boundarySource === mappedDisplayBoundaries ||
-          boundarySource === mappedFromDocPositions,
+        boundarySource === mappedFromDocPositions,
       ),
       deterministicRecomputeCount:
         Number(prevMeta.deterministicRecomputeCount || 0) +
@@ -2518,9 +2561,7 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
           ? 0
           : 1),
       mappingUpdateCount: Number(prevMeta.mappingUpdateCount || 0),
-      boundaryInputCount: Array.isArray(
-        pluginProjection?.editableBoundaries,
-      )
+      boundaryInputCount: Array.isArray(pluginProjection?.editableBoundaries)
         ? pluginProjection.editableBoundaries.length
         : 0,
       boundaryNormalizedCount: nextBoundaries.length,
@@ -2562,7 +2603,9 @@ function performCanonicalSeedNormalizationHandshake(stateId, editor) {
   if (!key || !editor) return null;
   const session = getCanonicalMutationSessionForState(key);
   if (!session?.projection || !session?.scopeSlice) return null;
-  const scopeKind = normalizeScopeKind(session?.scopeMeta?.scopeKind || "field");
+  const scopeKind = normalizeScopeKind(
+    session?.scopeMeta?.scopeKind || "field",
+  );
   if (scopeKind === "document") {
     const nextSession = {
       ...session,
@@ -2598,9 +2641,8 @@ function performCanonicalSeedNormalizationHandshake(stateId, editor) {
     return nextSession;
   }
   const serializedMarkdown = String(getMarkdownFromEditor(editor) || "");
-  const serializedCanonicalMeta = canonicalizeForCompareAndUnproject(
-    serializedMarkdown,
-  );
+  const serializedCanonicalMeta =
+    canonicalizeForCompareAndUnproject(serializedMarkdown);
   const serializedCanonical = serializedCanonicalMeta.text;
   const baselineCanonicalMeta = canonicalizeForCompareAndUnproject(
     String(session.projection.displayText || ""),
@@ -2610,7 +2652,9 @@ function performCanonicalSeedNormalizationHandshake(stateId, editor) {
     return session;
   }
   const initialPluginProjection =
-    readDocumentBoundaryProjection(editor) || session.runtimeProjection || session.projection;
+    readDocumentBoundaryProjection(editor) ||
+    session.runtimeProjection ||
+    session.projection;
   const initialMappingCount = Number(
     initialPluginProjection?.projectionMeta?.mappingUpdateCount || 0,
   );
@@ -2628,7 +2672,9 @@ function performCanonicalSeedNormalizationHandshake(stateId, editor) {
     baselineCanonicalMeta,
     serializedCanonical,
   );
-  const handshakeBoundaries = Array.isArray(normalizedProjection.editableBoundaries)
+  const handshakeBoundaries = Array.isArray(
+    normalizedProjection.editableBoundaries,
+  )
     ? normalizedProjection.editableBoundaries
     : [];
   const baselineProjection = {
@@ -2672,7 +2718,8 @@ function performCanonicalSeedNormalizationHandshake(stateId, editor) {
     trDocChanged: null,
     selectionFrom: Number(editor?.state?.selection?.from ?? -1),
     selectionTo: Number(editor?.state?.selection?.to ?? -1),
-    previousRuntimeBoundaries: session?.runtimeProjection?.editableBoundaries || [],
+    previousRuntimeBoundaries:
+      session?.runtimeProjection?.editableBoundaries || [],
     newRuntimeBoundaries: runtimeProjection?.editableBoundaries || [],
     deterministicBoundaries: recomputeEditableBoundariesFromSegmentMap(
       runtimeProjection?.segmentMap,
@@ -3124,7 +3171,9 @@ function createEditorInstance(element, fieldType, fieldName) {
       return;
     }
     annotateEditorDomScopeKeys(editor);
-    const activeStateKey = String(activeDocumentState?.id || activeFieldId || "");
+    const activeStateKey = String(
+      activeDocumentState?.id || activeFieldId || "",
+    );
     if (activeStateKey && getCanonicalMutationSessionForState(activeStateKey)) {
       const runtimeDisplayText = String(getMarkdownFromEditor(editor) || "");
       syncCanonicalProjectionRuntimeForEditor(
@@ -3902,7 +3951,9 @@ function saveAllEditors() {
         throw createSaveSafetyBlockedError();
       }
       let effectiveCanonicalMutation = null;
-      const structuralDocumentBefore = parseStructuralDocument(splitBefore.body);
+      const structuralDocumentBefore = parseStructuralDocument(
+        splitBefore.body,
+      );
       const v2Mutation = applyScopedEditV2({
         session: scopeSessionForV2,
         structuralDocument: structuralDocumentBefore,
@@ -4452,13 +4503,10 @@ function saveAllEditors() {
             subtype: "nested_list_indentation",
           });
           if (!backendCapabilityWarningShown && state.lang === currentLang) {
-            debugWarn(
-              "[mfe:save] backend normalized nested list indentation",
-              {
-                stateId: state.id,
-                language: state.lang,
-              },
-            );
+            debugWarn("[mfe:save] backend normalized nested list indentation", {
+              stateId: state.id,
+              language: state.lang,
+            });
             backendCapabilityWarningShown = true;
           }
         }
@@ -4535,8 +4583,14 @@ function saveAllEditors() {
             });
           }
           const sentRawPreview = buildEdgePreview(sentComparableMarkdown, 200);
-          const sentCanonicalPreview = buildEdgePreview(sentComparableCanonical, 200);
-          const persistedRawPreview = buildEdgePreview(persistedComparableMarkdown, 200);
+          const sentCanonicalPreview = buildEdgePreview(
+            sentComparableCanonical,
+            200,
+          );
+          const persistedRawPreview = buildEdgePreview(
+            persistedComparableMarkdown,
+            200,
+          );
           const persistedCanonicalPreview = buildEdgePreview(
             persistedComparableCanonical,
             200,
@@ -4549,24 +4603,33 @@ function saveAllEditors() {
             sentMarkdownHash: hashStateIdentity(sentComparableMarkdown),
             sentCanonicalHash: hashStateIdentity(sentComparableCanonical),
             persistedRawHash: hashStateIdentity(persistedComparableMarkdown),
-            persistedCanonicalHash: hashStateIdentity(persistedComparableCanonical),
+            persistedCanonicalHash: hashStateIdentity(
+              persistedComparableCanonical,
+            ),
             sentMarkdownFirst200Escaped: sentRawPreview.firstEscaped,
             sentMarkdownLast200Escaped: sentRawPreview.lastEscaped,
             sentCanonicalFirst200Escaped: sentCanonicalPreview.firstEscaped,
             sentCanonicalLast200Escaped: sentCanonicalPreview.lastEscaped,
             persistedRawFirst200Escaped: persistedRawPreview.firstEscaped,
             persistedRawLast200Escaped: persistedRawPreview.lastEscaped,
-            persistedCanonicalFirst200Escaped: persistedCanonicalPreview.firstEscaped,
-            persistedCanonicalLast200Escaped: persistedCanonicalPreview.lastEscaped,
-            firstDiffOffset: Number(readbackClassification.firstDiffOffset || -1),
+            persistedCanonicalFirst200Escaped:
+              persistedCanonicalPreview.firstEscaped,
+            persistedCanonicalLast200Escaped:
+              persistedCanonicalPreview.lastEscaped,
+            firstDiffOffset: Number(
+              readbackClassification.firstDiffOffset || -1,
+            ),
             tokenBefore: String(readbackClassification.tokenBefore || ""),
             tokenAfter: String(readbackClassification.tokenAfter || ""),
             semanticAstComparable: Boolean(semanticReadback.comparable),
             semanticAstEquivalent: Boolean(semanticReadback.equivalent),
             semanticAstSentReason: String(semanticReadback.sentReason || ""),
-            semanticAstPersistedReason: String(semanticReadback.persistedReason || ""),
+            semanticAstPersistedReason: String(
+              semanticReadback.persistedReason || "",
+            ),
             sentNearestSyntaxNode: semanticReadback.sentNearestSyntaxNode,
-            persistedNearestSyntaxNode: semanticReadback.persistedNearestSyntaxNode,
+            persistedNearestSyntaxNode:
+              semanticReadback.persistedNearestSyntaxNode,
           });
         } else {
           emitDocStateLog("SAVE_READBACK_MATCH", {
@@ -4704,7 +4767,8 @@ function saveAllEditors() {
             stateScopeKind,
             class: readbackClassification.className,
             firstDiffOffset: readbackClassification.firstDiffOffset,
-            firstSemanticDiffOffset: readbackClassification.firstSemanticDiffOffset,
+            firstSemanticDiffOffset:
+              readbackClassification.firstSemanticDiffOffset,
           });
         }
         if (nonExactReadback && !hasSemanticReadbackDrift) {
@@ -5254,7 +5318,11 @@ function setSecondaryLanguage(lang) {
       )
     : null;
   const scopeSliceMarkdown = enforceBodyOnlyEditorInput(
-    readScopeSlice(lang, getActiveApplyScopeMeta(), "setSecondaryLanguage:read"),
+    readScopeSlice(
+      lang,
+      getActiveApplyScopeMeta(),
+      "setSecondaryLanguage:read",
+    ),
     {
       source: "setSecondaryLanguage",
       lang,
@@ -5282,41 +5350,46 @@ function setSecondaryLanguage(lang) {
   }
   if (canonicalSession && state) {
     const runtimeProjection =
-      canonicalSession?.runtimeProjection || canonicalSession?.projection || null;
+      canonicalSession?.runtimeProjection ||
+      canonicalSession?.projection ||
+      null;
     const canonicalProjectionDisplay = normalizeLineEndingsToLf(
       String(runtimeProjection?.displayText || ""),
     );
-    const secondaryBoundaryProjection = buildProjectionWithResolvedMarkerAnchors(
+    const secondaryBoundaryProjection =
+      buildProjectionWithResolvedMarkerAnchors(secondaryEditor, {
+        displayText: canonicalProjectionDisplay,
+        segmentMap: Array.isArray(runtimeProjection?.segmentMap)
+          ? runtimeProjection.segmentMap
+          : [],
+        protectedSpans: Array.isArray(runtimeProjection?.protectedSpans)
+          ? runtimeProjection.protectedSpans
+          : Array.isArray(canonicalSession?.scopeSlice?.protectedSpans)
+            ? canonicalSession.scopeSlice.protectedSpans
+            : [],
+        editableBoundaries: Array.isArray(runtimeProjection?.editableBoundaries)
+          ? runtimeProjection.editableBoundaries
+          : [],
+        boundaryDocPositions: Array.isArray(
+          runtimeProjection?.boundaryDocPositions,
+        )
+          ? runtimeProjection.boundaryDocPositions
+          : [],
+        projectionMeta:
+          runtimeProjection?.projectionMeta &&
+          typeof runtimeProjection.projectionMeta === "object"
+            ? runtimeProjection.projectionMeta
+            : {
+                updateMode: "deterministic-recompute",
+                deterministicRecomputeCount: 0,
+                mappingUpdateCount: 0,
+                runtimeBoundariesTrusted: true,
+              },
+      });
+    writeDocumentBoundaryProjection(
       secondaryEditor,
-      {
-      displayText: canonicalProjectionDisplay,
-      segmentMap: Array.isArray(runtimeProjection?.segmentMap)
-        ? runtimeProjection.segmentMap
-        : [],
-      protectedSpans: Array.isArray(runtimeProjection?.protectedSpans)
-        ? runtimeProjection.protectedSpans
-        : Array.isArray(canonicalSession?.scopeSlice?.protectedSpans)
-          ? canonicalSession.scopeSlice.protectedSpans
-        : [],
-      editableBoundaries: Array.isArray(runtimeProjection?.editableBoundaries)
-        ? runtimeProjection.editableBoundaries
-        : [],
-      boundaryDocPositions: Array.isArray(runtimeProjection?.boundaryDocPositions)
-        ? runtimeProjection.boundaryDocPositions
-        : [],
-      projectionMeta:
-        runtimeProjection?.projectionMeta &&
-        typeof runtimeProjection.projectionMeta === "object"
-          ? runtimeProjection.projectionMeta
-          : {
-              updateMode: "deterministic-recompute",
-              deterministicRecomputeCount: 0,
-              mappingUpdateCount: 0,
-              runtimeBoundariesTrusted: true,
-            },
-      },
+      secondaryBoundaryProjection,
     );
-    writeDocumentBoundaryProjection(secondaryEditor, secondaryBoundaryProjection);
     const seededBuffer = String(getMarkdownFromEditor(secondaryEditor) || "");
     syncCanonicalProjectionRuntimeForEditor(
       String(state.id || ""),
@@ -5369,7 +5442,9 @@ function toggleSplit() {
 }
 
 function toggleOutlineView() {
-  applyEditorViewMode(isOutlineViewActive() ? "scoped" : "document");
+  const enable = !isOutlineViewActive();
+  outlinePersistForSession = Boolean(enable);
+  applyEditorViewMode(enable ? "document" : "scoped");
 }
 
 function openDocumentFromBreadcrumbPath() {
@@ -5387,10 +5462,13 @@ function openDocumentFromBreadcrumbPath() {
 }
 
 function openDocumentOutlineView() {
+  outlinePersistForSession = true;
   applyEditorViewMode("document");
   if (isDocumentScopeActive()) return;
   scopedModeTarget = activeTarget || null;
-  scopedModeMarkdown = primaryEditor ? getMarkdownFromEditor(primaryEditor) : "";
+  scopedModeMarkdown = primaryEditor
+    ? getMarkdownFromEditor(primaryEditor)
+    : "";
   openDocumentFromBreadcrumbPath();
   afterNextPaint(() => applyEditorViewMode("document"));
 }
@@ -5498,7 +5576,11 @@ function readScopeSliceFromMarkdown(markdown, scopeMeta) {
   });
 }
 
-function readScopeSlice(lang, scopeMeta = getActiveApplyScopeMeta(), reason = "") {
+function readScopeSlice(
+  lang,
+  scopeMeta = getActiveApplyScopeMeta(),
+  reason = "",
+) {
   const state = getDocumentStateForActiveField(lang, {
     reason: `${reason || "readScopeSlice"}:bind`,
     trigger: "scope-navigation",
@@ -5603,7 +5685,9 @@ function applyScopeSlice(state, scopeMeta, scopedMarkdown, reason, trigger) {
     runtimeProjection: runtimeProjectionForV2,
   });
   if (!v2Result || v2Result.ok === false) {
-    throw new Error(String(v2Result?.reason || "[mfe] mutation-plan-v2 failed"));
+    throw new Error(
+      String(v2Result?.reason || "[mfe] mutation-plan-v2 failed"),
+    );
   }
   nextDraft = String(v2Result.canonicalBody || before);
   mutationResult = {
@@ -5933,15 +6017,21 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
   });
   if (canonicalSession) {
     const runtimeProjection =
-      canonicalSession?.runtimeProjection || canonicalSession?.projection || null;
+      canonicalSession?.runtimeProjection ||
+      canonicalSession?.projection ||
+      null;
     const seededBuffer = String(getMarkdownFromEditor(primaryEditor) || "");
     const seededEditorDocMarkdown = seededBuffer;
     const projectionDisplay = String(runtimeProjection?.displayText || "");
-    const canonicalProjectionDisplay = normalizeLineEndingsToLf(projectionDisplay);
+    const canonicalProjectionDisplay =
+      normalizeLineEndingsToLf(projectionDisplay);
     const canonicalSeededBuffer = normalizeLineEndingsToLf(seededBuffer);
     emitRuntimeBoundaryWriteTrace({
       reason: "initEditor:seed-projection-write",
-      mode: String(runtimeProjection?.projectionMeta?.updateMode || "deterministic-recompute"),
+      mode: String(
+        runtimeProjection?.projectionMeta?.updateMode ||
+          "deterministic-recompute",
+      ),
       trDocChanged: null,
       selectionFrom: Number(primaryEditor?.state?.selection?.from ?? -1),
       selectionTo: Number(primaryEditor?.state?.selection?.to ?? -1),
@@ -5951,7 +6041,9 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
         ? runtimeProjection.editableBoundaries
         : [],
       deterministicBoundaries: recomputeEditableBoundariesFromSegmentMap(
-        Array.isArray(runtimeProjection?.segmentMap) ? runtimeProjection.segmentMap : [],
+        Array.isArray(runtimeProjection?.segmentMap)
+          ? runtimeProjection.segmentMap
+          : [],
         canonicalProjectionDisplay,
       ),
       stateId: String(activeDocumentState?.id || ""),
@@ -5961,31 +6053,33 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
     const primaryBoundaryProjection = buildProjectionWithResolvedMarkerAnchors(
       primaryEditor,
       {
-      displayText: canonicalProjectionDisplay,
-      segmentMap: Array.isArray(runtimeProjection?.segmentMap)
-        ? runtimeProjection.segmentMap
-        : [],
-      protectedSpans: Array.isArray(runtimeProjection?.protectedSpans)
-        ? runtimeProjection.protectedSpans
-        : Array.isArray(canonicalSession?.scopeSlice?.protectedSpans)
-          ? canonicalSession.scopeSlice.protectedSpans
-        : [],
-      editableBoundaries: Array.isArray(runtimeProjection?.editableBoundaries)
-        ? runtimeProjection.editableBoundaries
-        : [],
-      boundaryDocPositions: Array.isArray(runtimeProjection?.boundaryDocPositions)
-        ? runtimeProjection.boundaryDocPositions
-        : [],
-      projectionMeta:
-        runtimeProjection?.projectionMeta &&
-        typeof runtimeProjection.projectionMeta === "object"
-          ? runtimeProjection.projectionMeta
-          : {
-              updateMode: "deterministic-recompute",
-              deterministicRecomputeCount: 0,
-              mappingUpdateCount: 0,
-              runtimeBoundariesTrusted: true,
-            },
+        displayText: canonicalProjectionDisplay,
+        segmentMap: Array.isArray(runtimeProjection?.segmentMap)
+          ? runtimeProjection.segmentMap
+          : [],
+        protectedSpans: Array.isArray(runtimeProjection?.protectedSpans)
+          ? runtimeProjection.protectedSpans
+          : Array.isArray(canonicalSession?.scopeSlice?.protectedSpans)
+            ? canonicalSession.scopeSlice.protectedSpans
+            : [],
+        editableBoundaries: Array.isArray(runtimeProjection?.editableBoundaries)
+          ? runtimeProjection.editableBoundaries
+          : [],
+        boundaryDocPositions: Array.isArray(
+          runtimeProjection?.boundaryDocPositions,
+        )
+          ? runtimeProjection.boundaryDocPositions
+          : [],
+        projectionMeta:
+          runtimeProjection?.projectionMeta &&
+          typeof runtimeProjection.projectionMeta === "object"
+            ? runtimeProjection.projectionMeta
+            : {
+                updateMode: "deterministic-recompute",
+                deterministicRecomputeCount: 0,
+                mappingUpdateCount: 0,
+                runtimeBoundariesTrusted: true,
+              },
       },
     );
     writeDocumentBoundaryProjection(primaryEditor, primaryBoundaryProjection);
@@ -6012,7 +6106,9 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
       seededEditorDocLast80Escaped: escapeMarkdownPreview(
         seededEditorDocMarkdown.slice(-80),
       ),
-      seededEditorFirst40Escaped: escapeMarkdownPreview(seededBuffer.slice(0, 40)),
+      seededEditorFirst40Escaped: escapeMarkdownPreview(
+        seededBuffer.slice(0, 40),
+      ),
       seededEditorLast40Escaped: escapeMarkdownPreview(seededBuffer.slice(-40)),
       exactMatch: seededBuffer === projectionDisplay,
       canonicalProjectionHash: hashStateIdentity(canonicalProjectionDisplay),
@@ -6029,7 +6125,9 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
         String(activeDocumentState?.id || ""),
         primaryEditor,
       ) || canonicalSession;
-    const postSeedSerializedMarkdown = String(getMarkdownFromEditor(primaryEditor) || "");
+    const postSeedSerializedMarkdown = String(
+      getMarkdownFromEditor(primaryEditor) || "",
+    );
     const canonicalPostSeedSerializedMeta = canonicalizeForCompareAndUnproject(
       postSeedSerializedMarkdown,
     );
@@ -6050,8 +6148,12 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
       postSeedSerializedLast80Escaped: escapeMarkdownPreview(
         postSeedSerializedMarkdown.slice(-80),
       ),
-      canonicalPostSeedSerializedHash: hashStateIdentity(canonicalPostSeedSerialized),
-      canonicalFinalizedBaselineHash: hashStateIdentity(finalizedBaselineDisplay),
+      canonicalPostSeedSerializedHash: hashStateIdentity(
+        canonicalPostSeedSerialized,
+      ),
+      canonicalFinalizedBaselineHash: hashStateIdentity(
+        finalizedBaselineDisplay,
+      ),
       canonicalPostSeedTrailingNewlinesStripped: Number(
         canonicalPostSeedSerializedMeta.strippedTrailingNewlineCount || 0,
       ),
@@ -6179,7 +6281,12 @@ function cleanupEditorOnly() {
   activeDisplayMarkdown = null;
   scopedModeMarkdown = null;
   scopedModeTarget = null;
-  editorViewMode = "scoped";
+  if (skipOutlineResetDuringClose) {
+    skipOutlineResetDuringClose = false;
+  } else {
+    editorViewMode = "scoped";
+    outlinePersistForSession = false;
+  }
   activeDocumentState = null;
   editorShell = null;
   editorContainer = null;
@@ -6265,7 +6372,9 @@ function openImagePicker(initialData = null, imagePos = null) {
           reason: "openImagePicker:onSelect",
           trigger: "user-edit",
           mutate: () => {
-            const currentLang = normalizeLangValue(getLanguagesConfig().current);
+            const currentLang = normalizeLangValue(
+              getLanguagesConfig().current,
+            );
             const scopeKind = resolveApplyScopeKindFromActiveScope(
               "openImagePicker:onSelect:primary",
             );
@@ -6352,6 +6461,7 @@ function createToolbar() {
     getEditor: () => activeEditor,
     onSave: saveAllEditors,
     onToggleSplit: toggleSplit,
+    isSplitActive: () => Boolean(splitEnabledByUser),
     onOpenDocumentView: openDocumentOutlineView,
     canOpenDocumentView: () => {
       const scopeKind =
@@ -6932,7 +7042,9 @@ function resolveCanonicalMarkdownForLensNode(node) {
 }
 
 function resolveMarkerBearingCanonicalMarkdownForLens() {
-  const canonicalStateMarkdown = String(getCanonicalMarkdownState().markdown || "");
+  const canonicalStateMarkdown = String(
+    getCanonicalMarkdownState().markdown || "",
+  );
   if (hasCanonicalMarkers(canonicalStateMarkdown)) {
     return canonicalStateMarkdown;
   }
@@ -7853,7 +7965,9 @@ function composeDocumentMarkdownForSave(markdown, options = {}) {
     : "none";
   const composedBody = shouldInsertFrontmatterSeparator ? `\n${body}` : body;
   const hasComposableFrontmatterBoundary =
-    Boolean(frontmatterRaw) && !bodyHasLeadingFrontmatter && composedBody.length > 0;
+    Boolean(frontmatterRaw) &&
+    !bodyHasLeadingFrontmatter &&
+    composedBody.length > 0;
   const boundaryPreviewEscaped = hasComposableFrontmatterBoundary
     ? escapeMarkdownPreview(
         `${frontmatterRaw.slice(Math.max(0, frontmatterRaw.length - 30))}${composedBody.slice(0, 30)}`,
@@ -7979,6 +8093,9 @@ function setPrimaryEditorMarkdown(markdown) {
 }
 
 function applyEditorViewMode(mode) {
+  if (outlinePersistForSession && mode !== "document") {
+    return;
+  }
   editorViewMode = mode === "document" ? "document" : "scoped";
   updateDocumentModeBodyClass();
   refreshAllEditorDecorations();
@@ -8621,6 +8738,7 @@ function openFullscreenEditorFromPayload(payload) {
   const previousPageId = activeTarget?.getAttribute("data-page") || "";
   if (activeEditor) {
     suppressNextCloseConfirm = true;
+    skipOutlineResetDuringClose = true;
     closeEditor();
   }
 

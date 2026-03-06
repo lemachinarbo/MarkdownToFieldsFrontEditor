@@ -7,6 +7,7 @@ export function createToolbarButtons({
   getEditor,
   onSave,
   onToggleSplit,
+  isSplitActive,
   onOpenDocumentView,
   canOpenDocumentView,
   isDocumentView,
@@ -260,7 +261,8 @@ export function createToolbarButtons({
           onToggleSplit();
         }
       },
-      isActive: () => false,
+      isActive: () =>
+        typeof isSplitActive === "function" ? Boolean(isSplitActive()) : false,
       title: "View languages",
     },
     {

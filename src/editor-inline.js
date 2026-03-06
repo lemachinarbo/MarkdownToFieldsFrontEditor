@@ -1175,6 +1175,7 @@ function createInlineToolbar() {
     getEditor: () => activeEditor,
     onSave: () => saveAllDrafts({ showStatus: true }),
     onToggleSplit: null,
+    isSplitActive: () => false,
     onToggleOutlineView: null,
     isOutlineView: null,
   });
