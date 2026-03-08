@@ -141,6 +141,7 @@ import {
 import {
   detectDirtyDesync,
   buildSavePlan,
+  resolveFallbackSaveEditorMarkdown,
   summarizeSaveResults,
 } from "./save-orchestration.js";
 import {
@@ -908,7 +909,8 @@ function createVirtualDocumentTarget({ pageId, markdown, originKey = "" }) {
   virtual.setAttribute("data-field-type", "container");
   virtual.setAttribute("data-mfe-markdown-kind", "canonical");
   if (originKey) {
-    virtual.setAttribute("data-mfe-key", originKey);
+    virtual.setAttribute("data-mfe-key", "document");
+    virtual.setAttribute("data-mfe-origin-key", originKey);
   }
   virtual.setAttribute(
     "data-markdown-b64",
@@ -3773,10 +3775,12 @@ function saveAllEditors() {
       }
       const scopeMarkdownFromActiveEditor = hasLiveEditorForState
         ? readScopedEditorMarkdown(langEditor)
-        : scopedReferenceMarkdown;
-      const scopeMarkdownForSaveSource = hasLiveEditorForState
-        ? scopeMarkdownFromActiveEditor
-        : scopedReferenceMarkdown;
+        : resolveFallbackSaveEditorMarkdown({
+            fallbackMarkdown: scopedReferenceMarkdown,
+            canonicalBody: stateDraftMarkdown,
+            scopeMeta: applyScopeMeta,
+          });
+      const scopeMarkdownForSaveSource = scopeMarkdownFromActiveEditor;
       if (strictStructuralScope) {
         const sourceEventType =
           saveScope === "document"
@@ -7143,10 +7147,16 @@ function buildVirtualTargetFromLensNode(node) {
   if (node.subsection) {
     virtual.setAttribute("data-mfe-subsection", node.subsection);
   }
-  const originKey = String(activeOriginFieldKey || activeOriginKey || "");
-  if (originKey) {
-    virtual.setAttribute("data-mfe-key", originKey);
+  const scopeKey = buildScopeKeyFromMeta({
+    scopeKind: node.scope || "field",
+    section: node.section || "",
+    subsection: node.subsection || "",
+    name: node.name || "document",
+  });
+  if (scopeKey) {
+    virtual.setAttribute("data-mfe-key", scopeKey);
   }
+  applyActiveOriginKeyToVirtualTarget(virtual);
   virtual.setAttribute(
     "data-markdown-b64",
     encodeMarkdownBase64(resolveMarkerBearingMarkdownForLensNode(node)),
@@ -7158,7 +7168,7 @@ function applyActiveOriginKeyToVirtualTarget(virtual) {
   if (!virtual) return;
   const originKey = String(activeOriginFieldKey || activeOriginKey || "");
   if (!originKey) return;
-  virtual.setAttribute("data-mfe-key", originKey);
+  virtual.setAttribute("data-mfe-origin-key", originKey);
 }
 
 function deriveHierarchyFromPayload(payload) {
@@ -8561,6 +8571,15 @@ function createBreadcrumbVirtualTarget(params) {
   if (subsection) {
     virtual.setAttribute("data-mfe-subsection", subsection);
   }
+  const scopeKey = buildScopeKeyFromMeta({
+    scopeKind: scope || "field",
+    section: section || "",
+    subsection: subsection || "",
+    name: name || "document",
+  });
+  if (scopeKey) {
+    virtual.setAttribute("data-mfe-key", scopeKey);
+  }
   virtual.setAttribute("data-markdown-b64", markdownB64 || "");
   applyActiveOriginKeyToVirtualTarget(virtual);
   return virtual;
@@ -8943,6 +8962,7 @@ function getPayloadFromElement(target) {
   const fieldSection = getMetaAttr(target, "section") || "";
   const fieldSubsection = getMetaAttr(target, "subsection") || "";
   const canonicalStampedKey = target.getAttribute("data-mfe-key") || "";
+  const explicitOriginKey = target.getAttribute("data-mfe-origin-key") || "";
   const targetMarkdown = decodeMaybeB64(
     target.getAttribute("data-markdown-b64") || "",
   );
@@ -8991,9 +9011,10 @@ function getPayloadFromElement(target) {
     });
   }
   const resolvedOriginKey =
-    canonicalStampedKey && !stampedShapeMismatch
+    explicitOriginKey ||
+    (canonicalStampedKey && !stampedShapeMismatch
       ? canonicalStampedKey
-      : derivedFieldId;
+      : derivedFieldId);
   return {
     ...payloadMeta,
     fieldId: derivedFieldId,

@@ -1,6 +1,7 @@
 import {
   detectDirtyDesync,
   buildSavePlan,
+  resolveFallbackSaveEditorMarkdown,
   summarizeSaveResults,
 } from "../src/save-orchestration.js";
 
@@ -64,5 +65,33 @@ describe("save-orchestration helpers", () => {
     expect(summary.savedStateIds).toEqual(["a", "c"]);
     expect(summary.failed).toHaveLength(1);
     expect(summary.hasFragments).toBe(true);
+  });
+
+  test("document fallback save markdown is projected from canonical body when no editor is mounted", () => {
+    const canonicalBody = [
+      "<!-- section:hero -->",
+      "",
+      "<!-- title -->",
+      "# The Urban <br>Farm",
+      "",
+      "<!-- intro... -->",
+      "We grow food and ideas.",
+    ].join("\n");
+
+    const normalized = resolveFallbackSaveEditorMarkdown({
+      fallbackMarkdown: canonicalBody,
+      canonicalBody,
+      scopeMeta: {
+        scopeKind: "document",
+        section: "",
+        subsection: "",
+        name: "document",
+      },
+    });
+
+    expect(normalized).toContain("# The Urban <br>Farm");
+    expect(normalized).toContain("We grow food and ideas.");
+    expect(normalized).not.toContain("<!-- section:hero -->");
+    expect(normalized.length).toBeLessThan(canonicalBody.length);
   });
 });

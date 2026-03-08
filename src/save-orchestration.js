@@ -1,3 +1,9 @@
+import {
+  projectCanonicalSlice,
+  resolveCanonicalScopeSlice,
+} from "./canonical-scope-session.js";
+import { normalizeScopeKind } from "./scope-slice.js";
+
 export function detectDirtyDesync(params = {}) {
   const {
     sessionStates = [],
@@ -79,6 +85,40 @@ export function detectDirtyDesync(params = {}) {
     assertNoDirtyDesync(primaryEditor, currentLang, "primary") ||
     assertNoDirtyDesync(secondaryEditor, secondaryLang, "secondary")
   );
+}
+
+export function resolveFallbackSaveEditorMarkdown(params = {}) {
+  const fallbackMarkdown = String(params.fallbackMarkdown || "");
+  if (!fallbackMarkdown) return "";
+
+  const scopeMeta =
+    params.scopeMeta && typeof params.scopeMeta === "object"
+      ? params.scopeMeta
+      : {};
+  const canonicalBody = String(params.canonicalBody || "");
+  const scopeKind = normalizeScopeKind(scopeMeta.scopeKind || "field");
+  const markerBearingInput =
+    fallbackMarkdown.includes("<!--") || canonicalBody.includes("<!--");
+
+  if (!markerBearingInput) {
+    return fallbackMarkdown;
+  }
+
+  try {
+    const scopeSlice = resolveCanonicalScopeSlice(
+      canonicalBody || fallbackMarkdown,
+      scopeMeta,
+    );
+    const projection = projectCanonicalSlice(scopeSlice);
+    const displayText = String(projection?.displayText || "");
+    if (scopeKind === "document" || displayText) {
+      return displayText;
+    }
+  } catch (_error) {
+    return fallbackMarkdown;
+  }
+
+  return fallbackMarkdown;
 }
 
 export function buildSavePlan(params = {}) {

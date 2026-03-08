@@ -1,5 +1,11 @@
 # Changelog
 
+## v7.0.1
+
+- Fixed a breadcrumb regression introduced by stamped-key shape validation: parent breadcrumb navigation now keeps the original field context visible while preserving the `df7e82f` safeguard for malformed host stamps.
+- Fixed document-scope save replay for dirty languages without a mounted editor by projecting canonical fallback markdown back to editor display text before V2 mutation.
+- Added regression coverage for the field-to-section breadcrumb transition and for document-scope fallback save normalization.
+
 ## v0.7
 
 - Big cleanup release focused on trust and stability.

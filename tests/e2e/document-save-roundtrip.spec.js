@@ -1245,6 +1245,62 @@ test.describe("document save roundtrip", () => {
       .toBe("Field: title");
   });
 
+  test("field breadcrumb stays visible after breadcrumb switch to section", async ({
+    page,
+  }) => {
+    await resetHomesFromFixtures();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    const markdown = await readEn();
+    const opened = await page.evaluate((nextMarkdown) => {
+      const api = window.MarkdownFrontEditor;
+      if (!api || typeof api.openForElementFromCanonical !== "function") {
+        return { ok: false, reason: "api-unavailable" };
+      }
+      const cfg = (window.MarkdownFrontEditorConfig =
+        window.MarkdownFrontEditorConfig || {});
+      const pageId = String(
+        cfg.pageId ||
+          document.body?.getAttribute?.("data-page") ||
+          document.documentElement?.getAttribute?.("data-page") ||
+          "1",
+      );
+      const virtual = document.createElement("div");
+      virtual.setAttribute("data-page", pageId);
+      virtual.setAttribute("data-field-type", "heading");
+      virtual.setAttribute("data-mfe-scope", "field");
+      virtual.setAttribute("data-mfe-name", "title");
+      virtual.setAttribute("data-mfe-section", "hero");
+      virtual.setAttribute("data-mfe-subsection", "");
+      virtual.setAttribute("data-mfe-key", "subsection:hero:title");
+      virtual.setAttribute("data-mfe-markdown-kind", "canonical");
+      const encoded = btoa(unescape(encodeURIComponent(String(nextMarkdown || ""))));
+      virtual.setAttribute("data-markdown-b64", encoded);
+      try {
+        api.openForElementFromCanonical(virtual, {
+          markdown: String(nextMarkdown || ""),
+          applied: [],
+        });
+        return { ok: true, reason: "opened" };
+      } catch (error) {
+        return {
+          ok: false,
+          reason: String(error?.message || error || "open-failed"),
+        };
+      }
+    }, markdown);
+    expect(opened.ok, opened.reason).toBe(true);
+
+    await clickBreadcrumbLink(page, /^Section:\s*hero$/i);
+    await expect
+      .poll(() => getCurrentBreadcrumbLabel(page), { timeout: 10000 })
+      .toBe("Section: hero");
+    await expect(page.getByRole("link", { name: /^Field:\s*title$/i }).first()).toBeVisible();
+  });
+
   test("outline toggle keeps current scope and shows markers in single view", async ({
     page,
   }) => {
