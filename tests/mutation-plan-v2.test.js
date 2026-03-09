@@ -73,6 +73,16 @@ const COMPLEX_CANONICAL_BODY = fs
   )
   .replace(/^---\n[\s\S]*?\n---\n\n/, "");
 
+const COMPLEX_DOCUMENT_BOUNDARY_FIXTURE = fs
+  .readFileSync(
+    path.join(
+      process.cwd(),
+      "tests/fixtures/en-home-complex-document.md",
+    ),
+    "utf8",
+  )
+  .replace(/^---\n[\s\S]*?\n---\n\n/, "");
+
 describe("mutation-plan-v2", () => {
   test("field right-edge edit keeps marker separation", () => {
     const session = createScopeSession({
@@ -576,5 +586,200 @@ describe("mutation-plan-v2", () => {
     expect(result.canonicalBody).toContain("How we work V2");
     expect(result.canonicalBody).toContain("<!-- sub:right -->");
     expect(hasStructuralMarkerBoundaryViolations(result.canonicalBody)).toBe(false);
+  });
+
+  test.each([
+    {
+      label: "section start",
+      scopeMeta: {
+        scopeKind: "section",
+        section: "hero",
+        subsection: "",
+        name: "hero",
+      },
+      mutate(display) {
+        const trimmed = String(display || "").replace(/^\n+/, "").replace(/\n+$/, "");
+        return `Metro${trimmed.slice(Math.min(5, trimmed.length))}`;
+      },
+      expected: "Metro",
+    },
+    {
+      label: "section end",
+      scopeMeta: {
+        scopeKind: "section",
+        section: "hero",
+        subsection: "",
+        name: "hero",
+      },
+      mutate(display) {
+        const trimmed = String(display || "").replace(/^\n+/, "").replace(/\n+$/, "");
+        return `${trimmed.slice(0, Math.max(0, trimmed.length - 6))}SAFELY`;
+      },
+      expected: "SAFELY",
+    },
+    {
+      label: "subsection start",
+      scopeMeta: {
+        scopeKind: "subsection",
+        section: "columns",
+        subsection: "right",
+        name: "right",
+      },
+      mutate(display) {
+        const trimmed = String(display || "").replace(/^\n+/, "").replace(/\n+$/, "");
+        return `Why${trimmed.slice(Math.min(3, trimmed.length))}`;
+      },
+      expected: "Why",
+    },
+    {
+      label: "subsection end",
+      scopeMeta: {
+        scopeKind: "subsection",
+        section: "columns",
+        subsection: "right",
+        name: "right",
+      },
+      mutate(display) {
+        const trimmed = String(display || "").replace(/^\n+/, "").replace(/\n+$/, "");
+        return `${trimmed.slice(0, Math.max(0, trimmed.length - 6))}steady`;
+      },
+      expected: "steady",
+    },
+  ])("$label edits preserve scoped marker boundaries", ({ scopeMeta, mutate, expected }) => {
+    const session = createScopeSession({
+      stateId: "boundary|en",
+      lang: "en",
+      scopeMeta,
+    });
+    const scopeSlice = resolveCanonicalScopeSlice(
+      CANONICAL_WITH_SUBSECTIONS,
+      scopeMeta,
+    );
+    const projection = projectCanonicalSlice(scopeSlice);
+    const editedDisplay = mutate(projection.displayText);
+
+    const result = applyScopedEditV2({
+      session,
+      structuralDocument: parseStructuralDocument(CANONICAL_WITH_SUBSECTIONS),
+      editorContent: editedDisplay,
+      runtimeProjection: {
+        editableBoundaries: projection.editableBoundaries,
+        projectionMeta: {
+          runtimeBoundariesTrusted: true,
+          updateMode: "runtime-boundaries-preserved",
+        },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.canonicalBody).toContain(expected);
+    expect(hasStructuralMarkerBoundaryViolations(result.canonicalBody)).toBe(false);
+    expect(
+      assertStructuralMarkerGraphEqual(
+        CANONICAL_WITH_SUBSECTIONS,
+        result.canonicalBody,
+      ).ok,
+    ).toBe(true);
+  });
+
+  test("document projection insertion across complex home fixture preserves marker boundaries", () => {
+    const scopeMeta = {
+      scopeKind: "document",
+      section: "",
+      subsection: "",
+      name: "document",
+    };
+    const session = createScopeSession({
+      stateId: "complex-doc|en",
+      lang: "en",
+      scopeMeta,
+    });
+    const scopeSlice = resolveCanonicalScopeSlice(
+      COMPLEX_DOCUMENT_BOUNDARY_FIXTURE,
+      scopeMeta,
+    );
+    const projection = projectCanonicalSlice(scopeSlice);
+    const display = String(projection.displayText || "");
+    const anchor = display.indexOf("tiefen Leidens");
+    expect(anchor).toBeGreaterThan(0);
+    const editedDisplay = `${display.slice(0, anchor)}steady ${display.slice(anchor)}`;
+
+    const result = applyScopedEditV2({
+      session,
+      structuralDocument: parseStructuralDocument(COMPLEX_DOCUMENT_BOUNDARY_FIXTURE),
+      editorContent: editedDisplay,
+      runtimeProjection: {
+        editableBoundaries: projection.editableBoundaries,
+        projectionMeta: {
+          runtimeBoundariesTrusted: true,
+          updateMode: "runtime-boundaries-preserved",
+        },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.canonicalBody).toContain("steady tiefen Leidens");
+    expect(hasStructuralMarkerBoundaryViolations(result.canonicalBody)).toBe(false);
+    expect(
+      assertStructuralMarkerGraphEqual(
+        COMPLEX_DOCUMENT_BOUNDARY_FIXTURE,
+        result.canonicalBody,
+      ).ok,
+    ).toBe(true);
+  });
+
+  test.each([
+    { label: "document-start", needle: "# The Urban <br>Farm", offset: 0, token: "X" },
+    { label: "document-middle-near-body-marker", needle: "Every _plot_ starts _small_.", offset: 10, token: "Y" },
+    { label: "document-middle-complex-content", needle: "tiefen Leidens", offset: 0, token: "Z" },
+    { label: "document-end-near-cta", needle: "wie Sitzungen ablaufen.", offset: 5, token: "Q" },
+  ])("$label single-char insert preserves marker graph on complex fixture", ({
+    needle,
+    offset,
+    token,
+  }) => {
+    const scopeMeta = {
+      scopeKind: "document",
+      section: "",
+      subsection: "",
+      name: "document",
+    };
+    const session = createScopeSession({
+      stateId: "complex-doc-sweep|en",
+      lang: "en",
+      scopeMeta,
+    });
+    const scopeSlice = resolveCanonicalScopeSlice(
+      COMPLEX_DOCUMENT_BOUNDARY_FIXTURE,
+      scopeMeta,
+    );
+    const projection = projectCanonicalSlice(scopeSlice);
+    const display = String(projection.displayText || "");
+    const anchor = display.indexOf(String(needle || ""));
+    expect(anchor).toBeGreaterThanOrEqual(0);
+    const insertAt = Math.max(0, Math.min(display.length, anchor + Number(offset || 0)));
+    const editedDisplay = `${display.slice(0, insertAt)}${token}${display.slice(insertAt)}`;
+
+    const result = applyScopedEditV2({
+      session,
+      structuralDocument: parseStructuralDocument(COMPLEX_DOCUMENT_BOUNDARY_FIXTURE),
+      editorContent: editedDisplay,
+      runtimeProjection: {
+        editableBoundaries: projection.editableBoundaries,
+        projectionMeta: {
+          runtimeBoundariesTrusted: true,
+          updateMode: "runtime-boundaries-preserved",
+        },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(hasStructuralMarkerBoundaryViolations(result.canonicalBody)).toBe(false);
+    expect(
+      assertStructuralMarkerGraphEqual(
+        COMPLEX_DOCUMENT_BOUNDARY_FIXTURE,
+        result.canonicalBody,
+      ).ok,
+    ).toBe(true);
   });
 });

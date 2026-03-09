@@ -1,5 +1,12 @@
 # Changelog
 
+## v7.0.2
+
+- Fixed a document-scope regression after `section -> document` breadcrumb rebound where live edits on complex marker-heavy content could trip `document marker boundary violation`.
+- Hardened section and subsection scoped projection so marker-adjacent whitespace is restored from the canonical baseline before boundary validation.
+- Added regression coverage for editing and saving at the start and end of field, section, and subsection scopes, plus a browser regression for section-to-document rebound on complex content.
+- Added a complex scope-transition matrix and deterministic document offset sweep to catch rebound-related boundary drift earlier.
+
 ## v7.0.1
 
 - Fixed a breadcrumb regression introduced by stamped-key shape validation: parent breadcrumb navigation now keeps the original field context visible while preserving the `df7e82f` safeguard for malformed host stamps.

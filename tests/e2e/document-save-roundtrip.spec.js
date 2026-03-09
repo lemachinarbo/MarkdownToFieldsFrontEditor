@@ -16,6 +16,10 @@ const EN_LONG_OUTLINE_BASELINE_FILE = path.join(
   process.cwd(),
   "tests/fixtures/en-home-long-outline.baseline.md",
 );
+const EN_COMPLEX_DOCUMENT_FIXTURE = path.join(
+  process.cwd(),
+  "tests/fixtures/en-home-complex-document.md",
+);
 const ES_BASELINE_FILE = path.join(
   process.cwd(),
   "tests/fixtures/es-home.baseline.md",
@@ -631,6 +635,26 @@ async function replacePrimaryEditorBoundaryText(page, direction, charCount, next
     );
   }
   await page.keyboard.type(String(nextText || ""));
+}
+
+async function insertTokenBeforePrimaryEditorNeedle(page, needle, token) {
+  const currentText = String((await getActivePrimaryEditor(page).textContent()) || "");
+  const index = currentText.indexOf(String(needle || ""));
+  expect(index, `needle not found in primary editor: ${needle}`).toBeGreaterThanOrEqual(0);
+  await selectPrimaryEditorTextRange(page, index, index);
+  await page.keyboard.type(String(token || ""));
+}
+
+async function insertTokenAtPrimaryEditorNeedleOffset(page, needle, offset, token) {
+  const currentText = String((await getActivePrimaryEditor(page).textContent()) || "");
+  const anchor = currentText.indexOf(String(needle || ""));
+  expect(anchor, `needle not found in primary editor: ${needle}`).toBeGreaterThanOrEqual(0);
+  const position = Math.max(
+    0,
+    Math.min(currentText.length, anchor + Number(offset || 0)),
+  );
+  await selectPrimaryEditorTextRange(page, position, position);
+  await page.keyboard.type(String(token || ""));
 }
 
 async function appendTokenAndAssertVisible(page, token, maxAttempts = 3) {
@@ -2293,6 +2317,539 @@ test.describe("document save roundtrip", () => {
       await expect
         .poll(async () => String(await readEn()))
         .toContain("<!-- after -->\nAfter marker stays untouched.");
+      await assertNoCriticalDocStateEvents(page, entry.label);
+      assertNoCriticalConsoleSince(
+        criticalConsoleIssues,
+        consoleCursor,
+        entry.label,
+      );
+      expect(
+        criticalPageErrors.slice(pageErrorCursor),
+        `${entry.label}: critical page errors detected`,
+      ).toEqual([]);
+    }
+  });
+
+  test("field, section, and subsection boundary edits save cleanly at start and end", async ({
+    page,
+  }) => {
+    await normalizeV2MatrixBaseline();
+    await appendPlainTagFieldFixture();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    const criticalConsoleIssues = [];
+    const criticalPageErrors = [];
+    page.on("console", (msg) => {
+      const text = String(msg.text() || "");
+      if (
+        /marker boundary violation|protected spans changed|STATE_SAVE_FAILED|MFE_SAVE_SAFETY_BLOCKED|Save promise error/i.test(
+          text,
+        )
+      ) {
+        criticalConsoleIssues.push(`${msg.type()}: ${text}`);
+      }
+    });
+    page.on("pageerror", (error) => {
+      const text = String(error?.message || error || "");
+      if (
+        /marker boundary violation|protected spans changed|STATE_SAVE_FAILED|MFE_SAVE_SAFETY_BLOCKED/i.test(
+          text,
+        )
+      ) {
+        criticalPageErrors.push(text);
+      }
+    });
+
+    await page.goto("/");
+    const opened = await openFullscreenEditor(page);
+    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+
+    const cases = [
+      {
+        label: "field-start",
+        scopeKind: "field",
+        open: {
+          scope: "field",
+          name: "plain",
+          section: "edgecases",
+          subsection: "",
+          readyContains: "Alpha beta gamma",
+        },
+        apply: async () => {
+          await replacePrimaryEditorBoundaryText(page, "start", 5, "Omega");
+        },
+        token: "Omega beta gamma",
+      },
+      {
+        label: "field-end",
+        scopeKind: "field",
+        open: {
+          scope: "field",
+          name: "plain",
+          section: "edgecases",
+          subsection: "",
+          readyContains: "Alpha beta gamma",
+        },
+        apply: async () => {
+          await replacePrimaryEditorBoundaryText(page, "end", 5, "delta");
+        },
+        token: "Alpha beta delta",
+      },
+      {
+        label: "section-start",
+        scopeKind: "section",
+        open: {
+          scope: "section",
+          name: "hero",
+          section: "hero",
+          subsection: "",
+          readyContains: "The Urban",
+        },
+        apply: async () => {
+          await replacePrimaryEditorBoundaryText(page, "start", 3, "Metro");
+        },
+        token: "Metro",
+      },
+      {
+        label: "section-end",
+        scopeKind: "section",
+        open: {
+          scope: "section",
+          name: "hero",
+          section: "hero",
+          subsection: "",
+          readyContains: "The Urban",
+        },
+        apply: async () => {
+          await replacePrimaryEditorBoundaryText(page, "end", 5, "SAFELY");
+        },
+        token: "SAFELY",
+      },
+      {
+        label: "subsection-start",
+        scopeKind: "subsection",
+        open: {
+          scope: "subsection",
+          name: "right",
+          section: "columns",
+          subsection: "right",
+          readyContains: "How we work",
+        },
+        apply: async () => {
+          await replacePrimaryEditorBoundaryText(page, "start", 3, "Why");
+        },
+        token: "Why",
+      },
+      {
+        label: "subsection-end",
+        scopeKind: "subsection",
+        open: {
+          scope: "subsection",
+          name: "right",
+          section: "columns",
+          subsection: "right",
+          readyContains: "How we work",
+        },
+        apply: async () => {
+          await replacePrimaryEditorBoundaryText(page, "end", 6, "steady");
+        },
+        token: "steady",
+      },
+    ];
+
+    for (const entry of cases) {
+      await normalizeV2MatrixBaseline();
+      await appendPlainTagFieldFixture();
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await openScopeFromCanonical(page, entry.open);
+
+      const consoleCursor = criticalConsoleIssues.length;
+      const pageErrorCursor = criticalPageErrors.length;
+
+      await entry.apply();
+      await waitForEditorTextContains(page, entry.token);
+      await page.getByRole("button", { name: /Save changes/i }).click();
+
+      await waitForPersistedTokenOrThrow({
+        page,
+        token: entry.token,
+        contextLabel: entry.label,
+        consoleIssues: criticalConsoleIssues,
+        consoleCursor,
+      });
+      await assertV2SavePathForScope(page, entry.scopeKind);
+      await assertNoCriticalDocStateEvents(page, entry.label);
+      assertNoCriticalConsoleSince(
+        criticalConsoleIssues,
+        consoleCursor,
+        entry.label,
+      );
+      expect(
+        criticalPageErrors.slice(pageErrorCursor),
+        `${entry.label}: critical page errors detected`,
+      ).toEqual([]);
+    }
+  });
+
+  test("section to document rebound keeps document edits saveable on complex content", async ({
+    page,
+  }) => {
+    await resetHomeFromFixture(EN_COMPLEX_DOCUMENT_FIXTURE);
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    const criticalConsoleIssues = [];
+    const criticalPageErrors = [];
+    page.on("console", (msg) => {
+      const text = String(msg.text() || "");
+      if (
+        /document marker boundary violation|marker boundary violation|protected spans changed|STATE_SAVE_FAILED|MFE_SAVE_SAFETY_BLOCKED|Save promise error/i.test(
+          text,
+        )
+      ) {
+        criticalConsoleIssues.push(`${msg.type()}: ${text}`);
+      }
+    });
+    page.on("pageerror", (error) => {
+      const text = String(error?.message || error || "");
+      if (
+        /document marker boundary violation|marker boundary violation|protected spans changed|STATE_SAVE_FAILED|MFE_SAVE_SAFETY_BLOCKED/i.test(
+          text,
+        )
+      ) {
+        criticalPageErrors.push(text);
+      }
+    });
+
+    await page.goto("/");
+    await openScopeFromCanonical(page, {
+      scope: "section",
+      name: "body",
+      section: "body",
+      subsection: "",
+      readyContains: "Forget",
+    });
+
+    await clickBreadcrumbLink(page, /^Document$/i);
+    await waitForEditorTextContains(page, "tiefen Leidens");
+
+    const consoleCursor = criticalConsoleIssues.length;
+    const pageErrorCursor = criticalPageErrors.length;
+    await insertTokenBeforePrimaryEditorNeedle(page, "tiefen Leidens", "steady ");
+    await waitForEditorTextContains(page, "steady tiefen Leidens");
+    await page.getByRole("button", { name: /Save changes/i }).click();
+
+    await waitForPersistedTokenOrThrow({
+      page,
+      token: "steady tiefen Leidens",
+      contextLabel: "section-document-complex",
+      consoleIssues: criticalConsoleIssues,
+      consoleCursor,
+    });
+    await assertV2SavePathForScope(page, "document");
+    await assertNoCriticalDocStateEvents(page, "section-document-complex");
+    assertNoCriticalConsoleSince(
+      criticalConsoleIssues,
+      consoleCursor,
+      "section-document-complex",
+    );
+    expect(
+      criticalPageErrors.slice(pageErrorCursor),
+      "section-document-complex: critical page errors detected",
+    ).toEqual([]);
+  });
+
+  test("complex scope transition matrix keeps edits saveable across rebounds", async ({
+    page,
+  }) => {
+    await resetHomeFromFixture(EN_COMPLEX_DOCUMENT_FIXTURE);
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    const criticalConsoleIssues = [];
+    const criticalPageErrors = [];
+    page.on("console", (msg) => {
+      const text = String(msg.text() || "");
+      if (
+        /document marker boundary violation|marker boundary violation|protected spans changed|STATE_SAVE_FAILED|MFE_SAVE_SAFETY_BLOCKED|Save promise error/i.test(
+          text,
+        )
+      ) {
+        criticalConsoleIssues.push(`${msg.type()}: ${text}`);
+      }
+    });
+    page.on("pageerror", (error) => {
+      const text = String(error?.message || error || "");
+      if (
+        /document marker boundary violation|marker boundary violation|protected spans changed|STATE_SAVE_FAILED|MFE_SAVE_SAFETY_BLOCKED/i.test(
+          text,
+        )
+      ) {
+        criticalPageErrors.push(text);
+      }
+    });
+
+    await page.goto("/");
+    await openScopeFromCanonical(page, {
+      scope: "field",
+      name: "title",
+      section: "hero",
+      subsection: "",
+      readyContains: "The Urban",
+    });
+
+    const transitions = [
+      {
+        label: "field-section",
+        scopeKind: "section",
+        navigate: async () => {
+          await clickBreadcrumbLink(page, /^Section:\s*hero$/i);
+        },
+        waitFor: "The Urban",
+        needle: "The Urban",
+        offset: 0,
+        token: "R",
+        persisted: "RThe Urban",
+      },
+      {
+        label: "section-document",
+        scopeKind: "document",
+        navigate: async () => {
+          await clickBreadcrumbLink(page, /^Document$/i);
+        },
+        waitFor: "tiefen Leidens",
+        needle: "tiefen Leidens",
+        offset: 0,
+        token: "S",
+        persisted: "Stiefen Leidens",
+      },
+      {
+        label: "document-subsection",
+        scopeKind: "subsection",
+        navigate: async () => {
+          await openScopeFromCanonical(page, {
+            scope: "subsection",
+            name: "right",
+            section: "content",
+            subsection: "right",
+            readyContains: "Wie es funktioniert",
+          });
+        },
+        waitFor: "Wie es funktioniert",
+        needle: "Wie es funktioniert",
+        offset: 0,
+        token: "T",
+        persisted: "TWie es funktioniert",
+      },
+      {
+        label: "subsection-document",
+        scopeKind: "document",
+        navigate: async () => {
+          await clickBreadcrumbLink(page, /^Document$/i);
+        },
+        waitFor: "groesserer Klarheit",
+        needle: "groesserer Klarheit",
+        offset: 0,
+        token: "U",
+        persisted: "Ugroesserer Klarheit",
+      },
+    ];
+
+    for (const entry of transitions) {
+      const consoleCursor = criticalConsoleIssues.length;
+      const pageErrorCursor = criticalPageErrors.length;
+
+      await entry.navigate();
+      await waitForEditorTextContains(page, entry.waitFor);
+      await insertTokenAtPrimaryEditorNeedleOffset(
+        page,
+        entry.needle,
+        entry.offset,
+        entry.token,
+      );
+      await waitForEditorTextContains(page, entry.persisted);
+      await page.getByRole("button", { name: /Save changes/i }).click();
+
+      await waitForPersistedTokenOrThrow({
+        page,
+        token: entry.persisted,
+        contextLabel: entry.label,
+        consoleIssues: criticalConsoleIssues,
+        consoleCursor,
+      });
+      await assertV2SavePathForScope(page, entry.scopeKind);
+      await assertNoCriticalDocStateEvents(page, entry.label);
+      assertNoCriticalConsoleSince(
+        criticalConsoleIssues,
+        consoleCursor,
+        entry.label,
+      );
+      expect(
+        criticalPageErrors.slice(pageErrorCursor),
+        `${entry.label}: critical page errors detected`,
+      ).toEqual([]);
+    }
+  });
+
+  test("complex fixture offset sweeps stay saveable for document section and subsection scopes", async ({
+    page,
+  }) => {
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    const criticalConsoleIssues = [];
+    const criticalPageErrors = [];
+    page.on("console", (msg) => {
+      const text = String(msg.text() || "");
+      if (
+        /document marker boundary violation|marker boundary violation|protected spans changed|STATE_SAVE_FAILED|MFE_SAVE_SAFETY_BLOCKED|Save promise error/i.test(
+          text,
+        )
+      ) {
+        criticalConsoleIssues.push(`${msg.type()}: ${text}`);
+      }
+    });
+    page.on("pageerror", (error) => {
+      const text = String(error?.message || error || "");
+      if (
+        /document marker boundary violation|marker boundary violation|protected spans changed|STATE_SAVE_FAILED|MFE_SAVE_SAFETY_BLOCKED/i.test(
+          text,
+        )
+      ) {
+        criticalPageErrors.push(text);
+      }
+    });
+
+    const cases = [
+      {
+        label: "document-start",
+        scopeKind: "document",
+        open: {
+          scope: "document",
+          name: "document",
+          section: "",
+          subsection: "",
+          readyContains: "The Urban",
+        },
+        needle: "The Urban <br>Farm",
+        offset: 0,
+        token: "DOC_A_",
+      },
+      {
+        label: "document-middle",
+        scopeKind: "document",
+        open: {
+          scope: "document",
+          name: "document",
+          section: "",
+          subsection: "",
+          readyContains: "tiefen Leidens",
+        },
+        needle: "tiefen Leidens",
+        offset: 0,
+        token: "DOC_B_",
+      },
+      {
+        label: "document-endish",
+        scopeKind: "document",
+        open: {
+          scope: "document",
+          name: "document",
+          section: "",
+          subsection: "",
+          readyContains: "wie Sitzungen ablaufen",
+        },
+        needle: "wie Sitzungen ablaufen",
+        offset: 4,
+        token: "DOC_C_",
+      },
+      {
+        label: "section-body-start",
+        scopeKind: "section",
+        open: {
+          scope: "section",
+          name: "body",
+          section: "body",
+          subsection: "",
+          readyContains: "Forget",
+        },
+        needle: "Forget industrial farms and rigid layouts.",
+        offset: 0,
+        token: "SEC_A_",
+      },
+      {
+        label: "section-body-endish",
+        scopeKind: "section",
+        open: {
+          scope: "section",
+          name: "body",
+          section: "body",
+          subsection: "",
+          readyContains: "without chaos",
+        },
+        needle: "without chaos",
+        offset: "without ".length,
+        token: "SEC_B_",
+      },
+      {
+        label: "subsection-content-right-start",
+        scopeKind: "subsection",
+        open: {
+          scope: "subsection",
+          name: "right",
+          section: "content",
+          subsection: "right",
+          readyContains: "Wie es funktioniert",
+        },
+        needle: "Wie es funktioniert",
+        offset: 0,
+        token: "SUB_A_",
+      },
+      {
+        label: "subsection-content-right-middle",
+        scopeKind: "subsection",
+        open: {
+          scope: "subsection",
+          name: "right",
+          section: "content",
+          subsection: "right",
+          readyContains: "tiefen Leidens",
+        },
+        needle: "tiefen Leidens",
+        offset: 0,
+        token: "SUB_B_",
+      },
+    ];
+
+    await page.goto("/");
+    for (const entry of cases) {
+      await resetHomeFromFixture(EN_COMPLEX_DOCUMENT_FIXTURE);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await openScopeFromCanonical(page, entry.open);
+
+      const consoleCursor = criticalConsoleIssues.length;
+      const pageErrorCursor = criticalPageErrors.length;
+      await insertTokenAtPrimaryEditorNeedleOffset(
+        page,
+        entry.needle,
+        entry.offset,
+        entry.token,
+      );
+      await waitForEditorTextContains(page, entry.token);
+      await page.getByRole("button", { name: /Save changes/i }).click();
+
+      await waitForPersistedTokenOrThrow({
+        page,
+        token: entry.token,
+        contextLabel: entry.label,
+        consoleIssues: criticalConsoleIssues,
+        consoleCursor,
+      });
+      await assertV2SavePathForScope(page, entry.scopeKind);
       await assertNoCriticalDocStateEvents(page, entry.label);
       assertNoCriticalConsoleSince(
         criticalConsoleIssues,

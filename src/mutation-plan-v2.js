@@ -63,10 +63,19 @@ function enforceMarkerBlankLineSeparation(markdown) {
   const text = normalizeText(markdown);
   // Keep marker lines on structural boundaries to avoid rendering marker comments
   // as escaped inline text when preceding prose collapses to a single newline.
-  return text.replace(
-    /([^\n])\n(?=[\t ]*<!--\s*[a-zA-Z0-9_:.\/-]+\s*-->)/g,
-    "$1\n\n",
-  );
+  return text
+    .replace(
+      /([^\r\n])(?=<!--\s*[a-zA-Z0-9_:.\/-]+\s*-->)/g,
+      "$1\n\n",
+    )
+    .replace(
+      /([^\n])\n(?=[\t ]*<!--\s*[a-zA-Z0-9_:.\/-]+\s*-->)/g,
+      "$1\n\n",
+    )
+    .replace(
+      /(<!--\s*[a-zA-Z0-9_:.\/-]+\s*-->)(?=[^\r\n])/g,
+      "$1\n",
+    );
 }
 
 function computeFirstDiffIndex(beforeText, afterText) {
@@ -256,7 +265,12 @@ function repairDocumentMarkerAdjacentWhitespace(canonicalEditedSlice, scopeSlice
 
 function finalizeCandidateCanonicalSlice(canonicalEditedSlice, scopeSlice) {
   let finalized = String(canonicalEditedSlice || "");
-  if (String(scopeSlice?.scopeKind || "") === "document") {
+  const scopeKind = String(scopeSlice?.scopeKind || "");
+  if (
+    scopeKind === "document" ||
+    scopeKind === "section" ||
+    scopeKind === "subsection"
+  ) {
     const repaired = repairDocumentMarkerAdjacentWhitespace(finalized, scopeSlice);
     if (typeof repaired === "string") {
       finalized = repaired;
