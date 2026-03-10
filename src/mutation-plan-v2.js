@@ -1084,10 +1084,6 @@ export function applyScopedEditV2({
     };
   }
 
-  if (scopeKind === "section" || scopeKind === "subsection") {
-    canonicalBody = enforceMarkerBlankLineSeparation(canonicalBody);
-  }
-
   const boundaryViolation = hasStructuralMarkerBoundaryViolations(canonicalBody);
   if (boundaryViolation) {
     throw new Error(
