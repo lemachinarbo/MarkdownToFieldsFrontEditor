@@ -191,6 +191,7 @@ import {
 } from "./scope-session-v2.js";
 import {
   assertStructuralMarkerGraphEqual,
+  hasStructuralMarkerBoundaryViolations,
   parseStructuralDocument,
 } from "./structural-document.js";
 import {
@@ -780,24 +781,7 @@ function emitStageMarkdownDiagnostic(stage, markdown, extra = {}) {
 }
 
 function hasMarkerLineBoundaryViolations(markdown) {
-  const text = String(markdown || "");
-  if (!text) return false;
-  const pattern = /<!--\s*[^>]+?\s*-->/g;
-  let match = pattern.exec(text);
-  while (match) {
-    const start = Number(match.index || 0);
-    const marker = String(match[0] || "");
-    const end = start + marker.length;
-    const before = start > 0 ? text[start - 1] : "";
-    const after = end < text.length ? text[end] : "";
-    const beforeOk = before === "" || before === "\n" || before === "\r";
-    const afterOk = after === "" || after === "\n" || after === "\r";
-    if (!beforeOk || !afterOk) {
-      return true;
-    }
-    match = pattern.exec(text);
-  }
-  return false;
+  return hasStructuralMarkerBoundaryViolations(markdown);
 }
 
 function isStructuralScopeKind(scopeKind) {
@@ -4012,8 +3996,8 @@ function saveAllEditors() {
         throw createSaveSafetyBlockedError();
       }
       let changedRanges = computeChangedRanges(
-        splitBefore.body,
-        finalCanonicalBody,
+        normalizeLineEndingsToLf(splitBefore.body),
+        normalizeLineEndingsToLf(finalCanonicalBody),
       );
       const leakedRanges = changedRanges.filter(
         (range) =>
@@ -5734,7 +5718,10 @@ function applyScopeSlice(state, scopeMeta, scopedMarkdown, reason, trigger) {
     endOffset: mutationResult.endOffset,
   });
 
-  const effectiveChangedRanges = computeChangedRanges(before, nextDraft);
+  const effectiveChangedRanges = computeChangedRanges(
+    normalizeLineEndingsToLf(before),
+    normalizeLineEndingsToLf(nextDraft),
+  );
   const leakedRanges = effectiveChangedRanges.filter(
     (range) =>
       range.start < mutationResult.startOffset ||

@@ -249,21 +249,14 @@ export function hasStructuralMarkerBoundaryViolations(markdown = "") {
   let match = markerTokenRe.exec(text);
   while (match) {
     const markerStart = Number(match.index || 0);
-    const markerEnd = markerStart + String(match[0] || "").length;
-    const before = markerStart > 0 ? text.charAt(markerStart - 1) : "";
-    const after = markerEnd < text.length ? text.charAt(markerEnd) : "";
-    const beforeOk = before === "" || before === "\n" || before === "\r";
-    const afterOk = after === "" || after === "\n" || after === "\r";
-    if (!beforeOk || !afterOk) {
+    const lineStart = Math.max(0, text.lastIndexOf("\n", markerStart - 1) + 1);
+    const nextLineBreak = text.indexOf("\n", markerStart);
+    const lineEnd = nextLineBreak >= 0 ? nextLineBreak : text.length;
+    const line = text.slice(lineStart, lineEnd);
+    if (!/^[\t ]*<!--\s*[^>]+?\s*-->[\t ]*$/.test(line)) {
       return true;
     }
     match = markerTokenRe.exec(text);
-  }
-  if (/[^\r\n]<!--\s*[^>]+?\s*-->/.test(text)) {
-    return true;
-  }
-  if (/<!--\s*[^>]+?\s*-->[^\r\n]/.test(text)) {
-    return true;
   }
   return false;
 }

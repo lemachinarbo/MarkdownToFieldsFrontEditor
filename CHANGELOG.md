@@ -1,5 +1,11 @@
 # Changelog
 
+## v7.0.3
+
+- Fixed field, section, and subsection edit failures on documents containing marker lines with trailing whitespace.
+- Unified browser-side marker boundary validation with the shared structural validator to avoid editor/runtime drift.
+- Stopped section and subsection scoped edits from rewriting marker whitespace outside the active scope, and added regressions for the `df` chirology content shape.
+
 ## v7.0.2
 
 - Fixed a document-scope regression after `section -> document` breadcrumb rebound where live edits on complex marker-heavy content could trip `document marker boundary violation`.

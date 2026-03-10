@@ -2,6 +2,7 @@ import {
   extractStructuralGraph,
   validateStructuralTransition,
 } from "../src/structural-validator.js";
+import { hasStructuralMarkerBoundaryViolations } from "../src/structural-document.js";
 
 describe("structural validator", () => {
   test("extracts marker graph and marker-boundary gap graph", () => {
@@ -77,5 +78,17 @@ describe("structural validator", () => {
     expect(crlfGraph.markerGraph).toEqual(lfGraph.markerGraph);
     expect(crlfGraph.markerPositions).toEqual(lfGraph.markerPositions);
     expect(crlfGraph.boundaryGapGraph).toEqual(lfGraph.boundaryGapGraph);
+  });
+
+  test("marker boundary validator allows trailing whitespace on marker lines", () => {
+    const markdown = [
+      "<!-- section:hero -->",
+      "",
+      "<!-- description... --> ",
+      "Body text",
+      "",
+    ].join("\n");
+
+    expect(hasStructuralMarkerBoundaryViolations(markdown)).toBe(false);
   });
 });

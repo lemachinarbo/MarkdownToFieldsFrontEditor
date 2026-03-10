@@ -83,6 +83,16 @@ const COMPLEX_DOCUMENT_BOUNDARY_FIXTURE = fs
   )
   .replace(/^---\n[\s\S]*?\n---\n\n/, "");
 
+const DF_CHIROLOGY_DE_CANONICAL = fs
+  .readFileSync(
+    path.join(
+      process.cwd(),
+      "../df/src/site/content/de/methods/chirology.md",
+    ),
+    "utf8",
+  )
+  .replace(/^---\n[\s\S]*?\n---\n\n/, "");
+
 describe("mutation-plan-v2", () => {
   test("field right-edge edit keeps marker separation", () => {
     const session = createScopeSession({
@@ -723,6 +733,80 @@ describe("mutation-plan-v2", () => {
     expect(
       assertStructuralMarkerGraphEqual(
         COMPLEX_DOCUMENT_BOUNDARY_FIXTURE,
+        result.canonicalBody,
+      ).ok,
+    ).toBe(true);
+  });
+
+  test("df chirology hero title field edit preserves next marker separation", () => {
+    const scopeMeta = {
+      scopeKind: "field",
+      section: "hero",
+      subsection: "",
+      name: "title",
+    };
+    const session = createScopeSession({
+      stateId: "df-chirology|de",
+      lang: "de",
+      originKey: "field:hero:title",
+      scopeMeta,
+    });
+
+    const result = applyScopedEditV2({
+      session,
+      structuralDocument: parseStructuralDocument(DF_CHIROLOGY_DE_CANONICAL),
+      editorContent: "# Moderne Chirologiex",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.canonicalBody).toContain("# Moderne Chirologiex\n\n<!-- kicker -->");
+    expect(hasStructuralMarkerBoundaryViolations(result.canonicalBody)).toBe(false);
+    expect(
+      assertStructuralMarkerGraphEqual(
+        DF_CHIROLOGY_DE_CANONICAL,
+        result.canonicalBody,
+      ).ok,
+    ).toBe(true);
+  });
+
+  test("df chirology hero section edit does not rewrite later marker whitespace", () => {
+    const scopeMeta = {
+      scopeKind: "section",
+      section: "hero",
+      subsection: "",
+      name: "hero",
+    };
+    const session = createScopeSession({
+      stateId: "df-chirology-section|de",
+      lang: "de",
+      originKey: "field:hero:description",
+      scopeMeta,
+    });
+
+    const result = applyScopedEditV2({
+      session,
+      structuralDocument: parseStructuralDocument(DF_CHIROLOGY_DE_CANONICAL),
+      editorContent: [
+        "# Moderne Chirologie",
+        "",
+        "Erkunde diese Methode",
+        "",
+        "Eine lebendige Landkarte deines Seins.x",
+        "",
+        "![](oli-qyrvpsargry-unsplash.jpg)",
+        "",
+        "",
+      ].join("\n"),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(hasStructuralMarkerBoundaryViolations(result.canonicalBody)).toBe(false);
+    expect(
+      result.canonicalBody.includes("<!-- description... --> \n"),
+    ).toBe(true);
+    expect(
+      assertStructuralMarkerGraphEqual(
+        DF_CHIROLOGY_DE_CANONICAL,
         result.canonicalBody,
       ).ok,
     ).toBe(true);
