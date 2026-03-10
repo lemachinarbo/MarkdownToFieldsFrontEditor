@@ -657,6 +657,16 @@ async function insertTokenAtPrimaryEditorNeedleOffset(page, needle, offset, toke
   await page.keyboard.type(String(token || ""));
 }
 
+async function insertTokenAtPrimaryEditorAbsoluteOffset(page, offset, token) {
+  const currentText = String((await getActivePrimaryEditor(page).textContent()) || "");
+  const position = Math.max(
+    0,
+    Math.min(currentText.length, Number(offset || 0)),
+  );
+  await selectPrimaryEditorTextRange(page, position, position);
+  await page.keyboard.type(String(token || ""));
+}
+
 async function appendTokenAndAssertVisible(page, token, maxAttempts = 3) {
   let tokenVisible = false;
   for (let attempt = 0; attempt < Number(maxAttempts || 1); attempt += 1) {
@@ -2860,6 +2870,137 @@ test.describe("document save roundtrip", () => {
         criticalPageErrors.slice(pageErrorCursor),
         `${entry.label}: critical page errors detected`,
       ).toEqual([]);
+    }
+  });
+
+  test("systematic browser offset sweep stays saveable on complex fixture", async ({
+    page,
+  }) => {
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    const criticalConsoleIssues = [];
+    const criticalPageErrors = [];
+    page.on("console", (msg) => {
+      const text = String(msg.text() || "");
+      if (
+        /document marker boundary violation|marker boundary violation|protected spans changed|STATE_SAVE_FAILED|MFE_SAVE_SAFETY_BLOCKED|Save promise error/i.test(
+          text,
+        )
+      ) {
+        criticalConsoleIssues.push(`${msg.type()}: ${text}`);
+      }
+    });
+    page.on("pageerror", (error) => {
+      const text = String(error?.message || error || "");
+      if (
+        /document marker boundary violation|marker boundary violation|protected spans changed|STATE_SAVE_FAILED|MFE_SAVE_SAFETY_BLOCKED/i.test(
+          text,
+        )
+      ) {
+        criticalPageErrors.push(text);
+      }
+    });
+
+    const sweeps = [
+      {
+        label: "document-systematic",
+        scopeKind: "document",
+        open: {
+          scope: "document",
+          name: "document",
+          section: "",
+          subsection: "",
+          readyContains: "tiefen Leidens",
+        },
+        fractions: [0, 0.08, 0.2, 0.4, 0.6, 0.8, 0.95],
+      },
+      {
+        label: "section-body-systematic",
+        scopeKind: "section",
+        open: {
+          scope: "section",
+          name: "body",
+          section: "body",
+          subsection: "",
+          readyContains: "Forget",
+        },
+        fractions: [0, 0.18, 0.45, 0.72, 0.94],
+      },
+      {
+        label: "subsection-content-right-systematic",
+        scopeKind: "subsection",
+        open: {
+          scope: "subsection",
+          name: "right",
+          section: "content",
+          subsection: "right",
+          readyContains: "Wie es funktioniert",
+        },
+        fractions: [0, 0.15, 0.35, 0.6, 0.9],
+      },
+    ];
+
+    await page.goto("/");
+    for (const sweep of sweeps) {
+      await resetHomeFromFixture(EN_COMPLEX_DOCUMENT_FIXTURE);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await openScopeFromCanonical(page, sweep.open);
+
+      const currentText = String((await getActivePrimaryEditor(page).textContent()) || "");
+      expect(
+        currentText.length,
+        `${sweep.label}: editor text should not be empty`,
+      ).toBeGreaterThan(20);
+
+      const offsets = Array.from(
+        new Set(
+          sweep.fractions.map((fraction) =>
+            Math.max(
+              0,
+              Math.min(
+                currentText.length,
+                Math.floor(currentText.length * Number(fraction || 0)),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      for (const [index, offset] of offsets.entries()) {
+        await resetHomeFromFixture(EN_COMPLEX_DOCUMENT_FIXTURE);
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await openScopeFromCanonical(page, sweep.open);
+
+        const token = `TOK${String(sweep.label || "")
+          .replace(/[^a-z0-9]+/gi, "")
+          .slice(0, 12)}${index}Z`;
+        const consoleCursor = criticalConsoleIssues.length;
+        const pageErrorCursor = criticalPageErrors.length;
+
+        await insertTokenAtPrimaryEditorAbsoluteOffset(page, offset, token);
+        await waitForEditorTextContains(page, token);
+        await page.getByRole("button", { name: /Save changes/i }).click();
+
+        await waitForPersistedTokenOrThrow({
+          page,
+          token,
+          contextLabel: `${sweep.label}:${index}`,
+          consoleIssues: criticalConsoleIssues,
+          consoleCursor,
+        });
+        await assertV2SavePathForScope(page, sweep.scopeKind);
+        await assertNoCriticalDocStateEvents(page, `${sweep.label}:${index}`);
+        assertNoCriticalConsoleSince(
+          criticalConsoleIssues,
+          consoleCursor,
+          `${sweep.label}:${index}`,
+        );
+        expect(
+          criticalPageErrors.slice(pageErrorCursor),
+          `${sweep.label}:${index}: critical page errors detected`,
+        ).toEqual([]);
+      }
     }
   });
 });
