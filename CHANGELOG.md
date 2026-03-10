@@ -12,6 +12,9 @@
 - Hardened section and subsection scoped projection so marker-adjacent whitespace is restored from the canonical baseline before boundary validation.
 - Added regression coverage for editing and saving at the start and end of field, section, and subsection scopes, plus a browser regression for section-to-document rebound on complex content.
 - Added a complex scope-transition matrix and deterministic document offset sweep to catch rebound-related boundary drift earlier.
+- Fixed field, section, and subsection edit failures on documents containing marker lines with trailing whitespace.
+- Unified browser-side marker boundary validation with the shared structural validator to avoid editor/runtime drift.
+- Stopped section and subsection scoped edits from rewriting marker whitespace outside the active scope.
 
 ## v7.0.1
 
