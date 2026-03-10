@@ -3,6 +3,7 @@
 ## v7.0.3
 
 - Add support for configurable markdown emphasis styles and unordered list markers defaults.
+- Add page-edit-front permission when module is installed.
 
 ## v7.0.2
 

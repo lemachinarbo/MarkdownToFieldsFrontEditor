@@ -201,6 +201,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
     }
 
     public function install() {
+        $this->ensureFrontendEditPermission();
         $defaults = self::getDefaultData();
         $this->wire('modules')->saveConfig($this, [
             'toolbarButtons' => $defaults['toolbarButtons'],
@@ -213,6 +214,24 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'labelStyle' => $defaults['labelStyle'],
             'confirmOnUnsavedClose' => $defaults['confirmOnUnsavedClose'],
         ]);
+    }
+
+    private function ensureFrontendEditPermission(): void {
+        $permissions = $this->wire('permissions');
+        if (!$permissions) {
+            return;
+        }
+
+        $name = 'page-edit-front';
+        $existing = $permissions->get($name);
+        if ($existing && (int)$existing->id > 0) {
+            return;
+        }
+
+        $permission = new Permission();
+        $permission->name = $name;
+        $permission->title = 'Edit pages from frontend';
+        $permission->save();
     }
 
     /**
