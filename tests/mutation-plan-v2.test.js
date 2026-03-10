@@ -83,11 +83,11 @@ const COMPLEX_DOCUMENT_BOUNDARY_FIXTURE = fs
   )
   .replace(/^---\n[\s\S]*?\n---\n\n/, "");
 
-const DF_CHIROLOGY_DE_CANONICAL = fs
+const CHIROLOGY_MARKER_REGRESSION_FIXTURE = fs
   .readFileSync(
     path.join(
       process.cwd(),
-      "../df/src/site/content/de/methods/chirology.md",
+      "tests/fixtures/de-chirology-marker-regression.md",
     ),
     "utf8",
   )
@@ -754,7 +754,7 @@ describe("mutation-plan-v2", () => {
 
     const result = applyScopedEditV2({
       session,
-      structuralDocument: parseStructuralDocument(DF_CHIROLOGY_DE_CANONICAL),
+      structuralDocument: parseStructuralDocument(CHIROLOGY_MARKER_REGRESSION_FIXTURE),
       editorContent: "# Moderne Chirologiex",
     });
 
@@ -763,7 +763,7 @@ describe("mutation-plan-v2", () => {
     expect(hasStructuralMarkerBoundaryViolations(result.canonicalBody)).toBe(false);
     expect(
       assertStructuralMarkerGraphEqual(
-        DF_CHIROLOGY_DE_CANONICAL,
+        CHIROLOGY_MARKER_REGRESSION_FIXTURE,
         result.canonicalBody,
       ).ok,
     ).toBe(true);
@@ -785,7 +785,7 @@ describe("mutation-plan-v2", () => {
 
     const result = applyScopedEditV2({
       session,
-      structuralDocument: parseStructuralDocument(DF_CHIROLOGY_DE_CANONICAL),
+      structuralDocument: parseStructuralDocument(CHIROLOGY_MARKER_REGRESSION_FIXTURE),
       editorContent: [
         "# Moderne Chirologie",
         "",
@@ -806,7 +806,7 @@ describe("mutation-plan-v2", () => {
     ).toBe(true);
     expect(
       assertStructuralMarkerGraphEqual(
-        DF_CHIROLOGY_DE_CANONICAL,
+        CHIROLOGY_MARKER_REGRESSION_FIXTURE,
         result.canonicalBody,
       ).ok,
     ).toBe(true);
