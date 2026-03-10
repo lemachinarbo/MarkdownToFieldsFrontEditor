@@ -5,6 +5,11 @@ import {
   defaultMarkdownSerializer,
 } from "prosemirror-markdown";
 import { isHostDevMode } from "./host-env.js";
+import {
+  getDefaultBoldDelimiter,
+  getDefaultItalicDelimiter,
+  getDefaultUnorderedListMarker,
+} from "./markdown-style-preferences.js";
 import { request } from "./network.js";
 
 /**
@@ -769,12 +774,17 @@ const SERIALIZER_NODES_BLUEPRINT = deepFreeze({
   heading: defaultMarkdownSerializer.nodes.heading,
   horizontalRule: defaultMarkdownSerializer.nodes.horizontal_rule,
   bulletList(state, node) {
-    const marker = String(node?.attrs?.bullet || "-").slice(0, 1) || "-";
+    const marker =
+      String(node?.attrs?.bullet || "").slice(0, 1) ||
+      getDefaultUnorderedListMarker();
     state.renderList(node, "  ", () => `${marker} `);
   },
   orderedList: defaultMarkdownSerializer.nodes.ordered_list,
   taskList(state, node) {
-    state.renderList(node, "  ", () => `${node?.attrs?.bullet || "-"} `);
+    const marker =
+      String(node?.attrs?.bullet || "").slice(0, 1) ||
+      getDefaultUnorderedListMarker();
+    state.renderList(node, "  ", () => `${marker} `);
   },
   taskItem(state, node) {
     state.write(node?.attrs?.checked ? "[x] " : "[ ] ");
@@ -873,17 +883,25 @@ const SERIALIZER_MARKS_BLUEPRINT = deepFreeze({
   ...cloneMarkSpecMap(defaultMarkdownSerializer.marks),
   bold: {
     open: (_state, mark) =>
-      String(mark?.attrs?.delimiter || "") === "__" ? "__" : "**",
+      String(mark?.attrs?.delimiter || "") === "__"
+        ? "__"
+        : getDefaultBoldDelimiter(),
     close: (_state, mark) =>
-      String(mark?.attrs?.delimiter || "") === "__" ? "__" : "**",
+      String(mark?.attrs?.delimiter || "") === "__"
+        ? "__"
+        : getDefaultBoldDelimiter(),
     mixable: true,
     expelEnclosingWhitespace: true,
   },
   italic: {
     open: (_state, mark) =>
-      String(mark?.attrs?.delimiter || "") === "*" ? "*" : "_",
+      String(mark?.attrs?.delimiter || "") === "_"
+        ? "_"
+        : getDefaultItalicDelimiter(),
     close: (_state, mark) =>
-      String(mark?.attrs?.delimiter || "") === "*" ? "*" : "_",
+      String(mark?.attrs?.delimiter || "") === "_"
+        ? "_"
+        : getDefaultItalicDelimiter(),
     mixable: true,
     expelEnclosingWhitespace: true,
   },
@@ -918,7 +936,6 @@ const SERIALIZER_MARKS_BLUEPRINT = deepFreeze({
 
 const SERIALIZER_OPTIONS_BLUEPRINT = deepFreeze({
   tightLists: true,
-  bulletListMarker: "-",
 });
 
 function cloneSerializerNodeMap() {
@@ -933,7 +950,10 @@ export function createMarkdownSerializer(_schema) {
   return new MarkdownSerializer(
     cloneSerializerNodeMap(),
     cloneSerializerMarkMap(),
-    { ...SERIALIZER_OPTIONS_BLUEPRINT },
+    {
+      ...SERIALIZER_OPTIONS_BLUEPRINT,
+      bulletListMarker: getDefaultUnorderedListMarker(),
+    },
   );
 }
 

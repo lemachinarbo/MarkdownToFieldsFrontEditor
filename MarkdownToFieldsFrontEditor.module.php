@@ -14,7 +14,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
             'summary' => 'Frontend editor for MarkdownToFields.',
-            'version' =>  '0.7.2',
+            'version' =>  '0.7.3',
             'autoload' => true,
             'singular' => true,
             'requires' => ['MarkdownToFields'],
@@ -28,6 +28,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return [
             'toolbarButtons' => 'bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split,document,outline',
             'allowedImageExtensions' => 'jpg,jpeg,png,gif,webp,svg',
+            'defaultEmphasisStyle' => 'asterisk',
+            'defaultUnorderedListMarker' => '*',
             'strictSectionReplace' => true,
             'debug' => false,
             'debugShowSections' => false,
@@ -69,6 +71,33 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $behaviorFieldset = wire('modules')->get('InputfieldFieldset');
         $behaviorFieldset->label = 'Editor Behavior';
         $behaviorFieldset->description = 'General editor behavior options.';
+
+        $emphasisStyleField = wire('modules')->get('InputfieldRadios');
+        $emphasisStyleField->name = 'defaultEmphasisStyle';
+        $emphasisStyleField->label = 'Default Markdown Emphasis Style';
+        $emphasisStyleField->description = 'Used for newly created bold and italic formatting from the editor toolbar and shortcuts.';
+        $emphasisStyleField->notes = 'Existing markdown keeps its original style. If content comes from an external editor using both **asterisks** and __underscores__, we preserve it as-authored. This default only applies when the frontend editor creates new markdown.';
+        $emphasisStyleField->options = [
+            'asterisk' => 'Use asterisks: *italic*, **bold**, ***bold italic***',
+            'underscore' => 'Use underscores: _italic_, __bold__, ___bold italic___',
+        ];
+        $emphasisStyleField->value = !empty($data['defaultEmphasisStyle']) ? $data['defaultEmphasisStyle'] : $defaults['defaultEmphasisStyle'];
+        $emphasisStyleField->columnWidth = 100;
+        $behaviorFieldset->add($emphasisStyleField);
+
+        $unorderedMarkerField = wire('modules')->get('InputfieldRadios');
+        $unorderedMarkerField->name = 'defaultUnorderedListMarker';
+        $unorderedMarkerField->label = 'Default Unordered List Marker';
+        $unorderedMarkerField->description = 'Used when the frontend editor creates a new unordered list.';
+        $unorderedMarkerField->notes = 'Existing list markers are preserved as-authored. This only defines the marker used for newly created unordered lists.';
+        $unorderedMarkerField->options = [
+            '*' => 'Use *',
+            '-' => 'Use -',
+            '+' => 'Use +',
+        ];
+        $unorderedMarkerField->value = !empty($data['defaultUnorderedListMarker']) ? $data['defaultUnorderedListMarker'] : $defaults['defaultUnorderedListMarker'];
+        $unorderedMarkerField->columnWidth = 100;
+        $behaviorFieldset->add($unorderedMarkerField);
 
         $strictReplaceField = wire('modules')->get('InputfieldCheckbox');
         $strictReplaceField->name = 'strictSectionReplace';
@@ -175,6 +204,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $defaults = self::getDefaultData();
         $this->wire('modules')->saveConfig($this, [
             'toolbarButtons' => $defaults['toolbarButtons'],
+            'defaultEmphasisStyle' => $defaults['defaultEmphasisStyle'],
+            'defaultUnorderedListMarker' => $defaults['defaultUnorderedListMarker'],
             'strictSectionReplace' => $defaults['strictSectionReplace'],
             'debug' => $defaults['debug'],
             'debugShowSections' => $defaults['debugShowSections'],
@@ -356,6 +387,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'debugShowSections' => (bool)($this->debugShowSections ?? false),
             'debugLabels' => (bool)($this->debugShowLabels ?? false),
             'strictSectionReplace' => (bool)($this->strictSectionReplace ?? $defaults['strictSectionReplace']),
+            'defaultEmphasisStyle' => (string)($this->defaultEmphasisStyle ?? $defaults['defaultEmphasisStyle']),
+            'defaultUnorderedListMarker' => (string)($this->defaultUnorderedListMarker ?? $defaults['defaultUnorderedListMarker']),
             'labelStyle' => (string)($this->labelStyle ?? $defaults['labelStyle']),
             'confirmOnUnsavedClose' => (bool)($this->confirmOnUnsavedClose ?? $defaults['confirmOnUnsavedClose']),
         ];

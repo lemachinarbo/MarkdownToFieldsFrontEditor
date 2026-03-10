@@ -2,19 +2,17 @@
 
 ## v7.0.3
 
-- Fixed field, section, and subsection edit failures on documents containing marker lines with trailing whitespace.
-- Unified browser-side marker boundary validation with the shared structural validator to avoid editor/runtime drift.
-- Stopped section and subsection scoped edits from rewriting marker whitespace outside the active scope, and added regressions for the chirology marker-content shape.
+- Add support for configurable markdown emphasis styles and unordered list markers defaults.
 
 ## v7.0.2
 
-- Fixed a document-scope regression after `section -> document` breadcrumb rebound where live edits on complex marker-heavy content could trip `document marker boundary violation`.
-- Hardened section and subsection scoped projection so marker-adjacent whitespace is restored from the canonical baseline before boundary validation.
-- Added regression coverage for editing and saving at the start and end of field, section, and subsection scopes, plus a browser regression for section-to-document rebound on complex content.
-- Added a complex scope-transition matrix and deterministic document offset sweep to catch rebound-related boundary drift earlier.
-- Fixed field, section, and subsection edit failures on documents containing marker lines with trailing whitespace.
-- Unified browser-side marker boundary validation with the shared structural validator to avoid editor/runtime drift.
-- Stopped section and subsection scoped edits from rewriting marker whitespace outside the active scope.
+- Fixed a document-scope regression after the `section → document` breadcrumb rebound that could trigger `document marker boundary violation` during live edits on complex, marker-heavy content.
+- Hardened section and subsection projections by restoring marker-adjacent whitespace from the canonical baseline before boundary validation.
+- Fixed edit failures in field, section, and subsection scopes caused by marker lines with trailing whitespace.
+- Prevented section and subsection scoped edits from rewriting marker whitespace outside the active scope.
+- Unified browser-side marker boundary validation with the shared structural validator to eliminate editor/runtime drift.
+- Added regression coverage for edits at the start and end of field, section, and subsection scopes, plus a browser regression for section-to-document rebound cases.
+- Introduced a complex scope-transition matrix and deterministic document offset sweep to detect rebound-related boundary drift earlier.
 
 ## v7.0.1
 

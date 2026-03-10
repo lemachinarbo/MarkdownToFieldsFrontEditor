@@ -7,14 +7,63 @@ import TaskList from "@tiptap/extension-task-list";
 import { Plugin } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import { inlineHtmlTags } from "./editor-core.js";
+import {
+  getDefaultBoldDelimiter,
+  getDefaultItalicDelimiter,
+  getDefaultUnorderedListMarker,
+} from "./markdown-style-preferences.js";
+
+function updateNearestNodeAttrsForSelection(selection, tr, nodeTypeName, attrs) {
+  if (!selection || !tr) return false;
+  let target = null;
+
+  for (let depth = selection.$from.depth; depth > 0; depth -= 1) {
+    const node = selection.$from.node(depth);
+    if (node?.type?.name !== nodeTypeName) continue;
+    target = {
+      node,
+      pos: selection.$from.before(depth),
+    };
+    break;
+  }
+
+  if (!target) return false;
+
+  tr.setNodeMarkup(target.pos, undefined, {
+    ...(target.node?.attrs || {}),
+    ...(attrs || {}),
+  });
+  return true;
+}
 
 export const MarkerAwareBold = Bold.extend({
   addAttributes() {
     return {
       ...(this.parent?.() || {}),
       delimiter: {
-        default: "**",
+        default: getDefaultBoldDelimiter(),
       },
+    };
+  },
+  addCommands() {
+    return {
+      ...(this.parent?.() || {}),
+      setBold:
+        () =>
+        ({ commands }) =>
+          commands.setMark(this.name, {
+            delimiter: getDefaultBoldDelimiter(),
+          }),
+      toggleBold:
+        () =>
+        ({ commands }) =>
+          commands.toggleMark(this.name, {
+            delimiter: getDefaultBoldDelimiter(),
+          }),
+      unsetBold:
+        () =>
+        ({ commands }) =>
+          commands.unsetMark(this.name),
     };
   },
 });
@@ -24,8 +73,29 @@ export const MarkerAwareItalic = Italic.extend({
     return {
       ...(this.parent?.() || {}),
       delimiter: {
-        default: "_",
+        default: getDefaultItalicDelimiter(),
       },
+    };
+  },
+  addCommands() {
+    return {
+      ...(this.parent?.() || {}),
+      setItalic:
+        () =>
+        ({ commands }) =>
+          commands.setMark(this.name, {
+            delimiter: getDefaultItalicDelimiter(),
+          }),
+      toggleItalic:
+        () =>
+        ({ commands }) =>
+          commands.toggleMark(this.name, {
+            delimiter: getDefaultItalicDelimiter(),
+          }),
+      unsetItalic:
+        () =>
+        ({ commands }) =>
+          commands.unsetMark(this.name),
     };
   },
 });
@@ -35,8 +105,29 @@ export const MarkerAwareBulletList = BulletList.extend({
     return {
       ...(this.parent?.() || {}),
       bullet: {
-        default: "-",
+        default: getDefaultUnorderedListMarker(),
       },
+    };
+  },
+  addCommands() {
+    return {
+      ...(this.parent?.() || {}),
+      toggleBulletList:
+        () =>
+        ({ chain }) =>
+          chain()
+            .toggleList(this.name, this.options.itemTypeName, this.options.keepMarks)
+            .command(({ tr }) => {
+              return updateNearestNodeAttrsForSelection(
+                tr.selection,
+                tr,
+                this.name,
+                {
+                  bullet: getDefaultUnorderedListMarker(),
+                },
+              );
+            })
+            .run(),
     };
   },
 });
@@ -46,8 +137,29 @@ export const MarkerAwareTaskList = TaskList.extend({
     return {
       ...(this.parent?.() || {}),
       bullet: {
-        default: "-",
+        default: getDefaultUnorderedListMarker(),
       },
+    };
+  },
+  addCommands() {
+    return {
+      ...(this.parent?.() || {}),
+      toggleTaskList:
+        () =>
+        ({ chain }) =>
+          chain()
+            .toggleList(this.name, this.options.itemTypeName)
+            .command(({ tr }) => {
+              return updateNearestNodeAttrsForSelection(
+                tr.selection,
+                tr,
+                this.name,
+                {
+                  bullet: getDefaultUnorderedListMarker(),
+                },
+              );
+            })
+            .run(),
     };
   },
 });

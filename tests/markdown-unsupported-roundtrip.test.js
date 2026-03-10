@@ -1,4 +1,6 @@
-import { getSchema } from "@tiptap/core";
+/** @jest-environment jsdom */
+
+import { Editor, getSchema } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import TaskItem from "@tiptap/extension-task-item";
@@ -61,7 +63,83 @@ function buildSchemaWithMarker() {
   ]);
 }
 
+function createListEditor() {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+
+  const editor = new Editor({
+    element: host,
+    extensions: [
+      StarterKit.configure({
+        codeBlock: true,
+        link: false,
+        bulletList: false,
+      }),
+      Link.configure({
+        openOnClick: false,
+        linkOnPaste: true,
+      }),
+      MarkerAwareBulletList,
+      MarkerAwareTaskList,
+      TaskItem.configure({ nested: true }),
+      Table.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
+    ],
+    content: "<p>Item one</p>",
+  });
+
+  return {
+    editor,
+    destroy() {
+      editor.destroy();
+      host.remove();
+    },
+  };
+}
+
+async function createConfiguredListEditor() {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const module = await import("../src/editor-tiptap-extensions.js");
+  const editor = new Editor({
+    element: host,
+    extensions: [
+      StarterKit.configure({
+        codeBlock: true,
+        link: false,
+        bulletList: false,
+      }),
+      Link.configure({
+        openOnClick: false,
+        linkOnPaste: true,
+      }),
+      module.MarkerAwareBulletList,
+      module.MarkerAwareTaskList,
+      TaskItem.configure({ nested: true }),
+      Table.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
+    ],
+    content: "<p>Item one</p>",
+  });
+
+  return {
+    editor,
+    destroy() {
+      editor.destroy();
+      host.remove();
+    },
+  };
+}
+
 describe("unsupported markdown roundtrip preservation", () => {
+  afterEach(() => {
+    delete window.MarkdownFrontEditorConfig;
+  });
+
   test("footnote-like syntax is preserved as canonical markdown tokens", () => {
     const schema = buildSchema();
     const markdown = ["Footnote[^1]", "", "[^1]: note"].join("\n");
@@ -135,6 +213,44 @@ describe("unsupported markdown roundtrip preservation", () => {
     const serialized = serializeMarkdownDoc(doc);
 
     expect(trimTrailingLineBreaks(serialized)).toBe(markdown);
+  });
+
+  test("toolbar-created unordered lists use configured star marker", async () => {
+    window.MarkdownFrontEditorConfig = {
+      defaultUnorderedListMarker: "*",
+    };
+    jest.resetModules();
+    const fixture = await createConfiguredListEditor();
+
+    try {
+      fixture.editor.commands.selectAll();
+      fixture.editor.commands.toggleBulletList();
+
+      expect(trimTrailingLineBreaks(serializeMarkdownDoc(fixture.editor.state.doc))).toBe(
+        "* Item one",
+      );
+    } finally {
+      fixture.destroy();
+    }
+  });
+
+  test("toolbar-created unordered lists use configured plus marker", async () => {
+    window.MarkdownFrontEditorConfig = {
+      defaultUnorderedListMarker: "+",
+    };
+    jest.resetModules();
+    const fixture = await createConfiguredListEditor();
+
+    try {
+      fixture.editor.commands.selectAll();
+      fixture.editor.commands.toggleBulletList();
+
+      expect(trimTrailingLineBreaks(serializeMarkdownDoc(fixture.editor.state.doc))).toBe(
+        "+ Item one",
+      );
+    } finally {
+      fixture.destroy();
+    }
   });
 
   test("task list marker style roundtrips with plus markers", () => {
