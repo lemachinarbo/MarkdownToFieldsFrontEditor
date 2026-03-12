@@ -44,35 +44,73 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
      */
     public static function getModuleConfigInputfields(array $data) {
         $inputfields = new InputfieldWrapper();
-        
+
         $defaults = self::getDefaultData();
         $data = array_merge($defaults, $data);
+        self::handleModuleConfigActions();
+        $inputfields->add(self::buildToolbarButtonsInput($data, $defaults));
+        $inputfields->add(self::buildBehaviorFieldset($data, $defaults));
+        $inputfields->add(self::buildDebugFieldset($data));
+        $inputfields->add(self::buildThumbCacheFieldset());
 
+        return $inputfields;
+    }
+
+    /**
+     * Create config inputfield instances from ProcessWire modules.
+     * Centralizing this keeps the config form assembly consistent.
+     */
+    private static function createConfigInputfield(string $type) {
+        return wire('modules')->get($type);
+    }
+
+    /**
+     * Execute config-form side effects before fields are rendered.
+     * This keeps POST actions out of the structural form builders.
+     */
+    private static function handleModuleConfigActions(): void {
         $input = wire('input');
-        if ($input->post->text('mfeClearThumbCache') !== '') {
-            $module = wire('modules')->get('MarkdownToFieldsFrontEditor');
-            if ($module) {
-                $deleted = $module->clearThumbCache();
-                $module->message(
-                    sprintf('Thumbnail cache cleared (%d files).', $deleted)
-                );
-            }
+        if ($input->post->text('mfeClearThumbCache') === '') {
+            return;
         }
 
-        $f = wire('modules')->get('InputfieldText');
-        $f->name = 'toolbarButtons';
-        $f->label = 'Toolbar Buttons';
-        $f->description = 'Comma-separated list of toolbar buttons to show. Use "|" as a separator. Available: bold, italic, strike, code, codeblock, paragraph, h1-h6, ul, ol, blockquote, link, unlink, image, clear, split, document, outline. Save is always shown at the end.';
-        $f->notes = 'Defaults: bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split,document,outline';
-        $f->value = !empty($data['toolbarButtons']) ? $data['toolbarButtons'] : $defaults['toolbarButtons'];
-        $f->columnWidth = 100;
-        $inputfields->add($f);
+        $module = wire('modules')->get('MarkdownToFieldsFrontEditor');
+        if (!$module) {
+            return;
+        }
 
-        $behaviorFieldset = wire('modules')->get('InputfieldFieldset');
-        $behaviorFieldset->label = 'Editor Behavior';
-        $behaviorFieldset->description = 'General editor behavior options.';
+        $deleted = $module->clearThumbCache();
+        $module->message(
+            sprintf('Thumbnail cache cleared (%d files).', $deleted)
+        );
+    }
 
-        $emphasisStyleField = wire('modules')->get('InputfieldRadios');
+    /**
+     * Build the toolbar configuration field.
+     * This field defines which editor controls are exposed to the frontend.
+     */
+    private static function buildToolbarButtonsInput(array $data, array $defaults) {
+        $field = self::createConfigInputfield('InputfieldText');
+        $field->name = 'toolbarButtons';
+        $field->label = 'Toolbar Buttons';
+        $field->description = 'Comma-separated list of toolbar buttons to show. Use "|" as a separator. Available: bold, italic, strike, code, codeblock, paragraph, h1-h6, ul, ol, blockquote, link, unlink, image, clear, split, document, outline. Save is always shown at the end.';
+        $field->notes = 'Defaults: bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split,document,outline';
+        $field->value = !empty($data['toolbarButtons']) ? $data['toolbarButtons'] : $defaults['toolbarButtons'];
+        $field->columnWidth = 100;
+
+        return $field;
+    }
+
+    /**
+     * Build the behavior fieldset shown in module config.
+     * These options affect authoring defaults and fullscreen editor behavior.
+     */
+    private static function buildBehaviorFieldset(array $data, array $defaults) {
+        $fieldset = self::createConfigInputfield('InputfieldFieldset');
+        $fieldset->label = 'Editor Behavior';
+        $fieldset->description = 'General editor behavior options.';
+
+        $emphasisStyleField = self::createConfigInputfield('InputfieldRadios');
         $emphasisStyleField->name = 'defaultEmphasisStyle';
         $emphasisStyleField->label = 'Default Markdown Emphasis Style';
         $emphasisStyleField->description = 'Used for newly created bold and italic formatting from the editor toolbar and shortcuts.';
@@ -83,9 +121,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         ];
         $emphasisStyleField->value = !empty($data['defaultEmphasisStyle']) ? $data['defaultEmphasisStyle'] : $defaults['defaultEmphasisStyle'];
         $emphasisStyleField->columnWidth = 100;
-        $behaviorFieldset->add($emphasisStyleField);
+        $fieldset->add($emphasisStyleField);
 
-        $unorderedMarkerField = wire('modules')->get('InputfieldRadios');
+        $unorderedMarkerField = self::createConfigInputfield('InputfieldRadios');
         $unorderedMarkerField->name = 'defaultUnorderedListMarker';
         $unorderedMarkerField->label = 'Default Unordered List Marker';
         $unorderedMarkerField->description = 'Used when the frontend editor creates a new unordered list.';
@@ -97,9 +135,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         ];
         $unorderedMarkerField->value = !empty($data['defaultUnorderedListMarker']) ? $data['defaultUnorderedListMarker'] : $defaults['defaultUnorderedListMarker'];
         $unorderedMarkerField->columnWidth = 100;
-        $behaviorFieldset->add($unorderedMarkerField);
+        $fieldset->add($unorderedMarkerField);
 
-        $strictReplaceField = wire('modules')->get('InputfieldCheckbox');
+        $strictReplaceField = self::createConfigInputfield('InputfieldCheckbox');
         $strictReplaceField->name = 'strictSectionReplace';
         $strictReplaceField->label = 'Enable Safe Parent Live Preview Replacement';
         $strictReplaceField->description = 'When enabled (default), section/subsection parent live preview replacement runs only when safe; otherwise child zones are updated to avoid breaking nested editable areas.';
@@ -108,9 +146,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             ? !empty($data['strictSectionReplace'])
             : !empty($defaults['strictSectionReplace']);
         $strictReplaceField->columnWidth = 100;
-        $behaviorFieldset->add($strictReplaceField);
+        $fieldset->add($strictReplaceField);
 
-        $labelStyleField = wire('modules')->get('InputfieldRadios');
+        $labelStyleField = self::createConfigInputfield('InputfieldRadios');
         $labelStyleField->name = 'labelStyle';
         $labelStyleField->label = 'Label Position';
         $labelStyleField->description = 'Choose whether labels sit outside or inside the region.';
@@ -120,9 +158,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         ];
         $labelStyleField->value = !empty($data['labelStyle']) ? $data['labelStyle'] : $defaults['labelStyle'];
         $labelStyleField->columnWidth = 100;
-        $behaviorFieldset->add($labelStyleField);
+        $fieldset->add($labelStyleField);
 
-        $confirmUnsavedField = wire('modules')->get('InputfieldCheckbox');
+        $confirmUnsavedField = self::createConfigInputfield('InputfieldCheckbox');
         $confirmUnsavedField->name = 'confirmOnUnsavedClose';
         $confirmUnsavedField->label = 'Prompt Before Closing Unsaved Editor';
         $confirmUnsavedField->description = 'When enabled, closing the fullscreen editor (Escape/close button) asks confirmation if there are unsaved changes.';
@@ -131,77 +169,105 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             ? !empty($data['confirmOnUnsavedClose'])
             : !empty($defaults['confirmOnUnsavedClose']);
         $confirmUnsavedField->columnWidth = 100;
-        $behaviorFieldset->add($confirmUnsavedField);
+        $fieldset->add($confirmUnsavedField);
 
-        $inputfields->add($behaviorFieldset);
+        return $fieldset;
+    }
 
-        $debugFieldset = wire('modules')->get('InputfieldFieldset');
-        $debugFieldset->label = 'Debug Options';
-        $debugFieldset->description = 'All debug helpers in one place.';
+    /**
+     * Build the debug fieldset shown in module config.
+     * These flags expose diagnostics without changing editor behavior.
+     */
+    private static function buildDebugFieldset(array $data) {
+        $fieldset = self::createConfigInputfield('InputfieldFieldset');
+        $fieldset->label = 'Debug Options';
+        $fieldset->description = 'All debug helpers in one place.';
 
-        $debugLoggingField = wire('modules')->get('InputfieldCheckbox');
+        $debugLoggingField = self::createConfigInputfield('InputfieldCheckbox');
         $debugLoggingField->name = 'debug';
         $debugLoggingField->label = 'Enable Debug Logging';
         $debugLoggingField->description = 'When enabled, verbose diagnostic logs are written to markdown-front-edit.txt';
         $debugLoggingField->value = 1;
         $debugLoggingField->checked = !empty($data['debug']);
         $debugLoggingField->columnWidth = 100;
-        $debugFieldset->add($debugLoggingField);
+        $fieldset->add($debugLoggingField);
 
-        $debugField = wire('modules')->get('InputfieldCheckbox');
+        $debugField = self::createConfigInputfield('InputfieldCheckbox');
         $debugField->name = 'debugShowSections';
         $debugField->label = 'Debug: Always Show Section Bounds';
         $debugField->description = 'When enabled, section/subsection wrappers are outlined with labels in the frontend.';
         $debugField->value = 1;
         $debugField->checked = !empty($data['debugShowSections']);
         $debugField->columnWidth = 100;
-        $debugFieldset->add($debugField);
+        $fieldset->add($debugField);
 
-        $debugLabelsField = wire('modules')->get('InputfieldCheckbox');
+        $debugLabelsField = self::createConfigInputfield('InputfieldCheckbox');
         $debugLabelsField->name = 'debugShowLabels';
         $debugLabelsField->label = 'Debug: Show editable areas Labels';
         $debugLabelsField->description = 'Shows scope labels like "section:hero" in the rollover helper.';
         $debugLabelsField->value = 1;
         $debugLabelsField->checked = !empty($data['debugShowLabels']);
         $debugLabelsField->columnWidth = 100;
-        $debugFieldset->add($debugLabelsField);
+        $fieldset->add($debugLabelsField);
 
-        $inputfields->add($debugFieldset);
+        return $fieldset;
+    }
 
-        $thumbFieldset = wire('modules')->get('InputfieldFieldset');
-        $thumbFieldset->label = 'Thumbnail Cache';
-        $thumbFieldset->description = 'Manual cache controls for image picker thumbnails.';
+    /**
+     * Build the thumbnail cache maintenance controls.
+     * The submit button delegates execution to handleModuleConfigActions().
+     */
+    private static function buildThumbCacheFieldset() {
+        $fieldset = self::createConfigInputfield('InputfieldFieldset');
+        $fieldset->label = 'Thumbnail Cache';
+        $fieldset->description = 'Manual cache controls for image picker thumbnails.';
 
-        $clearThumbs = wire('modules')->get('InputfieldSubmit');
+        $clearThumbs = self::createConfigInputfield('InputfieldSubmit');
         $clearThumbs->name = 'mfeClearThumbCache';
         $clearThumbs->value = 'Clear thumbnail cache';
         $clearThumbs->description = 'Deletes /site/assets/cache/MFE/thumbs/index.json and cached thumbs.';
         $clearThumbs->columnWidth = 100;
-        $thumbFieldset->add($clearThumbs);
+        $fieldset->add($clearThumbs);
 
-        $inputfields->add($thumbFieldset);
-
-        return $inputfields;
+        return $fieldset;
     }
 
+    /**
+     * Register runtime hooks used by the frontend editor.
+     * This keeps initialization focused on request-time wiring only.
+     */
     public function init() {
         // runtime flag set by template opt-in
         $this->enabledForRequest = false;
+        $this->registerRuntimeHooks();
+    }
 
-        // Inject assets and auto-wrap editable fields when rendering
+    /**
+     * Install required permissions and persist default config values.
+     * This keeps fresh installs aligned with the editor defaults shipped in code.
+     */
+    public function install() {
+        $this->ensureFrontendEditPermission();
+        $this->saveDefaultModuleConfig();
+    }
+
+    /**
+     * Register all module hooks in one place.
+     * This makes the module entry responsibilities easier to trace.
+     */
+    private function registerRuntimeHooks(): void {
         $this->addHookAfter('Page::render', $this, 'hookPageRenderAssets');
         $this->addHookAfter('Page::render', $this, 'hookAutoWrapFields');
-
-        // Provide the mdEdit page helper for templates (optional, for explicit control)
         $this->addHook('Page::mdEdit', $this, 'hookPageMdEdit');
         $this->addHook('Page::renderEditable', $this, 'hookPageRenderEditable');
-
-        // Handle minimal save/token endpoints on ready
         $this->addHookBefore('ProcessWire::ready', $this, 'handleSaveRequest');
     }
 
-    public function install() {
-        $this->ensureFrontendEditPermission();
+    /**
+     * Persist default config values for a fresh module install.
+     * Keeping this isolated avoids duplicating the default config map.
+     */
+    private function saveDefaultModuleConfig(): void {
         $defaults = self::getDefaultData();
         $this->wire('modules')->saveConfig($this, [
             'toolbarButtons' => $defaults['toolbarButtons'],
@@ -216,6 +282,10 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         ]);
     }
 
+    /**
+     * Ensure the frontend editing permission exists before runtime use.
+     * Install should be able to run repeatedly without changing existing permissions.
+     */
     private function ensureFrontendEditPermission(): void {
         $permissions = $this->wire('permissions');
         if (!$permissions) {
@@ -235,7 +305,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
     }
 
     /**
-     * Log debug messages (only when debug mode is enabled)
+     * Log debug messages when module debug mode is enabled.
+     * This is the lowest-friction tracing path for frontend-editor audits.
      */
     private function logDebug(string $message): void {
         $enabled = (bool)($this->debug ?? false);
@@ -246,7 +317,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
     }
 
     /**
-     * Log info events (debug mode only)
+     * Log info messages when module debug mode is enabled.
+     * Keeping this separate makes intent explicit at call sites.
      */
     private function logInfo(string $message): void {
         $enabled = (bool)($this->debug ?? false);
@@ -306,83 +378,158 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
     }
 
     /**
-     * Asset injector — only runs when enable() was called for this request.
+     * Inject frontend assets and runtime config into rendered page HTML.
+     * This only runs when the request is allowed to use the frontend editor.
      */
     public function hookPageRenderAssets($event) {
-        // Skip AJAX requests and admin contexts
-        $config = $this->wire()->config;
-        if ($config->ajax) return;
-        
-        $input = $this->wire()->input;
-        if ($input->url && strpos($input->url, $config->urls->admin) === 0) return;
-        
-        // Only inject assets for editors: either template explicitly enabled or user has front edit permission
-        $user = $this->wire()->user;
-        if (!$user->isLoggedIn() || !$user->hasPermission('page-edit-front')) return;
-
         $page = $event->object;
-        if (!$page instanceof \ProcessWire\Page) return;
-        $enabled = $this->enabledForRequest || $this->isMarkdownTemplateEnabled($page);
-        if (!$enabled) return;
+        if (!$page instanceof \ProcessWire\Page) {
+            return;
+        }
+        if (!$this->canInjectFrontendAssets($page)) {
+            return;
+        }
 
         $out = $event->return;
-        if (!is_string($out)) return;
-        
-        $url = $config->urls($this->className());
-        
+        if (!is_string($out)) {
+            return;
+        }
+
+        $config = $this->wire()->config;
         $defaults = self::getDefaultData();
-        $toolbarButtons = isset($this->toolbarButtons) && trim((string)$this->toolbarButtons) !== ''
+        $currentLangCode = \ProcessWire\MarkdownLanguageResolver::getLanguageCode($this->wire()->page);
+        $toolbarButtons = $this->resolveFrontendToolbarButtons($defaults);
+        $modulePath = $config->paths($this->className());
+        $jsPath = $modulePath . 'dist/editor.bundle.js';
+        $version = is_file($jsPath) ? (string) filemtime($jsPath) : (string) time();
+        $frontConfig = $this->buildFrontendAssetConfig(
+            $page,
+            $toolbarButtons,
+            $currentLangCode,
+            $defaults,
+            $version
+        );
+        $script = $this->buildFrontendAssetMarkup($modulePath, $version, $frontConfig);
+
+        if(stripos($out, '</body>') !== false) {
+            $out = str_ireplace('</body>', $script . '</body>', $out);
+        } else {
+            $out .= $script;
+        }
+
+        $event->return = $out;
+    }
+
+    /**
+     * Decide whether the current request may receive frontend-editor assets.
+     * This keeps permission, admin, and template checks in one place.
+     */
+    private function canInjectFrontendAssets(\ProcessWire\Page $page): bool {
+        $config = $this->wire()->config;
+        if ($config->ajax) {
+            return false;
+        }
+
+        $input = $this->wire()->input;
+        if ($input->url && strpos($input->url, $config->urls->admin) === 0) {
+            return false;
+        }
+
+        $user = $this->wire()->user;
+        if (!$user->isLoggedIn() || !$user->hasPermission('page-edit-front')) {
+            return false;
+        }
+
+        return $this->enabledForRequest || $this->isMarkdownTemplateEnabled($page);
+    }
+
+    /**
+     * Resolve the toolbar button configuration sent to the frontend bundle.
+     * Empty module config falls back to the shipped defaults.
+     */
+    private function resolveFrontendToolbarButtons(array $defaults): string {
+        return isset($this->toolbarButtons) && trim((string)$this->toolbarButtons) !== ''
             ? (string)$this->toolbarButtons
             : (string)$defaults['toolbarButtons'];
-        $currentLangCode = \ProcessWire\MarkdownLanguageResolver::getLanguageCode($this->wire()->page);
-        $langList = [];
+    }
+
+    /**
+     * Build the language list exposed to the frontend runtime.
+     * The current language is normalized against ProcessWire language storage codes.
+     */
+    private function buildFrontendLanguageList(string $currentLangCode): array {
+        $user = $this->wire()->user;
         $languages = $this->wire()->languages;
         $currentLangName = (string)$currentLangCode;
-        if ($languages) {
-            $currentUserLanguage = ($user && isset($user->language) && $user->language)
-                ? $user->language
-                : null;
-            $defaultLanguage = $languages->getDefault();
-            if ($currentLangName === '' && $currentUserLanguage && isset($currentUserLanguage->id)) {
-                $currentLangName = $this->resolveLanguageStorageCode($currentUserLanguage);
-            } elseif ($currentLangName === '' && $defaultLanguage && isset($defaultLanguage->id)) {
-                $currentLangName = $this->resolveLanguageStorageCode($defaultLanguage);
-            }
-            foreach ($languages as $lang) {
-                $storageCode = $this->resolveLanguageStorageCode($lang);
-                $langList[] = [
-                    'name' => $storageCode,
-                    'title' => (string)($lang->title ?: $lang->name),
-                    'isDefault' => (bool)$lang->isDefault(),
-                    'isCurrent' => false,
-                ];
-            }
-            $langNames = array_map(static fn($item) => (string)($item['name'] ?? ''), $langList);
-            if (!in_array($currentLangName, $langNames, true)) {
-                if ($defaultLanguage && isset($defaultLanguage->id)) {
-                    $currentLangName = $this->resolveLanguageStorageCode($defaultLanguage);
-                }
-                if (!in_array($currentLangName, $langNames, true)) {
-                    $currentLangName = (string)($langList[0]['name'] ?? 'default');
-                }
-            }
-            foreach ($langList as &$item) {
-                $item['isCurrent'] = ((string)$item['name'] === $currentLangName);
-            }
-            unset($item);
-        } else {
-            $langList[] = [
+        $langList = [];
+
+        if (!$languages) {
+            return [[
                 'name' => 'default',
                 'title' => 'Default',
                 'isDefault' => true,
                 'isCurrent' => true,
+            ]];
+        }
+
+        $currentUserLanguage = ($user && isset($user->language) && $user->language)
+            ? $user->language
+            : null;
+        $defaultLanguage = $languages->getDefault();
+        if ($currentLangName === '' && $currentUserLanguage && isset($currentUserLanguage->id)) {
+            $currentLangName = $this->resolveLanguageStorageCode($currentUserLanguage);
+        } elseif ($currentLangName === '' && $defaultLanguage && isset($defaultLanguage->id)) {
+            $currentLangName = $this->resolveLanguageStorageCode($defaultLanguage);
+        }
+
+        foreach ($languages as $lang) {
+            $storageCode = $this->resolveLanguageStorageCode($lang);
+            $langList[] = [
+                'name' => $storageCode,
+                'title' => (string)($lang->title ?: $lang->name),
+                'isDefault' => (bool)$lang->isDefault(),
+                'isCurrent' => false,
             ];
         }
-        $modulePath = $config->paths($this->className());
-        $jsPath = $modulePath . 'dist/editor.bundle.js';
-        $version = is_file($jsPath) ? (string) filemtime($jsPath) : (string) time();
-        $sectionsIndex = $this->buildSectionsIndex($page);
-        $fieldsIndex = $this->buildFieldsIndex($page);
+
+        $langNames = array_map(static fn($item) => (string)($item['name'] ?? ''), $langList);
+        if (!in_array($currentLangName, $langNames, true)) {
+            if ($defaultLanguage && isset($defaultLanguage->id)) {
+                $currentLangName = $this->resolveLanguageStorageCode($defaultLanguage);
+            }
+            if (!in_array($currentLangName, $langNames, true)) {
+                $currentLangName = (string)($langList[0]['name'] ?? 'default');
+            }
+        }
+
+        foreach ($langList as &$item) {
+            $item['isCurrent'] = ((string)$item['name'] === $currentLangName);
+        }
+        unset($item);
+
+        return $langList;
+    }
+
+    /**
+     * Build the serialized frontend config payload injected into the page.
+     * This collects all runtime data the JS bundle needs to bootstrap editing.
+     */
+    private function buildFrontendAssetConfig(
+        \ProcessWire\Page $page,
+        string $toolbarButtons,
+        string $currentLangCode,
+        array $defaults,
+        string $version
+    ): array {
+        $langList = $this->buildFrontendLanguageList($currentLangCode);
+        $currentLanguage = 'default';
+        foreach ($langList as $item) {
+            if (!empty($item['isCurrent'])) {
+                $currentLanguage = (string)($item['name'] ?? 'default');
+                break;
+            }
+        }
+
         $documentMarkdownB64 = '';
         try {
             $fullMarkdown = $this->loadRawMarkdownDocument($page, $currentLangCode);
@@ -391,16 +538,16 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $documentMarkdownB64 = '';
         }
 
-        $frontConfig = [
+        return [
             'toolbarButtons' => $toolbarButtons,
             'languages' => $langList,
-            'currentLanguage' => $currentLangName,
+            'currentLanguage' => $currentLanguage,
             'pageId' => (int)$page->id,
             'imageBaseUrl' => $this->resolveConfiguredImageBaseUrl($page),
             'pageFilesBaseUrl' => $this->resolvePageFilesBaseUrl($page),
             'buildStamp' => $version,
-            'sectionsIndex' => $sectionsIndex,
-            'fieldsIndex' => $fieldsIndex,
+            'sectionsIndex' => $this->buildSectionsIndex($page),
+            'fieldsIndex' => $this->buildFieldsIndex($page),
             'documentMarkdownB64' => $documentMarkdownB64,
             'debug' => (bool)($this->debug ?? false),
             'debugShowSections' => (bool)($this->debugShowSections ?? false),
@@ -411,6 +558,15 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'labelStyle' => (string)($this->labelStyle ?? $defaults['labelStyle']),
             'confirmOnUnsavedClose' => (bool)($this->confirmOnUnsavedClose ?? $defaults['confirmOnUnsavedClose']),
         ];
+    }
+
+    /**
+     * Build the CSS and JS tags injected into the rendered page.
+     * Asset versions come from file mtimes so frontend code stays in sync after deploys.
+     */
+    private function buildFrontendAssetMarkup(string $modulePath, string $version, array $frontConfig): string {
+        $config = $this->wire()->config;
+        $url = $config->urls($this->className());
         $configScript = "<script>window.MarkdownFrontEditorConfig=" . json_encode($frontConfig) . ";document.body.setAttribute('data-mfe-build','{$version}');</script>";
 
         $cssPath = $modulePath . 'assets/front-editor.css';
@@ -433,19 +589,10 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $viewCssLink = "<link rel=\"stylesheet\" href=\"{$inlineCssHref}\">";
         $viewCssLink .= "<link rel=\"stylesheet\" href=\"{$fullscreenCssHref}\">";
         $viewCssLink .= "<link rel=\"stylesheet\" href=\"{$imagePickerCssHref}\">";
-        
-        // Load bundled ProseMirror editor (single file, no external dependencies)
+
         $moduleScript = "<script src=\"{$url}dist/editor.bundle.js?v={$version}\"></script>";
-        
-        $script = $cssLink . $viewCssLink . $configScript . $moduleScript;
 
-        if(stripos($out, '</body>') !== false) {
-            $out = str_ireplace('</body>', $script . '</body>', $out);
-        } else {
-            $out .= $script;
-        }
-
-        $event->return = $out;
+        return $cssLink . $viewCssLink . $configScript . $moduleScript;
     }
 
     /**

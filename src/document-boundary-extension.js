@@ -1,6 +1,7 @@
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
+import { buildProtectedSpanFingerprint } from "./canonical-scope-session.js";
 
 const DOCUMENT_BOUNDARY_PLUGIN_KEY = new PluginKey("documentBoundary");
 
@@ -89,6 +90,9 @@ function normalizeProjectionPayload(projection, doc) {
   const displayText = String(payload.displayText || "");
   const displayLength = displayText.length;
   const docSize = Math.max(1, Number(doc?.content?.size || 0));
+  const protectedSpans = Array.isArray(payload.protectedSpans)
+    ? payload.protectedSpans
+    : [];
   const inputEditableBoundaries = Array.isArray(payload.editableBoundaries)
     ? payload.editableBoundaries
     : [];
@@ -116,6 +120,7 @@ function normalizeProjectionPayload(projection, doc) {
   return {
     ...payload,
     displayText,
+    protectedSpans,
     editableBoundaries,
     boundaryDocPositions,
     markerDocAnchors,
@@ -139,8 +144,21 @@ function normalizeProjectionPayload(projection, doc) {
       runtimeBoundariesTrusted: Boolean(
         nextProjectionMeta.runtimeBoundariesTrusted || false,
       ),
+      authorityState: String(
+        nextProjectionMeta.authorityState ||
+          (nextProjectionMeta.runtimeBoundariesTrusted ? "trusted" : "untrusted"),
+      ),
+      authorityReason: String(nextProjectionMeta.authorityReason || ""),
+      authorityChangedAt: Number(nextProjectionMeta.authorityChangedAt || 0),
       stateId: String(nextProjectionMeta.stateId || ""),
       scopeKey: String(nextProjectionMeta.scopeKey || ""),
+      protectedSpanCount: Number(
+        nextProjectionMeta.protectedSpanCount || protectedSpans.length,
+      ),
+      protectedSpanFingerprint: String(
+        nextProjectionMeta.protectedSpanFingerprint ||
+          buildProtectedSpanFingerprint(protectedSpans),
+      ),
       lastDocChangeTrace:
         nextProjectionMeta.lastDocChangeTrace &&
         typeof nextProjectionMeta.lastDocChangeTrace === "object"
@@ -544,6 +562,17 @@ export function createDocumentBoundaryExtension(getMode) {
                       runtimeBoundariesTrusted: true,
                       stateId: String(prevMetaProjection.stateId || ""),
                       scopeKey: String(prevMetaProjection.scopeKey || ""),
+                      protectedSpanCount: Number(
+                        prevMetaProjection.protectedSpanCount ||
+                          currentProjection?.protectedSpans?.length ||
+                          0,
+                      ),
+                      protectedSpanFingerprint: String(
+                        prevMetaProjection.protectedSpanFingerprint ||
+                          buildProtectedSpanFingerprint(
+                            currentProjection?.protectedSpans,
+                          ),
+                      ),
                       lastDocChangeTrace: {
                         stepsLength: Array.isArray(tr.steps)
                           ? tr.steps.length

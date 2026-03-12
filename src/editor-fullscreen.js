@@ -186,6 +186,13 @@ import {
   recomputeEditableBoundariesFromSegmentMap,
 } from "./canonical-scope-session.js";
 import {
+  buildScopeMutationContext,
+  resolveNonReferenceScopeAuthorityForMutation,
+  resolveReferenceScopeAuthorityForMutation,
+  stampRuntimeProjectionIdentity,
+  validateRuntimeProjectionForScopeContext,
+} from "./canonical-edit-session.js";
+import {
   createScopeSession,
   doesScopeSessionMatch,
 } from "./scope-session-v2.js";
@@ -257,6 +264,49 @@ let scopedModeTarget = null;
 let documentDraftMarkdown = "";
 let editorViewMode = "scoped";
 let outlinePersistForSession = false;
+
+function getRuntimeAuthorityTraceGlobal() {
+  if (typeof window !== "undefined") return window;
+  if (typeof globalThis !== "undefined") return globalThis;
+  return null;
+}
+
+function shouldCollectRuntimeAuthorityTrace(globalObject) {
+  if (!globalObject) return false;
+  if (Array.isArray(globalObject.__MFE_RUNTIME_AUTHORITY_TRACE__)) return true;
+  return Boolean(globalObject?.MarkdownFrontEditorConfig?.debug === true);
+}
+
+function classifyRuntimeProjectionAuthorityReason(reason = "") {
+  const value = String(reason || "");
+  if (!value) return "";
+  if (value.includes(":rebuilt")) return "validation_rebuild";
+  if (value.includes(":rejected")) return "validation_reject";
+  if (value.includes("scopeRebind")) return "rebind";
+  if (value.startsWith("cleanupEditorOnly:") || value.includes("discard")) {
+    return "discard";
+  }
+  if (
+    value.startsWith("syncCanonicalProjectionRuntimeForEditor") ||
+    value.startsWith("performCanonicalSeedNormalizationHandshake") ||
+    value === "canonical-session-seeded"
+  ) {
+    return "reseed";
+  }
+  return value;
+}
+
+function pushRuntimeAuthorityTrace(entry = {}) {
+  const globalObject = getRuntimeAuthorityTraceGlobal();
+  if (!shouldCollectRuntimeAuthorityTrace(globalObject)) return;
+  const key = "__MFE_RUNTIME_AUTHORITY_TRACE__";
+  const buffer = Array.isArray(globalObject[key]) ? globalObject[key] : [];
+  buffer.push(entry);
+  if (buffer.length > 200) {
+    buffer.splice(0, buffer.length - 200);
+  }
+  globalObject[key] = buffer;
+}
 
 function resolveScopeMetaForSessionLock(scopeMeta = {}) {
   return {
@@ -2131,6 +2181,123 @@ function emitRuntimeBoundaryWriteTrace(payload = {}) {
   });
 }
 
+/**
+ * Stamp runtime projection identity from canonical session data.
+ * This keeps runtime projection metadata aligned with the current canonical scope.
+ */
+function stampProjectionIdentityForSession(
+  stateId,
+  scopeMeta,
+  protectedSpans,
+  projection,
+) {
+  return stampRuntimeProjectionIdentity(projection, {
+    stateId: String(stateId || ""),
+    scopeKey: buildCanonicalScopeKey(scopeMeta || {}),
+    protectedSpans: Array.isArray(protectedSpans) ? protectedSpans : [],
+  });
+}
+
+/**
+ * Stamp lightweight authority lifecycle metadata onto a runtime projection.
+ * This is observability only; canonical state remains the actual authority.
+ */
+function stampProjectionAuthorityState(
+  projection,
+  authorityState,
+  authorityReason,
+  extraMeta = {},
+) {
+  const payload =
+    projection && typeof projection === "object" ? projection : {};
+  const projectionMeta =
+    payload.projectionMeta && typeof payload.projectionMeta === "object"
+      ? payload.projectionMeta
+      : {};
+  const nextAuthorityState = String(
+    authorityState || projectionMeta.authorityState || "untrusted",
+  );
+  return {
+    ...payload,
+    projectionMeta: {
+      ...projectionMeta,
+      ...extraMeta,
+      authorityState: nextAuthorityState,
+      authorityReason: String(
+        authorityReason || extraMeta.authorityReason || "",
+      ),
+      authorityChangedAt: Date.now(),
+      runtimeBoundariesTrusted:
+        typeof extraMeta.runtimeBoundariesTrusted === "boolean"
+          ? extraMeta.runtimeBoundariesTrusted
+          : nextAuthorityState === "trusted",
+    },
+  };
+}
+
+/**
+ * Emit a small trust-lifecycle trace for runtime projection transitions.
+ * These logs make revoke/reseed/rebuild decisions auditable without changing authority.
+ */
+function emitRuntimeProjectionAuthorityTransition(payload = {}) {
+  const authorityReason = classifyRuntimeProjectionAuthorityReason(
+    payload.reason || "",
+  );
+  emitDocStateLog("MFE_RUNTIME_PROJECTION_AUTHORITY_TRANSITION", {
+    stateId: String(payload.stateId || ""),
+    language: String(payload.language || ""),
+    currentScope: String(payload.currentScope || ""),
+    reason: String(payload.reason || ""),
+    trigger: String(payload.trigger || "scope-validation"),
+    scopeKey: String(payload.scopeKey || ""),
+    authorityState: String(payload.authorityState || ""),
+    previousAuthorityState: String(payload.previousAuthorityState || ""),
+    physicalProjectionPresent: Boolean(payload.physicalProjectionPresent),
+    runtimeBoundariesTrusted: Boolean(payload.runtimeBoundariesTrusted),
+    updateMode: String(payload.updateMode || ""),
+    rejectionReason: String(payload.rejectionReason || ""),
+  });
+  pushRuntimeAuthorityTrace({
+    stateId: String(payload.stateId || ""),
+    scopeKey: String(payload.scopeKey || ""),
+    authorityState: String(payload.authorityState || ""),
+    authorityReason,
+    rawReason: String(payload.reason || ""),
+    timestamp: Date.now(),
+  });
+}
+
+/**
+ * Mark the cached runtime projection for a canonical session as revoked or trusted.
+ * The cache stays derived-only; this is for observability and safer reuse decisions.
+ */
+function markCanonicalSessionRuntimeProjectionAuthority(
+  stateId,
+  authorityState,
+  authorityReason,
+) {
+  const key = String(stateId || "");
+  if (!key) return null;
+  const session = canonicalMutationSessionByStateId.get(key);
+  if (!session) return null;
+  const nextRuntimeProjection = session.runtimeProjection
+    ? stampProjectionAuthorityState(
+        session.runtimeProjection,
+        authorityState,
+        authorityReason,
+      )
+    : null;
+  const nextSession = {
+    ...session,
+    runtimeProjection: nextRuntimeProjection,
+    runtimeProjectionAuthorityState: String(authorityState || ""),
+    runtimeProjectionAuthorityReason: String(authorityReason || ""),
+    runtimeProjectionAuthorityChangedAt: Date.now(),
+  };
+  canonicalMutationSessionByStateId.set(key, nextSession);
+  return nextSession;
+}
+
 function buildCanonicalMutationSession(canonicalBody, scopeMeta = {}) {
   const normalizedBody = normalizeLineEndingsToLf(String(canonicalBody || ""));
   const normalizedScopeMeta = buildCanonicalSessionScopeMeta(scopeMeta);
@@ -2198,19 +2365,31 @@ function setCanonicalMutationSessionForState(
     return existing;
   }
   const scopeKey = buildCanonicalScopeKey(nextSession.scopeMeta);
-  const projectionWithIdentity = {
-    ...nextSession.projection,
-    projectionMeta: {
-      ...(nextSession.projection?.projectionMeta || {}),
-      stateId: key,
-      scopeKey,
-      runtimeBoundariesTrusted: true,
-    },
-  };
+  const projectionWithIdentity = stampProjectionAuthorityState(
+    stampProjectionIdentityForSession(
+      key,
+      nextSession.scopeMeta,
+      nextSession.scopeSlice?.protectedSpans,
+      {
+        ...nextSession.projection,
+        projectionMeta: {
+          ...(nextSession.projection?.projectionMeta || {}),
+          stateId: key,
+          scopeKey,
+          runtimeBoundariesTrusted: true,
+        },
+      },
+    ),
+    "trusted",
+    "canonical-session-seeded",
+  );
   canonicalMutationSessionByStateId.set(key, {
     ...nextSession,
     projection: projectionWithIdentity,
     runtimeProjection: projectionWithIdentity,
+    runtimeProjectionAuthorityState: "trusted",
+    runtimeProjectionAuthorityReason: "canonical-session-seeded",
+    runtimeProjectionAuthorityChangedAt: Date.now(),
   });
   return canonicalMutationSessionByStateId.get(key) || null;
 }
@@ -2341,37 +2520,171 @@ function buildProjectionWithResolvedMarkerAnchors(editor, projection) {
   };
 }
 
+/**
+ * Resolve the trusted runtime projection for a state/scope pair.
+ * Invalid runtime projection is rejected and rebuilt deterministically when an editor exists.
+ */
+function resolveValidatedRuntimeProjectionForMutation({
+  state,
+  scopeMeta = {},
+  canonicalBody = "",
+  editor = null,
+  reason = "runtime-projection",
+}) {
+  if (!state?.id) {
+    return {
+      scopeContext: buildScopeMutationContext({ scopeMeta }),
+      runtimeProjection: null,
+      session: null,
+    };
+  }
+  const canonicalSession =
+    setCanonicalMutationSessionForState(
+      String(state.id || ""),
+      canonicalBody,
+      scopeMeta,
+    ) || getCanonicalMutationSessionForState(String(state.id || ""));
+  const protectedSpans = Array.isArray(canonicalSession?.scopeSlice?.protectedSpans)
+    ? canonicalSession.scopeSlice.protectedSpans
+    : [];
+  const scopeContext = buildScopeMutationContext({
+    stateId: String(state.id || ""),
+    lang: String(state.lang || ""),
+    scopeMeta: canonicalSession?.scopeMeta || scopeMeta,
+    protectedSpans,
+  });
+  const liveProjection = editor ? readDocumentBoundaryProjection(editor) : null;
+  const validation = validateRuntimeProjectionForScopeContext({
+    runtimeProjection: liveProjection,
+    stateId: scopeContext.stateId,
+    lang: scopeContext.lang,
+    scopeMeta: scopeContext,
+    scopeKey: scopeContext.scopeKey,
+    protectedSpans,
+    structuralFingerprint: scopeContext.structuralFingerprint,
+  });
+  if (validation.ok) {
+    return {
+      scopeContext,
+      runtimeProjection: validation.runtimeProjection,
+      session: canonicalSession,
+    };
+  }
+
+  if (liveProjection) {
+    emitDocStateLog("MFE_RUNTIME_PROJECTION_REJECTED", {
+      stateId: scopeContext.stateId,
+      language: scopeContext.lang,
+      currentScope: scopeContext.scopeKind,
+      reason: `${reason}:rejected`,
+      trigger: "scope-validation",
+      scopeKey: scopeContext.scopeKey,
+      rejectionReason: String(validation.reason || "unknown"),
+    });
+    emitRuntimeProjectionAuthorityTransition({
+      stateId: scopeContext.stateId,
+      language: scopeContext.lang,
+      currentScope: scopeContext.scopeKind,
+      reason: `${reason}:rejected`,
+      trigger: "scope-validation",
+      scopeKey: scopeContext.scopeKey,
+      authorityState: "rejected",
+      previousAuthorityState: String(
+        liveProjection?.projectionMeta?.authorityState || "",
+      ),
+      physicalProjectionPresent: true,
+      runtimeBoundariesTrusted: Boolean(
+        liveProjection?.projectionMeta?.runtimeBoundariesTrusted,
+      ),
+      updateMode: String(liveProjection?.projectionMeta?.updateMode || ""),
+      rejectionReason: String(validation.reason || "unknown"),
+    });
+  }
+
+  if (editor && canonicalSession) {
+    const rebuiltProjection = syncCanonicalProjectionRuntimeForEditor(
+      String(state.id || ""),
+      editor,
+      String(
+        getMarkdownFromEditor(editor) ||
+          canonicalSession.projection?.displayText ||
+          "",
+      ),
+    );
+    const rebuiltValidation = validateRuntimeProjectionForScopeContext({
+      runtimeProjection: rebuiltProjection,
+      stateId: scopeContext.stateId,
+      lang: scopeContext.lang,
+      scopeMeta: scopeContext,
+      scopeKey: scopeContext.scopeKey,
+      protectedSpans,
+      structuralFingerprint: scopeContext.structuralFingerprint,
+    });
+    if (rebuiltValidation.ok) {
+      emitDocStateLog("MFE_RUNTIME_PROJECTION_REBUILT", {
+        stateId: scopeContext.stateId,
+        language: scopeContext.lang,
+        currentScope: scopeContext.scopeKind,
+        reason: `${reason}:rebuilt`,
+        trigger: "scope-validation",
+        scopeKey: scopeContext.scopeKey,
+      });
+      emitRuntimeProjectionAuthorityTransition({
+        stateId: scopeContext.stateId,
+        language: scopeContext.lang,
+        currentScope: scopeContext.scopeKind,
+        reason: `${reason}:rebuilt`,
+        trigger: "scope-validation",
+        scopeKey: scopeContext.scopeKey,
+        authorityState: String(
+          rebuiltValidation.runtimeProjection?.projectionMeta?.authorityState ||
+            "",
+        ),
+        previousAuthorityState: String(
+          liveProjection?.projectionMeta?.authorityState || "rejected",
+        ),
+        physicalProjectionPresent: true,
+        runtimeBoundariesTrusted: Boolean(
+          rebuiltValidation.runtimeProjection?.projectionMeta
+            ?.runtimeBoundariesTrusted,
+        ),
+        updateMode: String(
+          rebuiltValidation.runtimeProjection?.projectionMeta?.updateMode || "",
+        ),
+      });
+      return {
+        scopeContext,
+        runtimeProjection: rebuiltValidation.runtimeProjection,
+        session: canonicalSession,
+      };
+    }
+  }
+
+  return {
+    scopeContext,
+    runtimeProjection: null,
+    session: canonicalSession,
+  };
+}
+
 function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
   const key = String(stateId || "");
   if (!key || !editor) return null;
   const session = getCanonicalMutationSessionForState(key);
   if (!session?.projection) return null;
   const scopeKey = buildCanonicalScopeKey(session?.scopeMeta || {});
-  const expectedProtectedSpanCount = Array.isArray(
-    session?.scopeSlice?.protectedSpans,
-  )
-    ? session.scopeSlice.protectedSpans.length
-    : 0;
+  const expectedProtectedSpans = Array.isArray(session?.scopeSlice?.protectedSpans)
+    ? session.scopeSlice.protectedSpans
+    : [];
   const liveProjection = readDocumentBoundaryProjection(editor);
-  const liveProjectionMeta =
-    liveProjection?.projectionMeta &&
-    typeof liveProjection.projectionMeta === "object"
-      ? liveProjection.projectionMeta
-      : {};
-  const liveScopeKey = String(liveProjectionMeta.scopeKey || "");
-  const liveStateId = String(liveProjectionMeta.stateId || "");
-  const liveProtectedSpanCount = Array.isArray(liveProjection?.protectedSpans)
-    ? liveProjection.protectedSpans.length
-    : -1;
-  const liveProjectionCompatible = Boolean(
-    liveProjection &&
-    (!liveStateId || liveStateId === key) &&
-    (!liveScopeKey || liveScopeKey === scopeKey) &&
-    (liveProtectedSpanCount < 0 ||
-      liveProtectedSpanCount === expectedProtectedSpanCount),
-  );
-  const pluginProjection = liveProjectionCompatible
-    ? liveProjection
+  const liveProjectionValidation = validateRuntimeProjectionForScopeContext({
+    runtimeProjection: liveProjection,
+    stateId: key,
+    scopeKey,
+    protectedSpans: expectedProtectedSpans,
+  });
+  const pluginProjection = liveProjectionValidation.ok
+    ? liveProjectionValidation.runtimeProjection
     : session.runtimeProjection || session.projection;
   const nextDisplayText = normalizeLineEndingsToLf(String(displayText || ""));
   const currentDisplayText = normalizeLineEndingsToLf(
@@ -2391,35 +2704,44 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
         "[mfe] invariant violation: canonical projection boundary count drift during no-op sync",
       );
     }
-    const preservedProjection = {
-      ...pluginProjection,
-      displayText: nextDisplayText,
-      editableBoundaries: Array.isArray(pluginProjection?.editableBoundaries)
-        ? pluginProjection.editableBoundaries.map((value) =>
-            Math.max(0, Number(value || 0)),
+    const preservedProjection = stampProjectionAuthorityState(
+      stampProjectionIdentityForSession(
+        key,
+        session?.scopeMeta,
+        expectedProtectedSpans,
+        {
+          ...pluginProjection,
+          displayText: nextDisplayText,
+          editableBoundaries: Array.isArray(pluginProjection?.editableBoundaries)
+            ? pluginProjection.editableBoundaries.map((value) =>
+                Math.max(0, Number(value || 0)),
+              )
+            : [],
+          boundaryDocPositions: Array.isArray(
+            pluginProjection?.boundaryDocPositions,
           )
-        : [],
-      boundaryDocPositions: Array.isArray(
-        pluginProjection?.boundaryDocPositions,
-      )
-        ? pluginProjection.boundaryDocPositions.map((value) =>
-            Math.max(1, Number(value || 1)),
-          )
-        : [],
-      projectionMeta: {
-        ...(pluginProjection?.projectionMeta &&
-        typeof pluginProjection.projectionMeta === "object"
-          ? pluginProjection.projectionMeta
-          : {}),
-        updateMode: "no-op-preserve",
-        stateId: key,
-        scopeKey,
-        runtimeBoundariesTrusted: true,
-        boundaryInputCount: boundaryCount,
-        boundaryNormalizedCount: boundaryCount,
-        boundaryDedupeOccurred: false,
-      },
-    };
+            ? pluginProjection.boundaryDocPositions.map((value) =>
+                Math.max(1, Number(value || 1)),
+              )
+            : [],
+          projectionMeta: {
+            ...(pluginProjection?.projectionMeta &&
+            typeof pluginProjection.projectionMeta === "object"
+              ? pluginProjection.projectionMeta
+              : {}),
+            updateMode: "no-op-preserve",
+            stateId: key,
+            scopeKey,
+            runtimeBoundariesTrusted: true,
+            boundaryInputCount: boundaryCount,
+            boundaryNormalizedCount: boundaryCount,
+            boundaryDedupeOccurred: false,
+          },
+        },
+      ),
+      "trusted",
+      "syncCanonicalProjectionRuntimeForEditor:no-op-preserve",
+    );
     emitRuntimeBoundaryWriteTrace({
       reason: "syncCanonicalProjectionRuntimeForEditor",
       mode: "no-op-preserve",
@@ -2439,9 +2761,39 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
     const preservedProjectionWithAnchors =
       buildProjectionWithResolvedMarkerAnchors(editor, preservedProjection);
     writeDocumentBoundaryProjection(editor, preservedProjectionWithAnchors);
+    emitRuntimeProjectionAuthorityTransition({
+      stateId: key,
+      language: String(session?.scopeMeta?.lang || activeDocumentState?.lang || ""),
+      currentScope: String(session?.scopeMeta?.scopeKind || ""),
+      reason: "syncCanonicalProjectionRuntimeForEditor:no-op-preserve",
+      trigger: "scope-sync",
+      scopeKey,
+      authorityState: String(
+        preservedProjectionWithAnchors?.projectionMeta?.authorityState || "",
+      ),
+      previousAuthorityState: String(
+        pluginProjection?.projectionMeta?.authorityState || "",
+      ),
+      physicalProjectionPresent: true,
+      runtimeBoundariesTrusted: Boolean(
+        preservedProjectionWithAnchors?.projectionMeta?.runtimeBoundariesTrusted,
+      ),
+      updateMode: String(
+        preservedProjectionWithAnchors?.projectionMeta?.updateMode || "",
+      ),
+    });
     canonicalMutationSessionByStateId.set(key, {
       ...session,
       runtimeProjection: preservedProjectionWithAnchors,
+      runtimeProjectionAuthorityState: String(
+        preservedProjectionWithAnchors?.projectionMeta?.authorityState || "",
+      ),
+      runtimeProjectionAuthorityReason: String(
+        preservedProjectionWithAnchors?.projectionMeta?.authorityReason || "",
+      ),
+      runtimeProjectionAuthorityChangedAt: Number(
+        preservedProjectionWithAnchors?.projectionMeta?.authorityChangedAt || 0,
+      ),
     });
     return preservedProjectionWithAnchors;
   }
@@ -2453,9 +2805,7 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
         Math.max(1, Math.min(docSize, Number(value || 1))),
       )
     : [];
-  const protectedSpanCount = Array.isArray(session?.scopeSlice?.protectedSpans)
-    ? session.scopeSlice.protectedSpans.length
-    : 0;
+  const protectedSpanCount = expectedProtectedSpans.length;
   const mappedDisplayBoundaries = Array.isArray(
     pluginProjection?.editableBoundaries,
   )
@@ -2520,40 +2870,49 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
     typeof pluginProjection.projectionMeta === "object"
       ? pluginProjection.projectionMeta
       : {};
-  const nextProjection = {
-    ...pluginProjection,
-    displayText: nextDisplayText,
-    editableBoundaries: nextBoundaries,
-    boundaryDocPositions: mappedDocPositions,
-    projectionMeta: {
-      updateMode:
-        boundarySource === mappedDisplayBoundaries
-          ? "runtime-boundaries-preserved"
-          : boundarySource === mappedFromDocPositions
-            ? "runtime-boundaries-docpos-projected"
-            : mappedDocPositions.length
-              ? "deterministic-recompute+docpos-mapped"
-              : "deterministic-recompute",
-      stateId: key,
-      scopeKey,
-      runtimeBoundariesTrusted: Boolean(
-        boundarySource === mappedDisplayBoundaries ||
-        boundarySource === mappedFromDocPositions,
-      ),
-      deterministicRecomputeCount:
-        Number(prevMeta.deterministicRecomputeCount || 0) +
-        (boundarySource === mappedDisplayBoundaries ||
-        boundarySource === mappedFromDocPositions
-          ? 0
-          : 1),
-      mappingUpdateCount: Number(prevMeta.mappingUpdateCount || 0),
-      boundaryInputCount: Array.isArray(pluginProjection?.editableBoundaries)
-        ? pluginProjection.editableBoundaries.length
-        : 0,
-      boundaryNormalizedCount: nextBoundaries.length,
-      boundaryDedupeOccurred: false,
-    },
-  };
+  const nextProjection = stampProjectionAuthorityState(
+    stampProjectionIdentityForSession(
+      key,
+      session?.scopeMeta,
+      expectedProtectedSpans,
+      {
+        ...pluginProjection,
+        displayText: nextDisplayText,
+        editableBoundaries: nextBoundaries,
+        boundaryDocPositions: mappedDocPositions,
+        projectionMeta: {
+          updateMode:
+            boundarySource === mappedDisplayBoundaries
+              ? "runtime-boundaries-preserved"
+              : boundarySource === mappedFromDocPositions
+                ? "runtime-boundaries-docpos-projected"
+                : mappedDocPositions.length
+                  ? "deterministic-recompute+docpos-mapped"
+                  : "deterministic-recompute",
+          stateId: key,
+          scopeKey,
+          runtimeBoundariesTrusted: Boolean(
+            boundarySource === mappedDisplayBoundaries ||
+            boundarySource === mappedFromDocPositions,
+          ),
+          deterministicRecomputeCount:
+            Number(prevMeta.deterministicRecomputeCount || 0) +
+            (boundarySource === mappedDisplayBoundaries ||
+            boundarySource === mappedFromDocPositions
+              ? 0
+              : 1),
+          mappingUpdateCount: Number(prevMeta.mappingUpdateCount || 0),
+          boundaryInputCount: Array.isArray(pluginProjection?.editableBoundaries)
+            ? pluginProjection.editableBoundaries.length
+            : 0,
+          boundaryNormalizedCount: nextBoundaries.length,
+          boundaryDedupeOccurred: false,
+        },
+      },
+    ),
+    "trusted",
+    "syncCanonicalProjectionRuntimeForEditor:write",
+  );
   emitRuntimeBoundaryWriteTrace({
     reason: "syncCanonicalProjectionRuntimeForEditor",
     mode: String(nextProjection?.projectionMeta?.updateMode || ""),
@@ -2577,9 +2936,37 @@ function syncCanonicalProjectionRuntimeForEditor(stateId, editor, displayText) {
     nextProjection,
   );
   writeDocumentBoundaryProjection(editor, nextProjectionWithAnchors);
+  emitRuntimeProjectionAuthorityTransition({
+    stateId: key,
+    language: String(session?.scopeMeta?.lang || activeDocumentState?.lang || ""),
+    currentScope: String(session?.scopeMeta?.scopeKind || ""),
+    reason: "syncCanonicalProjectionRuntimeForEditor:write",
+    trigger: "scope-sync",
+    scopeKey,
+    authorityState: String(
+      nextProjectionWithAnchors?.projectionMeta?.authorityState || "",
+    ),
+    previousAuthorityState: String(
+      pluginProjection?.projectionMeta?.authorityState || "",
+    ),
+    physicalProjectionPresent: true,
+    runtimeBoundariesTrusted: Boolean(
+      nextProjectionWithAnchors?.projectionMeta?.runtimeBoundariesTrusted,
+    ),
+    updateMode: String(nextProjectionWithAnchors?.projectionMeta?.updateMode || ""),
+  });
   canonicalMutationSessionByStateId.set(key, {
     ...session,
     runtimeProjection: nextProjectionWithAnchors,
+    runtimeProjectionAuthorityState: String(
+      nextProjectionWithAnchors?.projectionMeta?.authorityState || "",
+    ),
+    runtimeProjectionAuthorityReason: String(
+      nextProjectionWithAnchors?.projectionMeta?.authorityReason || "",
+    ),
+    runtimeProjectionAuthorityChangedAt: Number(
+      nextProjectionWithAnchors?.projectionMeta?.authorityChangedAt || 0,
+    ),
   });
   return nextProjectionWithAnchors;
 }
@@ -2663,41 +3050,59 @@ function performCanonicalSeedNormalizationHandshake(stateId, editor) {
   )
     ? normalizedProjection.editableBoundaries
     : [];
-  const baselineProjection = {
-    ...normalizedProjection,
-    projectionMeta: {
-      ...(normalizedProjection?.projectionMeta &&
-      typeof normalizedProjection.projectionMeta === "object"
-        ? normalizedProjection.projectionMeta
-        : {}),
-      updateMode: "seed-handshake",
-      deterministicRecomputeCount: Number(
-        normalizedProjection?.projectionMeta?.deterministicRecomputeCount || 0,
-      ),
-      mappingUpdateCount: Number(
-        normalizedProjection?.projectionMeta?.mappingUpdateCount || 0,
-      ),
-      boundaryInputCount: handshakeBoundaries.length,
-      boundaryNormalizedCount: handshakeBoundaries.length,
-      boundaryDedupeOccurred: false,
-      strippedLeadingSingleNewline: Boolean(
-        baselineCanonicalMeta.strippedLeadingSingleNewline,
-      ),
-      strippedTrailingNewlineCount: Number(
-        baselineCanonicalMeta.strippedTrailingNewlineCount || 0,
-      ),
-      stateId: key,
-      scopeKey: buildCanonicalScopeKey(session?.scopeMeta || {}),
-      runtimeBoundariesTrusted: true,
-    },
-  };
-  const runtimeProjection = {
-    ...baselineProjection,
-    projectionMeta: {
-      ...(baselineProjection.projectionMeta || {}),
-      updateMode: "seed-handshake-runtime",
-    },
-  };
+  const baselineProjection = stampProjectionAuthorityState(
+    stampProjectionIdentityForSession(
+      key,
+      session?.scopeMeta,
+      session?.scopeSlice?.protectedSpans,
+      {
+        ...normalizedProjection,
+        projectionMeta: {
+          ...(normalizedProjection?.projectionMeta &&
+          typeof normalizedProjection.projectionMeta === "object"
+            ? normalizedProjection.projectionMeta
+            : {}),
+          updateMode: "seed-handshake",
+          deterministicRecomputeCount: Number(
+            normalizedProjection?.projectionMeta?.deterministicRecomputeCount || 0,
+          ),
+          mappingUpdateCount: Number(
+            normalizedProjection?.projectionMeta?.mappingUpdateCount || 0,
+          ),
+          boundaryInputCount: handshakeBoundaries.length,
+          boundaryNormalizedCount: handshakeBoundaries.length,
+          boundaryDedupeOccurred: false,
+          strippedLeadingSingleNewline: Boolean(
+            baselineCanonicalMeta.strippedLeadingSingleNewline,
+          ),
+          strippedTrailingNewlineCount: Number(
+            baselineCanonicalMeta.strippedTrailingNewlineCount || 0,
+          ),
+          stateId: key,
+          scopeKey: buildCanonicalScopeKey(session?.scopeMeta || {}),
+          runtimeBoundariesTrusted: true,
+        },
+      },
+    ),
+    "trusted",
+    "performCanonicalSeedNormalizationHandshake:baseline",
+  );
+  const runtimeProjection = stampProjectionAuthorityState(
+    stampProjectionIdentityForSession(
+      key,
+      session?.scopeMeta,
+      session?.scopeSlice?.protectedSpans,
+      {
+        ...baselineProjection,
+        projectionMeta: {
+          ...(baselineProjection.projectionMeta || {}),
+          updateMode: "seed-handshake-runtime",
+        },
+      },
+    ),
+    "trusted",
+    "performCanonicalSeedNormalizationHandshake:runtime",
+  );
   emitRuntimeBoundaryWriteTrace({
     reason: "performCanonicalSeedNormalizationHandshake",
     mode: "seed-handshake-runtime",
@@ -2720,6 +3125,27 @@ function performCanonicalSeedNormalizationHandshake(stateId, editor) {
     runtimeProjection,
   );
   writeDocumentBoundaryProjection(editor, runtimeProjectionWithAnchors);
+  emitRuntimeProjectionAuthorityTransition({
+    stateId: key,
+    language: String(session?.scopeMeta?.lang || activeDocumentState?.lang || ""),
+    currentScope: String(session?.scopeMeta?.scopeKind || ""),
+    reason: "performCanonicalSeedNormalizationHandshake:runtime",
+    trigger: "scope-sync",
+    scopeKey: buildCanonicalScopeKey(session?.scopeMeta || {}),
+    authorityState: String(
+      runtimeProjectionWithAnchors?.projectionMeta?.authorityState || "",
+    ),
+    previousAuthorityState: String(
+      session?.runtimeProjection?.projectionMeta?.authorityState || "",
+    ),
+    physicalProjectionPresent: true,
+    runtimeBoundariesTrusted: Boolean(
+      runtimeProjectionWithAnchors?.projectionMeta?.runtimeBoundariesTrusted,
+    ),
+    updateMode: String(
+      runtimeProjectionWithAnchors?.projectionMeta?.updateMode || "",
+    ),
+  });
   const pluginProjectionAfterWrite =
     readDocumentBoundaryProjection(editor) || runtimeProjectionWithAnchors;
   const diff = buildDisplayDiffTrace(baselineCanonical, serializedCanonical);
@@ -2744,6 +3170,15 @@ function performCanonicalSeedNormalizationHandshake(stateId, editor) {
     baselineDisplayHash: hashStateIdentity(serializedCanonical),
     seedMappingUpdateCount: Number(
       pluginProjectionAfterWrite?.projectionMeta?.mappingUpdateCount || 0,
+    ),
+    runtimeProjectionAuthorityState: String(
+      pluginProjectionAfterWrite?.projectionMeta?.authorityState || "",
+    ),
+    runtimeProjectionAuthorityReason: String(
+      pluginProjectionAfterWrite?.projectionMeta?.authorityReason || "",
+    ),
+    runtimeProjectionAuthorityChangedAt: Number(
+      pluginProjectionAfterWrite?.projectionMeta?.authorityChangedAt || 0,
     ),
   };
   canonicalMutationSessionByStateId.set(key, finalizedSession);
@@ -2794,10 +3229,23 @@ function trackBoundStateIdentity(element, language, state, context = {}) {
   byLanguage.set(language, nextStateId);
 }
 
-function clearStateRuntimeTracking(stateId) {
+/**
+ * Clear derived runtime/session caches for a canonical document state.
+ * This never clears the canonical DocumentState itself, only disposable authority caches.
+ */
+function clearStateRuntimeTracking(stateId, reason = "") {
   const key = String(stateId || "");
   if (!key) return;
   markerBaselineCountByStateId.delete(key);
+  canonicalMutationSessionByStateId.delete(key);
+  scopeSessionV2ByStateId.delete(key);
+  emitDocStateLog("MFE_RUNTIME_STATE_TRACKING_CLEARED", {
+    stateId: key,
+    language: "",
+    currentScope: String(activeFieldScope || ""),
+    reason: String(reason || "clearStateRuntimeTracking"),
+    trigger: "lifecycle",
+  });
 }
 
 function ensureLanguageMarkerBaseline(state, _reason = "", options = {}) {
@@ -2912,7 +3360,6 @@ function getDocumentStateForActiveField(lang, options = {}) {
 let breadcrumbsEl = null;
 const statusManager = createStatusManager();
 
-let saveCallback = null;
 const fullscreenEventRegistry = createEventRegistry();
 const fullscreenGlobalEventScope =
   fullscreenEventRegistry.createScope("fullscreen-global");
@@ -2930,9 +3377,12 @@ function hasPendingUnsavedChanges() {
       return true;
     }
   }
-  const applyScopeMeta = getActiveApplyScopeMeta();
+  const applyScopeMeta = captureExplicitApplyScopeMeta(
+    "hasPendingUnsavedChanges",
+  );
+  const activeSaveScopeKind = applyScopeMeta.scopeKind || activeFieldScope;
   const structuralStrictScopeActive = isStructuralStrictScope(
-    applyScopeMeta.scopeKind || activeFieldScope || "field",
+    activeSaveScopeKind || "field",
   );
   const normalizeDocumentComparableForDesync = (markdown) => {
     const raw = String(markdown || "");
@@ -2959,7 +3409,7 @@ function hasPendingUnsavedChanges() {
     normalizeScopedComparableMarkdown: (markdown, context = {}) =>
       normalizeScopedComparableForDirtyChecks(
         markdown,
-        context.scopeKind || applyScopeMeta.scopeKind || activeFieldScope,
+        context.scopeKind || activeSaveScopeKind,
       ),
     normalizeLangValue,
     hashStateIdentity,
@@ -3025,7 +3475,10 @@ function confirmDiscardUnsavedChanges() {
             reason: "confirmDiscardUnsavedChanges:clearDraft",
             trigger: "explicit-discard",
           });
-          clearStateRuntimeTracking(state.id);
+          clearStateRuntimeTracking(
+            state.id,
+            "confirmDiscardUnsavedChanges:clearStateRuntimeTracking",
+          );
           clearDocumentState(documentStates, state.id);
         }
       },
@@ -3228,9 +3681,10 @@ function createEditorInstance(element, fieldType, fieldName) {
         }
         return;
       }
-      const primaryScopeKind = resolveApplyScopeKindFromActiveScope(
+      const applyScopeMeta = captureExplicitApplyScopeMeta(
         "editor:update:primary",
       );
+      const primaryScopeKind = applyScopeMeta.scopeKind;
       traceStateMutation({
         reason: "editor:update:primary",
         trigger: "user-edit",
@@ -3242,14 +3696,15 @@ function createEditorInstance(element, fieldType, fieldName) {
             trigger: "scope-navigation",
           });
           if (primaryState) {
-            applyMarkdownToState(
+            applyMarkdownToStateForReferenceScope(
               primaryState,
               markdown,
               primaryScopeKind,
               "editor:update:primary",
               {
                 trigger: "user-edit-transaction",
-                applyScopeMeta: getActiveApplyScopeMeta(),
+                applyScopeMeta,
+                requireExplicitScope: true,
               },
             );
             const nextDocumentDraft = primaryState.recomposeMarkdownForSave(
@@ -3348,17 +3803,19 @@ function createEditorInstance(element, fieldType, fieldName) {
       }
       const secondaryState = getDocumentStateForActiveField(secondaryLang);
       if (secondaryState) {
-        const secondaryScopeKind = resolveApplyScopeKindFromActiveScope(
+        const applyScopeMeta = captureExplicitApplyScopeMeta(
           "editor:update:secondary",
         );
-        applyMarkdownToState(
+        const secondaryScopeKind = applyScopeMeta.scopeKind;
+        applyMarkdownToStateForReferenceScope(
           secondaryState,
           getMarkdownFromEditor(editor),
           secondaryScopeKind,
           "editor:update:secondary",
           {
             trigger: "user-edit-transaction",
-            applyScopeMeta: getActiveApplyScopeMeta(),
+            applyScopeMeta,
+            requireExplicitScope: true,
           },
         );
         if (activeFieldId) {
@@ -3402,9 +3859,10 @@ function saveAllEditors() {
   const currentLang = normalizeLangValue(getLanguagesConfig().current);
   const sessionStateKey = getActiveSessionStateKey();
   const sessionStates = listStatesForActiveSession(sessionStateKey);
-  const applyScopeMeta = getActiveApplyScopeMeta();
+  const applyScopeMeta = captureExplicitApplyScopeMeta("saveAllEditors");
+  const activeSaveScopeKind = applyScopeMeta.scopeKind || activeFieldScope;
   const structuralStrictScopeActive = isStructuralStrictScope(
-    applyScopeMeta.scopeKind || activeFieldScope || "field",
+    activeSaveScopeKind || "field",
   );
   const normalizeDocumentComparableForDesync = (markdown) => {
     const raw = String(markdown || "");
@@ -3444,11 +3902,11 @@ function saveAllEditors() {
     );
     const comparableEditorInput = normalizeScopedComparableForDirtyChecks(
       editorMarkdown,
-      applyScopeMeta?.scopeKind || state?.scopeKind || activeFieldScope,
+      applyScopeMeta?.scopeKind || state?.scopeKind || activeSaveScopeKind,
     );
     const comparableStateInput = normalizeScopedComparableForDirtyChecks(
       stateScopedMarkdown,
-      applyScopeMeta?.scopeKind || state?.scopeKind || activeFieldScope,
+      applyScopeMeta?.scopeKind || state?.scopeKind || activeSaveScopeKind,
     );
     const isDocumentScope =
       String(applyScopeMeta?.scopeKind || state?.scopeKind || "") ===
@@ -3536,9 +3994,7 @@ function saveAllEditors() {
         normalizeLangValue(dirtyDesync.state.lang)
     ) {
       const reconcileMarkdown = readScopedEditorMarkdown(reconcileEditor);
-      const reconcileScopeKind = resolveApplyScopeKindFromActiveScope(
-        "saveAllEditors:desyncReconcile",
-      );
+      const reconcileScopeKind = activeSaveScopeKind;
       emitDocStateLog("MFE_DIRTY_DESYNC_RECONCILE_BYPASSED_V2", {
         stateId: dirtyDesync.state.id,
         language: dirtyDesync.state.lang,
@@ -3627,7 +4083,7 @@ function saveAllEditors() {
   const { saveCandidates, plannedHashesByStateId } = buildSavePlan({
     sessionStateKey,
     currentLang,
-    activeFieldScope,
+    activeFieldScope: activeSaveScopeKind,
     listStatesForActiveSession,
     emitDocStateLog,
     hashStateIdentity,
@@ -3697,11 +4153,10 @@ function saveAllEditors() {
         getLanguagesConfig().secondary,
       );
       const saveScope = resolveScopeAtSaveBoundary(
-        activeFieldScope || state.payloadMeta.fieldScope || "document",
+        activeSaveScopeKind || state.payloadMeta.fieldScope || "document",
       );
       const strictStructuralScope = isStructuralStrictScope(saveScope);
       const isDocumentSaveScope = saveScope === "document";
-      const applyScopeMeta = getActiveApplyScopeMeta();
       if (
         strictStructuralScope &&
         reconciledStateIds.has(String(state.id || ""))
@@ -3915,9 +4370,6 @@ function saveAllEditors() {
         subsection: applyScopeMeta.subsection,
       });
       const scopeSessionForV2 = getScopeSessionV2ForState(state.id);
-      const projectionPluginStateForV2 = langEditor
-        ? readDocumentBoundaryProjection(langEditor)
-        : null;
       if (!scopeSessionForV2) {
         emitSaveSafetyBlocked({
           state,
@@ -3942,11 +4394,20 @@ function saveAllEditors() {
       const structuralDocumentBefore = parseStructuralDocument(
         splitBefore.body,
       );
+      const runtimeProjectionResolution = resolveValidatedRuntimeProjectionForMutation(
+        {
+          state,
+          scopeMeta: saveScopeMeta,
+          canonicalBody: splitBefore.body,
+          editor: langEditor,
+          reason: "saveAllEditors",
+        },
+      );
       const v2Mutation = applyScopedEditV2({
         session: scopeSessionForV2,
         structuralDocument: structuralDocumentBefore,
         editorContent: scopedEditedMarkdownSourceFirst.markdown,
-        runtimeProjection: projectionPluginStateForV2,
+        runtimeProjection: runtimeProjectionResolution.runtimeProjection,
       });
       if (!v2Mutation || v2Mutation.ok === false) {
         throw new Error(
@@ -5284,6 +5745,10 @@ function setSecondaryLanguage(lang) {
   if (!secondaryEditor) return;
   secondaryLang = lang;
   splitPreferredLanguage = normalizeLangValue(lang);
+  revokeRuntimeProjectionAuthorityForEditor(
+    secondaryEditor,
+    "setSecondaryLanguage:scopeRebind",
+  );
   const state = getDocumentStateForActiveField(lang, {
     reason: "setSecondaryLanguage:bind",
     trigger: "scope-navigation",
@@ -5291,7 +5756,9 @@ function setSecondaryLanguage(lang) {
     initialDraftMarkdown: "",
   });
   activeDocumentState = state;
-  const activeScopeMeta = getActiveApplyScopeMeta();
+  const activeScopeMeta = captureExplicitApplyScopeMeta(
+    "setSecondaryLanguage",
+  );
   const canonicalScopeMeta = buildCanonicalSessionScopeMeta({
     scopeKind: activeScopeMeta.scopeKind || activeFieldScope || "field",
     section: activeScopeMeta.section || activeFieldSection || "",
@@ -5306,9 +5773,9 @@ function setSecondaryLanguage(lang) {
       )
     : null;
   const scopeSliceMarkdown = enforceBodyOnlyEditorInput(
-    readScopeSlice(
+    readScopeSliceForScopeMeta(
       lang,
-      getActiveApplyScopeMeta(),
+      activeScopeMeta,
       "setSecondaryLanguage:read",
     ),
     {
@@ -5344,7 +5811,10 @@ function setSecondaryLanguage(lang) {
     const canonicalProjectionDisplay = normalizeLineEndingsToLf(
       String(runtimeProjection?.displayText || ""),
     );
-    const secondaryBoundaryProjection =
+    const secondaryBoundaryProjection = stampProjectionIdentityForSession(
+      String(state.id || ""),
+      canonicalSession?.scopeMeta,
+      canonicalSession?.scopeSlice?.protectedSpans,
       buildProjectionWithResolvedMarkerAnchors(secondaryEditor, {
         displayText: canonicalProjectionDisplay,
         segmentMap: Array.isArray(runtimeProjection?.segmentMap)
@@ -5373,7 +5843,8 @@ function setSecondaryLanguage(lang) {
                 mappingUpdateCount: 0,
                 runtimeBoundariesTrusted: true,
               },
-      });
+      }),
+    );
     writeDocumentBoundaryProjection(
       secondaryEditor,
       secondaryBoundaryProjection,
@@ -5513,6 +5984,21 @@ function resolveApplyScopeKindFromActiveScope(reason = "") {
   return currentScope;
 }
 
+/**
+ * Capture the current UI scope once for mutation/save work.
+ * Downstream edit/save code must reuse this snapshot instead of re-reading globals.
+ */
+function captureExplicitApplyScopeMeta(reason = "") {
+  const scopeMeta = getActiveApplyScopeMeta();
+  return {
+    ...scopeMeta,
+    scopeKind: resolveApplyScopeKind(
+      scopeMeta.scopeKind || activeFieldScope || "field",
+      `${reason || "captureExplicitApplyScopeMeta"}:scopeKind`,
+    ),
+  };
+}
+
 function getActiveApplyScopeMeta() {
   const scopeKind = resolveApplyScopeKindFromActiveScope(
     "getActiveApplyScopeMeta",
@@ -5564,21 +6050,79 @@ function readScopeSliceFromMarkdown(markdown, scopeMeta) {
   });
 }
 
-function readScopeSlice(
-  lang,
-  scopeMeta = getActiveApplyScopeMeta(),
-  reason = "",
-) {
+/**
+ * Read a scope slice using explicit scope metadata only.
+ * Fullscreen reference flows must use this helper instead of ambient scope fallback.
+ */
+function readScopeSliceForScopeMeta(lang, scopeMeta, reason = "") {
+  if (!scopeMeta || typeof scopeMeta !== "object" || !scopeMeta.scopeKind) {
+    throw new Error(
+      "[mfe] routing invariant: explicit scope metadata required for scope read",
+    );
+  }
   const state = getDocumentStateForActiveField(lang, {
-    reason: `${reason || "readScopeSlice"}:bind`,
+    reason: `${reason || "readScopeSliceForScopeMeta"}:bind`,
     trigger: "scope-navigation",
   });
   if (!state) return "";
   const draftMarkdown = String(
     state.getDraft() || state.getPersistedMarkdown() || "",
   );
-  const scoped = readScopeSliceFromMarkdown(draftMarkdown, scopeMeta);
-  return scoped;
+  return readScopeSliceFromMarkdown(draftMarkdown, scopeMeta);
+}
+
+/**
+ * Read a scope slice using ambient active scope when no explicit scope is provided.
+ * This helper is non-reference and should not be used by fullscreen mutation/save flows.
+ */
+function readScopeSliceUsingFallbackScope(
+  lang,
+  scopeMeta = getActiveApplyScopeMeta(),
+  reason = "",
+) {
+  return readScopeSliceForScopeMeta(lang, scopeMeta, reason);
+}
+
+function revokeRuntimeProjectionAuthorityForEditor(editor, reason = "") {
+  if (!editor) return false;
+  const liveProjection = readDocumentBoundaryProjection(editor);
+  const liveProjectionMeta =
+    liveProjection?.projectionMeta && typeof liveProjection.projectionMeta === "object"
+      ? liveProjection.projectionMeta
+      : {};
+  const liveStateId = String(liveProjectionMeta.stateId || "");
+  if (liveStateId) {
+    markCanonicalSessionRuntimeProjectionAuthority(
+      liveStateId,
+      "revoked",
+      reason || "runtime-projection:revoked",
+    );
+  }
+  emitDocStateLog("MFE_RUNTIME_PROJECTION_REVOKED", {
+    stateId: liveStateId || String(activeDocumentState?.id || ""),
+    language: String(activeDocumentState?.lang || ""),
+    currentScope: String(
+      liveProjectionMeta.scopeKey || activeFieldScope || "",
+    ),
+    reason: reason || "runtime-projection:revoked",
+    trigger: "scope-navigation",
+  });
+  emitRuntimeProjectionAuthorityTransition({
+    stateId: liveStateId || String(activeDocumentState?.id || ""),
+    language: String(activeDocumentState?.lang || ""),
+    currentScope: String(activeFieldScope || ""),
+    reason: reason || "runtime-projection:revoked",
+    trigger: "scope-navigation",
+    scopeKey: String(liveProjectionMeta.scopeKey || ""),
+    authorityState: "revoked",
+    previousAuthorityState: String(liveProjectionMeta.authorityState || ""),
+    physicalProjectionPresent: Boolean(liveProjection),
+    runtimeBoundariesTrusted: Boolean(
+      liveProjectionMeta.runtimeBoundariesTrusted,
+    ),
+    updateMode: String(liveProjectionMeta.updateMode || ""),
+  });
+  return writeDocumentBoundaryProjection(editor, null);
 }
 
 function applyScopeSlice(state, scopeMeta, scopedMarkdown, reason, trigger) {
@@ -5654,9 +6198,6 @@ function applyScopeSlice(state, scopeMeta, scopedMarkdown, reason, trigger) {
       : stateLang === secondaryNormalizedLang
         ? secondaryEditor
         : activeEditor || primaryEditor;
-  const runtimeProjectionForV2 = editorForState
-    ? readDocumentBoundaryProjection(editorForState)
-    : null;
   const v2Session =
     session ||
     createScopeSession({
@@ -5666,11 +6207,20 @@ function applyScopeSlice(state, scopeMeta, scopedMarkdown, reason, trigger) {
       openedFrom: String(reason || "applyScopeSlice"),
       scopeMeta: scopeMetaForMutation,
     });
+  const runtimeProjectionResolution = resolveValidatedRuntimeProjectionForMutation(
+    {
+      state,
+      scopeMeta: scopeMetaForMutation,
+      canonicalBody: before,
+      editor: editorForState,
+      reason: reason || "applyScopeSlice",
+    },
+  );
   const v2Result = applyScopedEditV2({
     session: v2Session,
     structuralDocument: structuralDoc,
     editorContent: normalizedScopedMarkdown,
-    runtimeProjection: runtimeProjectionForV2,
+    runtimeProjection: runtimeProjectionResolution.runtimeProjection,
   });
   if (!v2Result || v2Result.ok === false) {
     throw new Error(
@@ -5756,7 +6306,7 @@ function applyScopeSlice(state, scopeMeta, scopedMarkdown, reason, trigger) {
   return { ok: true, markdown: nextDraft };
 }
 
-function applyMarkdownToState(
+function applyMarkdownToStateForReferenceScope(
   state,
   markdown,
   incomingScopeKind,
@@ -5777,37 +6327,41 @@ function applyMarkdownToState(
     }
     return { ok: false, markdown: String(state.getDraft() || "") };
   }
-  const applyScopeMeta =
+  const rawApplyScopeMeta =
     options.applyScopeMeta && typeof options.applyScopeMeta === "object"
       ? options.applyScopeMeta
-      : getActiveApplyScopeMeta();
-  const currentScopeKind = resolveApplyScopeKindFromActiveScope(
-    `${reason || "applyMarkdownToState"}:activeScope`,
-  );
-  if (applyScopeMeta.scopeKind) {
-    const providedScopeKind = resolveApplyScopeKind(
-      applyScopeMeta.scopeKind,
-      `${reason || "applyMarkdownToState"}:providedScope`,
-    );
-    if (providedScopeKind !== currentScopeKind) {
-      emitApplyScopeRoutingBug({
-        currentScope: currentScopeKind,
-        incomingScopeKind: incomingScopeKind || providedScopeKind,
-        resolvedApplyScopeKind: currentScopeKind,
-        stateId: state.id,
-        reason: `${reason || "applyMarkdownToState"}:providedScopeMismatch`,
-      });
+      : null;
+  const scopeAuthority = resolveReferenceScopeAuthorityForMutation({
+    scopeMeta: rawApplyScopeMeta,
+    incomingScopeKind,
+  });
+  if (!scopeAuthority.ok) {
+    emitApplyScopeRoutingBug({
+      currentScope: scopeAuthority.currentScopeKind || "",
+      incomingScopeKind: scopeAuthority.incomingScopeKind || incomingScopeKind,
+      resolvedApplyScopeKind: scopeAuthority.currentScopeKind || "",
+      stateId: state.id,
+      reason: `${reason || "applyMarkdownToStateForReferenceScope"}:${scopeAuthority.reason}`,
+    });
+    if (scopeAuthority.reason === "incoming-scope-mismatch") {
       throw new Error(
-        "[mfe] routing invariant: apply scope must come from active scope only",
+        "[mfe] routing invariant: incoming scope kind must match explicit scope context",
       );
     }
+    if (scopeAuthority.reason === "missing-explicit-scope-meta") {
+      throw new Error(
+        "[mfe] routing invariant: explicit scope context required for this mutation",
+      );
+    }
+    throw new Error("[mfe] routing invariant: failed to resolve scope authority");
   }
-  const currentScope = currentScopeKind;
-  const incomingKind = resolveApplyScopeKind(
-    incomingScopeKind || currentScopeKind,
-    `${reason || "applyMarkdownToState"}:incomingScopeKind`,
-  );
-  const resolvedApplyScopeKind = currentScopeKind;
+  const applyScopeMeta = {
+    ...scopeAuthority.scopeMeta,
+    currentScope: scopeAuthority.currentScopeKind,
+  };
+  const currentScope = scopeAuthority.currentScopeKind;
+  const incomingKind = scopeAuthority.incomingScopeKind;
+  const resolvedApplyScopeKind = currentScope;
   if (currentScope === "document" && resolvedApplyScopeKind !== "document") {
     emitApplyScopeRoutingBug({
       currentScope,
@@ -5824,7 +6378,7 @@ function applyMarkdownToState(
     console.info(
       "PIPELINE_ROUTE",
       JSON.stringify({
-        reason: reason || "applyMarkdownToState",
+        reason: reason || "applyMarkdownToStateForReferenceScope",
         currentScope,
         incomingScopeKind: incomingKind,
         resolvedApplyScopeKind,
@@ -5837,7 +6391,7 @@ function applyMarkdownToState(
     currentScope,
     incomingScopeKind: incomingKind,
     resolvedApplyScopeKind,
-    reason: reason || "applyMarkdownToState",
+    reason: reason || "applyMarkdownToStateForReferenceScope",
     trigger: options.trigger || "user-command",
   });
   if (currentScope === "document" && incomingKind !== "document") {
@@ -5879,6 +6433,63 @@ function applyMarkdownToState(
     markdown,
     reason,
     options.trigger || "user-command",
+  );
+}
+
+function applyMarkdownToStateUsingFallbackScope(
+  state,
+  markdown,
+  incomingScopeKind,
+  reason,
+  options = {},
+) {
+  if (!state) return { ok: false, markdown: "" };
+  const rawApplyScopeMeta =
+    options.applyScopeMeta && typeof options.applyScopeMeta === "object"
+      ? options.applyScopeMeta
+      : null;
+  const fallbackScopeKind = rawApplyScopeMeta
+    ? ""
+    : resolveApplyScopeKindFromActiveScope(
+        `${reason || "applyMarkdownToStateUsingFallbackScope"}:activeScope`,
+      );
+  const scopeAuthority = resolveNonReferenceScopeAuthorityForMutation({
+    scopeMeta: rawApplyScopeMeta,
+    incomingScopeKind,
+    fallbackScopeKind,
+    requireExplicitScope: Boolean(options.requireExplicitScope),
+  });
+  if (!scopeAuthority.ok) {
+    emitApplyScopeRoutingBug({
+      currentScope: scopeAuthority.currentScopeKind || fallbackScopeKind || "",
+      incomingScopeKind: scopeAuthority.incomingScopeKind || incomingScopeKind,
+      resolvedApplyScopeKind:
+        scopeAuthority.currentScopeKind || fallbackScopeKind || "",
+      stateId: state.id,
+      reason: `${reason || "applyMarkdownToStateUsingFallbackScope"}:${scopeAuthority.reason}`,
+    });
+    if (scopeAuthority.reason === "incoming-scope-mismatch") {
+      throw new Error(
+        "[mfe] routing invariant: incoming scope kind must match explicit scope context",
+      );
+    }
+    if (scopeAuthority.reason === "missing-explicit-scope-meta") {
+      throw new Error(
+        "[mfe] routing invariant: explicit scope context required for this mutation",
+      );
+    }
+    throw new Error("[mfe] routing invariant: failed to resolve scope authority");
+  }
+  return applyMarkdownToStateForReferenceScope(
+    state,
+    markdown,
+    scopeAuthority.incomingScopeKind,
+    reason,
+    {
+      ...options,
+      applyScopeMeta: scopeAuthority.scopeMeta,
+      requireExplicitScope: true,
+    },
   );
 }
 
@@ -5945,11 +6556,11 @@ function validateSavePipelineInvariants({
 }
 
 /**
- * Initialize the editor for a specific field
+ * Initialize the fullscreen editor shell and bind it to the canonical save path.
+ * Fullscreen save ownership is fixed to saveAllEditors rather than a pluggable callback.
  */
-function initEditor(markdownContent, onSave, fieldType = "tag") {
+function initEditor(markdownContent, fieldType = "tag") {
   activeFieldType = fieldType;
-  saveCallback = onSave;
 
   if (fullscreenSessionEventScope) {
     fullscreenSessionEventScope.disposeAll();
@@ -6041,9 +6652,11 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
       scopeKey: buildCanonicalScopeKey(canonicalSession?.scopeMeta || {}),
       runtimeBoundariesTrusted: true,
     });
-    const primaryBoundaryProjection = buildProjectionWithResolvedMarkerAnchors(
-      primaryEditor,
-      {
+    const primaryBoundaryProjection = stampProjectionIdentityForSession(
+      String(activeDocumentState?.id || ""),
+      canonicalSession?.scopeMeta,
+      canonicalSession?.scopeSlice?.protectedSpans,
+      buildProjectionWithResolvedMarkerAnchors(primaryEditor, {
         displayText: canonicalProjectionDisplay,
         segmentMap: Array.isArray(runtimeProjection?.segmentMap)
           ? runtimeProjection.segmentMap
@@ -6071,7 +6684,7 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
                 mappingUpdateCount: 0,
                 runtimeBoundariesTrusted: true,
               },
-      },
+      }),
     );
     writeDocumentBoundaryProjection(primaryEditor, primaryBoundaryProjection);
     emitRuntimeShapeLog("MFE_CANONICAL_SESSION_SEED_DIAGNOSTIC", {
@@ -6215,6 +6828,29 @@ function initEditor(markdownContent, onSave, fieldType = "tag") {
 }
 
 function cleanupEditorOnly() {
+  const currentSessionStateIds = listStatesForActiveSession(
+    getActiveSessionStateKey(),
+  ).map((state) => String(state?.id || ""));
+  const liveProjectionStateIds = [
+    readDocumentBoundaryProjection(primaryEditor)?.projectionMeta?.stateId || "",
+    readDocumentBoundaryProjection(secondaryEditor)?.projectionMeta?.stateId || "",
+    String(activeDocumentState?.id || ""),
+  ].filter(Boolean);
+  const runtimeStateIdsToClear = [...new Set([
+    ...currentSessionStateIds,
+    ...liveProjectionStateIds,
+  ])];
+  revokeRuntimeProjectionAuthorityForEditor(
+    secondaryEditor,
+    "cleanupEditorOnly:teardownSecondary",
+  );
+  revokeRuntimeProjectionAuthorityForEditor(
+    primaryEditor,
+    "cleanupEditorOnly:teardownPrimary",
+  );
+  runtimeStateIdsToClear.forEach((stateId) => {
+    clearStateRuntimeTracking(stateId, "cleanupEditorOnly:clearStateRuntimeTracking");
+  });
   if (typeof splitResizeCleanup === "function") {
     splitResizeCleanup();
   }
@@ -6234,10 +6870,6 @@ function cleanupEditorOnly() {
     fullscreenSessionEventScope = null;
   }
   disposeFullscreenKeydown = null;
-  if (activeDocumentState?.id) {
-    canonicalMutationSessionByStateId.delete(String(activeDocumentState.id));
-    scopeSessionV2ByStateId.delete(String(activeDocumentState.id));
-  }
   scopeSessionV2ByStateId.clear();
 
   setFullscreenShellOpen(false);
@@ -6251,7 +6883,6 @@ function cleanupEditorOnly() {
     },
   });
 
-  saveCallback = null;
   activeTarget = null;
   activeFieldName = null;
   activeFieldType = null;
@@ -6366,23 +6997,25 @@ function openImagePicker(initialData = null, imagePos = null) {
             const currentLang = normalizeLangValue(
               getLanguagesConfig().current,
             );
-            const scopeKind = resolveApplyScopeKindFromActiveScope(
+            const applyScopeMeta = captureExplicitApplyScopeMeta(
               "openImagePicker:onSelect:primary",
             );
+            const scopeKind = applyScopeMeta.scopeKind;
             const primaryState = getDocumentStateForActiveField(currentLang, {
               reason: "openImagePicker:onSelect:primary:bind",
               trigger: "scope-navigation",
             });
             if (primaryState) {
               const primaryMarkdown = getMarkdownFromEditor(editor);
-              applyMarkdownToState(
+              applyMarkdownToStateForReferenceScope(
                 primaryState,
                 primaryMarkdown,
                 scopeKind,
                 "openImagePicker:onSelect:primary",
                 {
                   trigger: "user-command",
-                  applyScopeMeta: getActiveApplyScopeMeta(),
+                  applyScopeMeta,
+                  requireExplicitScope: true,
                 },
               );
               const nextDocumentDraft = primaryState.recomposeMarkdownForSave(
@@ -6412,18 +7045,20 @@ function openImagePicker(initialData = null, imagePos = null) {
       }
       if (editor === secondaryEditor && secondaryLang) {
         const secondaryState = getDocumentStateForActiveField(secondaryLang);
-        const secondaryScopeKind = resolveApplyScopeKindFromActiveScope(
+        const applyScopeMeta = captureExplicitApplyScopeMeta(
           "openImagePicker:onSelect:secondary",
         );
+        const secondaryScopeKind = applyScopeMeta.scopeKind;
         if (secondaryState) {
-          applyMarkdownToState(
+          applyMarkdownToStateForReferenceScope(
             secondaryState,
             getMarkdownFromEditor(editor),
             secondaryScopeKind,
             "openImagePicker:onSelect:secondary",
             {
               trigger: "user-command",
-              applyScopeMeta: getActiveApplyScopeMeta(),
+              applyScopeMeta,
+              requireExplicitScope: true,
             },
           );
         }
@@ -8750,12 +9385,7 @@ function openFullscreenEditorFromPayload(payload) {
 
   const {
     syntheticSectionPreviewHtml,
-    fieldName,
     fieldType,
-    fieldScope,
-    fieldSection,
-    fieldSubsection,
-    pageId,
   } = applyActivePayloadState(payload, {
     previousSessionStateId,
     previousOriginFieldKey,
@@ -8767,146 +9397,12 @@ function openFullscreenEditorFromPayload(payload) {
     setPrimaryEditorActive: false,
   });
 
-  const isDocumentScope = fieldScope === "document";
-
-  const saveCallback = (markdown, resolve, reject) => {
-    const finalMarkdown = trimTrailingLineBreaks(markdown);
-
-    // INVARIANT: Validate markdown byte-for-byte if not explicitly edited
-    const original = originalMarkdownByFieldId.get(activeFieldId);
-    if (original !== undefined && original === finalMarkdown) {
-      // No user edits - markdown must remain unchanged
-      assertMarkdownInvariant(original, finalMarkdown);
-    }
-
-    const currentFieldName = activeFieldName || fieldName;
-    const currentFieldScope = resolveScopeAtSaveBoundary(fieldScope || "field");
-    const currentFieldSection = activeFieldSection || fieldSection || "";
-    const currentFieldSubsection =
-      activeFieldSubsection || fieldSubsection || "";
-    const currentPageId =
-      activeTarget?.getAttribute("data-page") || pageId || "0";
-    const documentMode = isDocumentScopeActive();
-    const currentLang = normalizeLangValue(getLanguagesConfig().current);
-    const primaryState = getDocumentStateForActiveField(currentLang, {
-      reason: "openFullscreenEditorFromPayload:saveCallback:bindPrimary",
-      trigger: "scope-navigation",
-    });
-    const outboundDocumentBody = finalMarkdown;
-    const normalizedMarkdown = resolveOutboundMarkdownForSave({
-      markdown: outboundDocumentBody,
-      scope: documentMode ? "document" : currentFieldScope,
-      lang: currentLang,
-      state: primaryState,
-    });
-    saveTranslation(
-      currentPageId,
-      documentMode ? "document" : currentFieldName,
-      currentLang,
-      normalizedMarkdown,
-      documentMode ? "document" : currentFieldScope,
-      documentMode ? "" : currentFieldSection,
-      documentMode ? "" : currentFieldSubsection,
-      documentMode ? "" : activeFieldId,
-    )
-      .then((result) => {
-        const data = getDataOrThrow(assertOk(result));
-        if (data.status) {
-          if (documentMode) {
-            traceStateMutation({
-              reason:
-                "openFullscreenEditorFromPayload:saveCallbackClearDocumentDraft",
-              trigger: "save-commit",
-              mutate: () => {
-                documentDraftMarkdown = "";
-              },
-            });
-          }
-          Promise.resolve(
-            handlePrimarySaveResponse(data, finalMarkdown, {
-              updateActiveEditor: true,
-              documentCacheFallbackB64: documentMode
-                ? encodeMarkdownBase64(normalizedMarkdown)
-                : "",
-              savedScopeKind: documentMode ? "document" : currentFieldScope,
-            }),
-          )
-            .then(() => {
-              const currentLang = normalizeLangValue(
-                getLanguagesConfig().current,
-              );
-              const reboundPrimaryState = getDocumentStateForActiveField(
-                currentLang,
-                {
-                  reason:
-                    "openFullscreenEditorFromPayload:saveCallback:bindPrimary",
-                  trigger: "scope-navigation",
-                  initialPersistedMarkdown: finalMarkdown,
-                },
-              );
-              if (reboundPrimaryState) {
-                const stateScopeKind = String(
-                  reboundPrimaryState.scopeKind || "",
-                );
-                const networkCanonicalMarkdown = data?.documentMarkdownB64
-                  ? normalizeCanonicalMarkdownForIngress(
-                      decodeMaybeB64(data.documentMarkdownB64),
-                      { enforceDocumentBodyLeadingBreakPolicy: true },
-                    )
-                  : documentMode
-                    ? normalizedMarkdown
-                    : reboundPrimaryState.recomposeMarkdownForSave(
-                        reboundPrimaryState.getPersistedMarkdown(),
-                      );
-                const networkCanonicalBody = splitLeadingFrontmatter(
-                  networkCanonicalMarkdown,
-                ).body;
-                const nextStateSavedBody =
-                  stateScopeKind === "document"
-                    ? networkCanonicalBody
-                    : outboundDocumentBody;
-                const reboundReadbackClassification =
-                  typeof reboundPrimaryState.getLastReadbackClassification ===
-                  "function"
-                    ? reboundPrimaryState.getLastReadbackClassification()
-                    : null;
-                reboundPrimaryState.markSaved(nextStateSavedBody, {
-                  reason:
-                    "openFullscreenEditorFromPayload:saveCallback:markSaved",
-                  trigger: "save-commit",
-                  readbackClassification: reboundReadbackClassification,
-                  readbackClass: normalizeText(
-                    reboundReadbackClassification?.className,
-                  ),
-                });
-              }
-              if (resolve) {
-                resolve({
-                  hasFragments: Boolean(data.fragments),
-                });
-              }
-            })
-            .catch((err) => {
-              if (reject) reject(err);
-            });
-        } else {
-          alert(`Save failed: ${data.message || "Unknown error"}`);
-          if (reject) reject(new Error(data.message || "Save failed"));
-        }
-      })
-      .catch((err) => {
-        // save errors are handled by caller
-        alert(`Save error: ${err.message}`);
-        if (reject) reject(err);
-      });
-  };
-
   if (isInlineShellOpen()) {
     const overlay = document.querySelector(".mfe-hover-overlay");
     if (overlay) overlay.style.display = "none";
   }
   try {
-    initEditor(activeDisplayMarkdown, saveCallback, fieldType);
+    initEditor(activeDisplayMarkdown, fieldType);
   } catch (err) {
     console.error("[mfe] initEditor failed", err);
     cleanupEditorOnly();
@@ -9035,6 +9531,11 @@ function replaceActiveEditor(payload) {
     enforceSource: "replaceActiveEditor",
     setPrimaryEditorActive: true,
   });
+
+  revokeRuntimeProjectionAuthorityForEditor(
+    primaryEditor,
+    "replaceActiveEditor:scopeRebind",
+  );
 
   // Store original markdown for losslessness validation (only if no draft was loaded)
   originalMarkdownByFieldId.set(activeFieldId, effectiveMarkdown);
@@ -9327,14 +9828,17 @@ function watchMountGraph() {
  */
 window.MarkdownFrontEditor = {
   /**
-   * Open editor
-   * @param {string} markdownContent - Initial markdown
-   * @param {function} onSave - Save callback
-   * @param {string} fieldType - Field type: "tag" or "container" (default: "tag")
+   * Open the fullscreen editor using the canonical save pipeline.
+   * The legacy callback parameter is accepted for compatibility but ignored.
    */
   // Initialize new editor via initEditor (which uses WindowManager)
   edit(markdownContent, onSave, fieldType = "tag") {
-    initEditor(markdownContent, onSave, fieldType);
+    if (typeof onSave === "function" && onSave !== saveAllEditors) {
+      debugWarn(
+        "[mfe] fullscreen: legacy onSave callback ignored in favor of canonical save pipeline",
+      );
+    }
+    initEditor(markdownContent, fieldType);
   },
 
   openForElement(target) {

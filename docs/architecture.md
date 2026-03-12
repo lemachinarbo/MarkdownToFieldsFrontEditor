@@ -122,6 +122,30 @@ MFE treats these as external variability and validates readback explicitly.
 ## 10) Inline vs fullscreen
 
 - **Fullscreen** is the strict canonical pipeline described above.
+
+### Fullscreen stabilization status
+
+The fullscreen reference pipeline is now considered **PROVEN**.
+
+#### Proven properties
+- Fullscreen has exactly one canonical save pipeline.
+- Fullscreen reference flow uses explicit scope authority end-to-end.
+- Canonical `DocumentState` is the only structural authority.
+- Runtime projection is a rebuildable cache, never the source of truth.
+- Scope rebind revokes prior runtime projection authority and reseeds deterministically.
+- Discard / close / reopen clears runtime/session tracking and reseeds from canonical state.
+- Runtime projection authority transitions are browser-verifiable.
+- High-value fullscreen regression flows pass.
+
+#### Still intentionally true
+- Inline remains a non-reference path.
+- Non-reference fallback helpers still exist, but are quarantined and named as such.
+- No component-mapping runtime has been introduced.
+- No broad architectural/file split was required to prove the fullscreen model.
+
+#### Proof conclusion
+**Fullscreen reference pipeline: PROVEN**
+
 - **Inline** is intentionally limited and does not yet have all fullscreen guarantees.
 
 If you are validating deterministic markdown preservation behavior, fullscreen is the reference path.

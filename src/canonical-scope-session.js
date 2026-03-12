@@ -27,6 +27,28 @@ function hashTextIdentity(value) {
   return `${text.length}:${hash.toString(16)}`;
 }
 
+export function buildProtectedSpanFingerprint(protectedSpans = []) {
+  const spans = Array.isArray(protectedSpans) ? protectedSpans : [];
+  const serialized = spans
+    .map((span, index) =>
+      [
+        index,
+        String(span?.kind || ""),
+        Number(span?.startCu || 0),
+        Number(span?.endCu || 0),
+        String(span?.sha256 || ""),
+        String(span?.markerRawName || ""),
+        String(span?.markerKind || ""),
+        String(span?.markerName || ""),
+        String(span?.markerSection || ""),
+        String(span?.markerSubsection || ""),
+        Boolean(span?.markerFieldIsContainer) ? "1" : "0",
+      ].join("\u241f"),
+    )
+    .join("\u241e");
+  return hashTextIdentity(serialized);
+}
+
 function parseMarkersWithOffsets(markdown) {
   const text = normalizeCanonicalText(markdown);
   const markerRegex =

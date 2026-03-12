@@ -797,6 +797,32 @@ async function assertNoCriticalDocStateEvents(page, contextLabel) {
   ).toEqual([]);
 }
 
+async function resetRuntimeAuthorityTrace(page) {
+  await page.evaluate(() => {
+    if (Array.isArray(window.__MFE_RUNTIME_AUTHORITY_TRACE__)) {
+      window.__MFE_RUNTIME_AUTHORITY_TRACE__.length = 0;
+    } else {
+      window.__MFE_RUNTIME_AUTHORITY_TRACE__ = [];
+    }
+  });
+}
+
+async function readRuntimeAuthorityTrace(page) {
+  return page.evaluate(() => {
+    const trace = Array.isArray(window.__MFE_RUNTIME_AUTHORITY_TRACE__)
+      ? window.__MFE_RUNTIME_AUTHORITY_TRACE__
+      : [];
+    return trace.map((entry) => ({
+      stateId: String(entry?.stateId || ""),
+      scopeKey: String(entry?.scopeKey || ""),
+      authorityState: String(entry?.authorityState || ""),
+      authorityReason: String(entry?.authorityReason || ""),
+      rawReason: String(entry?.rawReason || ""),
+      timestamp: Number(entry?.timestamp || 0),
+    }));
+  });
+}
+
 function assertNoCriticalConsoleSince(consoleIssues, cursor, contextLabel) {
   const next = consoleIssues.slice(Math.max(0, Number(cursor || 0)));
   expect(next, `${contextLabel}: critical console diagnostics detected`).toEqual(
@@ -1665,7 +1691,7 @@ test.describe("document save roundtrip", () => {
       }
     }
 
-    await clickBreadcrumbLink(page, /^Document$/i);
+    await ensureSplitLanguageSelected(page, "Spanish");
     await waitForEditorTextContains(page, token);
 
     await page.getByRole("button", { name: /Save changes/i }).click();
@@ -1746,6 +1772,92 @@ test.describe("document save roundtrip", () => {
     );
   });
 
+  test("dirty field to section to document to field rebound saves without remount drift", async ({
+    page,
+  }) => {
+    await resetHomesFromFixtures();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    const opened = await openFullscreenEditor(page);
+    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+
+    const token = `REBOUND_FIELD_SECTION_DOCUMENT_FIELD_${Date.now()}`;
+    await appendTokenAndAssertVisible(page, token);
+    await expectStatusText(page, "Draft", "field-section-document-field:draft");
+
+    await clickBreadcrumbLink(page, /^Document$/i);
+    await waitForEditorTextContains(page, token);
+
+    const explicitFieldTitle = page
+      .getByRole("link", { name: /Field:\s*title/i })
+      .first();
+    if (await explicitFieldTitle.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await explicitFieldTitle.click();
+      await waitForEditorTextContains(page, token);
+    } else {
+      const genericTitleLink = page.getByRole("link", { name: /title/i }).first();
+      await expect(genericTitleLink).toBeVisible();
+      await genericTitleLink.click();
+      await waitForEditorTextContains(page, token);
+    }
+
+    await page.getByRole("button", { name: /Save changes/i }).click();
+    await expectStatusText(
+      page,
+      "Saved",
+      "field-section-document-field:saved",
+    );
+    await expect
+      .poll(async () => (await readEn()).includes(token), { timeout: 20000 })
+      .toBe(true);
+    await assertV2SavePathForScope(page, "field");
+    await assertNoCriticalDocStateEvents(
+      page,
+      "field-section-document-field-rebound-save",
+    );
+  });
+
+  test("rapid dirty scope switching still saves through canonical pipeline", async ({
+    page,
+  }) => {
+    await resetHomesFromFixtures();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    const opened = await openFullscreenEditor(page);
+    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+
+    const token = `RAPID_SCOPE_SWITCH_${Date.now()}`;
+    await appendTokenAndAssertVisible(page, token);
+
+    await clickBreadcrumbLink(page, /Section:/i);
+    await waitForEditorTextContains(page, token);
+
+    await clickBreadcrumbLink(page, /^Document$/i);
+    await waitForEditorTextContains(page, token);
+
+    await clickBreadcrumbLink(page, /Section:/i);
+    await waitForEditorTextContains(page, token);
+
+    await clickBreadcrumbLink(page, /^Document$/i);
+    await waitForEditorTextContains(page, token);
+
+    await page.getByRole("button", { name: /Save changes/i }).click();
+    await expect
+      .poll(async () => (await readEn()).includes(token), { timeout: 20000 })
+      .toBe(true);
+    await assertV2SavePathForScope(page, "document");
+    await assertNoCriticalDocStateEvents(
+      page,
+      "rapid-dirty-scope-switch-save",
+    );
+  });
+
   test("document split lens keeps unsaved edits across scopes and languages", async ({
     page,
   }) => {
@@ -1813,6 +1925,378 @@ test.describe("document save roundtrip", () => {
     await assertNoCriticalDocStateEvents(
       page,
       "document-lens-persists-unsaved-multi-language",
+    );
+  });
+
+  test("split dirty scope oscillation saves through the fullscreen canonical pipeline", async ({
+    page,
+  }) => {
+    await resetHomesFromFixtures();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    const opened = await openFullscreenEditor(page);
+    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+
+    await ensureSplitLanguageSelected(page, "Spanish");
+
+    const enToken = `SPLIT_SCOPE_REBIND_EN_${Date.now()}`;
+    const esToken = `SPLIT_SCOPE_REBIND_ES_${Date.now()}`;
+
+    await appendTokenAndAssertVisible(page, enToken);
+    await appendTokenInSecondaryEditor(page, esToken);
+    await waitForSecondaryEditorTextContains(page, esToken);
+
+    await clickBreadcrumbLink(page, /Section:/i);
+    await waitForEditorTextContains(page, enToken);
+    await waitForSecondaryEditorTextContains(page, esToken);
+
+    await clickBreadcrumbLink(page, /^Document$/i);
+    await waitForEditorTextContains(page, enToken);
+    await waitForSecondaryEditorTextContains(page, esToken);
+
+    const fieldTitle = page.getByRole("link", { name: /Field:\s*title/i }).first();
+    if (await fieldTitle.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await fieldTitle.click();
+    } else {
+      const genericTitleLink = page.getByRole("link", { name: /title/i }).first();
+      await expect(genericTitleLink).toBeVisible();
+      await genericTitleLink.click();
+    }
+    await waitForEditorTextContains(page, enToken);
+    await waitForSecondaryEditorTextContains(page, esToken);
+
+    await page.getByRole("button", { name: /Save changes/i }).click();
+    await expectStatusText(page, "Saved", "split-scope-rebind:saved");
+    await expect
+      .poll(async () => (await readEn()).includes(enToken), { timeout: 20000 })
+      .toBe(true);
+    await expect
+      .poll(async () => (await readEs()).includes(esToken), { timeout: 20000 })
+      .toBe(true);
+    await expect
+      .poll(async () => (await readEn()).includes(esToken), { timeout: 5000 })
+      .toBe(false);
+    await assertV2SavePathForScope(page, "field");
+    await assertNoCriticalDocStateEvents(
+      page,
+      "split-dirty-scope-oscillation-save",
+    );
+  });
+
+  test("same-editor field rebind preserves dirty canonical draft before save", async ({
+    page,
+  }) => {
+    await resetHomesFromFixtures();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    const opened = await openFullscreenEditor(page);
+    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+
+    await page.evaluate(() => {
+      if (Array.isArray(window.__MFE_DOC_STATE_LOGS)) {
+        window.__MFE_DOC_STATE_LOGS.length = 0;
+      } else {
+        window.__MFE_DOC_STATE_LOGS = [];
+      }
+    });
+
+    const token = `PROJECTION_LIFECYCLE_${Date.now()}`;
+    await appendTokenAndAssertVisible(page, token);
+
+    await clickBreadcrumbLink(page, /^Document$/i);
+    await waitForEditorTextContains(page, token);
+
+    const reopenedTitle = await page.evaluate(() => {
+      const candidate =
+        document.querySelector('[data-mfe="field:hero/title"]') ||
+        document.querySelector('[data-mfe]');
+      if (
+        candidate instanceof HTMLElement &&
+        typeof window.MarkdownFrontEditor?.openForElement === "function"
+      ) {
+        window.MarkdownFrontEditor.openForElement(candidate);
+        return true;
+      }
+      return false;
+    });
+    expect(reopenedTitle, "title field target unavailable").toBe(true);
+    await waitForEditorTextContains(page, token);
+
+    await page.getByRole("button", { name: /Save changes/i }).click();
+    await expectStatusText(page, "Saved", "projection-lifecycle:field-rebind-saved");
+    await expect
+      .poll(async () => (await readEn()).includes(token), { timeout: 20000 })
+      .toBe(true);
+    await assertV2SavePathForScope(page, "field");
+    await assertNoCriticalDocStateEvents(
+      page,
+      "projection-lifecycle:field-rebind",
+    );
+  });
+
+  test("discard after dirty field rebind clears runtime tracking and reopens cleanly", async ({
+    page,
+  }) => {
+    await resetHomesFromFixtures();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    const opened = await openFullscreenEditor(page);
+    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+
+    await page.evaluate(() => {
+      if (Array.isArray(window.__MFE_DOC_STATE_LOGS)) {
+        window.__MFE_DOC_STATE_LOGS.length = 0;
+      } else {
+        window.__MFE_DOC_STATE_LOGS = [];
+      }
+    });
+
+    const token = `DISCARD_REOPEN_${Date.now()}`;
+    await appendTokenAndAssertVisible(page, token);
+
+    await clickBreadcrumbLink(page, /^Document$/i);
+    await waitForEditorTextContains(page, token);
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: /Close window/i }).click();
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(() =>
+            Boolean(window.MarkdownFrontEditor?.isOpen?.()),
+          ),
+        { timeout: 10000 },
+      )
+      .toBe(false);
+
+    const reopened = await openFullscreenEditor(page);
+    expect(reopened, "fullscreen editor could not be reopened after discard").toBe(true);
+    await expect
+      .poll(async () => {
+        const editorText = String(
+          (await getActivePrimaryEditor(page).textContent().catch(() => "")) || "",
+        );
+        const markdownText = await page.evaluate(() =>
+          String(window.MarkdownFrontEditor?.getMarkdown?.() || ""),
+        );
+        return editorText.includes(token) || markdownText.includes(token);
+      })
+      .toBe(false);
+    await expect
+      .poll(async () => (await readEn()).includes(token), { timeout: 5000 })
+      .toBe(false);
+
+    await settleToNoChangesStatus(page);
+    await assertNoCriticalDocStateEvents(
+      page,
+      "discard-dirty-field-rebind-reopen-clean",
+    );
+  });
+
+  test("projection authority lifecycle survives rebind discard and reopen", async ({
+    page,
+  }) => {
+    await resetHomesFromFixtures();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    const opened = await openFullscreenEditor(page);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
+
+    await page.evaluate(() => {
+      if (Array.isArray(window.__MFE_DOC_STATE_LOGS)) {
+        window.__MFE_DOC_STATE_LOGS.length = 0;
+      } else {
+        window.__MFE_DOC_STATE_LOGS = [];
+      }
+    });
+    await resetRuntimeAuthorityTrace(page);
+
+    const token = `AUTHORITY_PROOF_${Date.now()}`;
+    await appendTokenAndAssertVisible(page, token);
+
+    await ensureSplitLanguageSelected(page, "Spanish");
+    await waitForEditorTextContains(page, token);
+
+    await expect
+      .poll(async () => {
+        const trace = await readRuntimeAuthorityTrace(page);
+        const rebindRevokedIndex = trace.findIndex(
+          (entry) =>
+            entry.authorityState === "revoked" &&
+            entry.authorityReason === "rebind",
+        );
+        const rebindTrustedIndex =
+          rebindRevokedIndex >= 0
+            ? trace.findIndex(
+                (entry, index) =>
+                  index > rebindRevokedIndex &&
+                  entry.authorityState === "trusted" &&
+                  entry.authorityReason === "reseed",
+              )
+            : -1;
+        return rebindRevokedIndex >= 0 && rebindTrustedIndex > rebindRevokedIndex;
+      }, { timeout: 15000 })
+      .toBe(true);
+    const rebindTrace = await readRuntimeAuthorityTrace(page);
+    const rebindRevokedIndex = rebindTrace.findIndex(
+      (entry) =>
+        entry.authorityState === "revoked" &&
+        entry.authorityReason === "rebind",
+    );
+    const rebindTrustedIndex = rebindTrace.findIndex(
+      (entry, index) =>
+        index > rebindRevokedIndex &&
+        entry.authorityState === "trusted" &&
+        entry.authorityReason === "reseed",
+    );
+
+    expect(
+      rebindRevokedIndex,
+      "expected runtime authority revoke during split-language rebind",
+    ).toBeGreaterThanOrEqual(0);
+    expect(
+      rebindTrustedIndex,
+      "expected deterministic reseed after split-language rebind",
+    ).toBeGreaterThan(rebindRevokedIndex);
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: /Close window/i }).click();
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(() =>
+            Boolean(window.MarkdownFrontEditor?.isOpen?.()),
+          ),
+        { timeout: 10000 },
+      )
+      .toBe(false);
+
+    await expect
+      .poll(async () => {
+        const trace = await readRuntimeAuthorityTrace(page);
+        const discardRevokedIndex = trace.findIndex(
+          (entry, index) =>
+            index > rebindTrustedIndex &&
+            entry.authorityState === "revoked" &&
+            entry.authorityReason === "discard",
+        );
+        const clearedCount = await page.evaluate(() => {
+          const entries = Array.isArray(window.__MFE_DOC_STATE_LOGS)
+            ? window.__MFE_DOC_STATE_LOGS
+            : [];
+          return entries.filter(
+            (entry) =>
+              entry &&
+              entry.type === "MFE_RUNTIME_STATE_TRACKING_CLEARED",
+          ).length;
+        });
+        return discardRevokedIndex > rebindTrustedIndex && clearedCount > 0;
+      }, { timeout: 15000 })
+      .toBe(true);
+    const discardTrace = await readRuntimeAuthorityTrace(page);
+    const discardRevokedIndex = discardTrace.findIndex(
+      (entry, index) =>
+        index > rebindTrustedIndex &&
+        entry.authorityState === "revoked" &&
+        entry.authorityReason === "discard",
+    );
+    const clearedCount = await page.evaluate(() => {
+      const entries = Array.isArray(window.__MFE_DOC_STATE_LOGS)
+        ? window.__MFE_DOC_STATE_LOGS
+        : [];
+      return entries.filter(
+        (entry) =>
+          entry &&
+          entry.type === "MFE_RUNTIME_STATE_TRACKING_CLEARED",
+      ).length;
+    });
+
+    expect(
+      discardRevokedIndex,
+      "expected discard teardown to revoke runtime authority",
+    ).toBeGreaterThan(rebindTrustedIndex);
+    expect(
+      clearedCount,
+      "expected discard teardown to clear fullscreen runtime tracking",
+    ).toBeGreaterThan(0);
+
+    const reopened = await page.evaluate(() => {
+      const candidate =
+        document.querySelector('[data-mfe="field:hero/title"]') ||
+        document.querySelector("[data-mfe]");
+      if (
+        candidate instanceof HTMLElement &&
+        typeof window.MarkdownFrontEditor?.openForElement === "function"
+      ) {
+        window.MarkdownFrontEditor.openForElement(candidate);
+        return true;
+      }
+      return false;
+    });
+    expect(
+      reopened,
+      "fullscreen editor could not be reopened after discard",
+    ).toBe(true);
+    await expect(getSaveButton(page)).toBeVisible();
+
+    await expect
+      .poll(async () => {
+        const trace = await readRuntimeAuthorityTrace(page);
+        const reopenTrustedIndex = trace.findIndex(
+          (entry, index) =>
+            index > discardRevokedIndex &&
+            entry.authorityState === "trusted" &&
+            entry.authorityReason === "reseed",
+        );
+        const editorText = String(
+          (await getActivePrimaryEditor(page).textContent().catch(() => "")) ||
+            "",
+        );
+        const markdownText = await page.evaluate(() =>
+          String(window.MarkdownFrontEditor?.getMarkdown?.() || ""),
+        );
+        return (
+          reopenTrustedIndex > discardRevokedIndex &&
+          !editorText.includes(token) &&
+          !markdownText.includes(token)
+        );
+      }, { timeout: 15000 })
+      .toBe(true);
+    const finalTrace = await readRuntimeAuthorityTrace(page);
+    const reopenTrustedIndex = finalTrace.findIndex(
+      (entry, index) =>
+        index > discardRevokedIndex &&
+        entry.authorityState === "trusted" &&
+        entry.authorityReason === "reseed",
+    );
+
+    expect(
+      reopenTrustedIndex,
+      "expected reopen to reseed trusted runtime projection",
+    ).toBeGreaterThan(discardRevokedIndex);
+    await expect
+      .poll(async () => (await readEn()).includes(token), { timeout: 5000 })
+      .toBe(false);
+
+    await settleToNoChangesStatus(page);
+    await assertNoCriticalDocStateEvents(
+      page,
+      "projection-authority-lifecycle-rebind-discard-reopen",
     );
   });
 
