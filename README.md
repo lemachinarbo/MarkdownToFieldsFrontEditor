@@ -48,11 +48,11 @@ Your Markdown content and format must stay exactly as you wrote it.
 
 ### 1. Document
 
-The Markdown file is the original content. 
+Outside an editing session, the Markdown file is the persisted source of truth.
 
 #### State
 
-When user opens an editor, a 'state' of the document is created. This state is a 'draft' of the document, and it can be modified without affecting the original markdown file, until the user decides to save or discard the changes.
+When a user opens an editor, MFE creates or reuses one canonical document state for that session and language. That state is the editable draft of the document, and it can be modified without affecting the persisted markdown file until the user decides to save or discard the changes.
 
 #### Status
 
@@ -76,7 +76,7 @@ Scope is just *which part* of the document you’re editing. The scope is provid
 
 Each of these scopes acts as a peek window into the same 'document state'.
 
-If document state changes, any scope that can view the 'modified content' will show the change immediately, because scopes are just lenses of the state of the document, not versions or copies. 
+If document state changes, any scope that can view the modified content will show the change immediately, because scopes are just lenses of the same document state, not versions or copies. 
 
 Changing scope doesn’t change content, status, or state. It only changes what portion the user is focused on.
 
@@ -89,7 +89,13 @@ Interfaces allow users to view and edit the document state through specific scop
 
 Interfaces only define where you are editing, not how the 'editing' works.
 
-### 4. Modes
+### 4. Runtime projection
+
+Rich editors may build a temporary runtime projection of the current scope so editing stays comfortable.
+
+That projection may be rebuilt when scope changes, but it never becomes the source of truth. The canonical document state remains the authority.
+
+### 5. Modes
 
 Modes control **how content is presented and interacted with**:
 

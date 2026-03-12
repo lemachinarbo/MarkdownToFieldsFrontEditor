@@ -2,12 +2,15 @@
 
 ## 1) Core idea
 
-For each language, MFE has **one canonical Markdown document** as the source of truth.
+Outside an editing session, the persisted Markdown file is the source of truth.
+
+During editing, MFE keeps **one canonical `DocumentState` draft per language** as the authoritative mutable state.
 
 Everything else is a view of that same document:
 - scope view (field/subsection/section/document)
 - editor view (rich)
 - preview fragments on the page
+- runtime projection inside the editor
 
 No scope creates a second document.
 
@@ -39,7 +42,7 @@ No scope creates a second document.
 
 1. Load markdown payload for language.
 2. Split frontmatter/body.
-3. Get or create `DocumentState` for `(sessionId + language)`.
+3. Get or create the canonical `DocumentState` for `(sessionId + language)`.
 4. Rebind scope (field/subsection/section/document) on that same state.
 5. Resolve canonical scope slice.
 6. Project slice to display text for TipTap.
@@ -121,32 +124,18 @@ MFE treats these as external variability and validates readback explicitly.
 
 ## 10) Inline vs fullscreen
 
-- **Fullscreen** is the strict canonical pipeline described above.
+- **Fullscreen** is the strict canonical pipeline described above and the reference implementation.
+- **Inline** is intentionally limited and remains a non-reference path.
 
-### Fullscreen stabilization status
+### Fullscreen status
 
-The fullscreen reference pipeline is now considered **PROVEN**.
-
-#### Proven properties
-- Fullscreen has exactly one canonical save pipeline.
-- Fullscreen reference flow uses explicit scope authority end-to-end.
-- Canonical `DocumentState` is the only structural authority.
-- Runtime projection is a rebuildable cache, never the source of truth.
-- Scope rebind revokes prior runtime projection authority and reseeds deterministically.
-- Discard / close / reopen clears runtime/session tracking and reseeds from canonical state.
-- Runtime projection authority transitions are browser-verifiable.
-- High-value fullscreen regression flows pass.
-
-#### Still intentionally true
-- Inline remains a non-reference path.
-- Non-reference fallback helpers still exist, but are quarantined and named as such.
-- No component-mapping runtime has been introduced.
-- No broad architectural/file split was required to prove the fullscreen model.
-
-#### Proof conclusion
-**Fullscreen reference pipeline: PROVEN**
-
-- **Inline** is intentionally limited and does not yet have all fullscreen guarantees.
+The fullscreen reference pipeline is **PROVEN**:
+- one canonical save pipeline (`saveAllEditors`)
+- explicit scope authority end-to-end
+- canonical `DocumentState` as the only structural authority
+- runtime projection as a rebuildable cache, never the source of truth
+- deterministic revoke/reseed behavior across rebind, discard, and reopen
+- browser-verifiable runtime projection authority transitions
 
 If you are validating deterministic markdown preservation behavior, fullscreen is the reference path.
 

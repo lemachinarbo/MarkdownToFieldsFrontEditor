@@ -222,6 +222,53 @@ import {
   canonicalizeForCompareAndUnproject,
   buildProjectionForCanonicalizedDisplay,
 } from "./canonical-mutation-utils.js";
+import {
+  warnStateIdDrift as warnStateIdDriftHelper,
+  isDevMode as isDevModeHelper,
+  isStateTraceEnabled as isStateTraceEnabledHelper,
+  hashStateIdentity,
+  hashPreview,
+  getPersistedIdentityHashForTrace as getPersistedIdentityHashForTraceHelper,
+  getStatusIdentityForTrace,
+  debugWarn as debugWarnHelper,
+  debugInfo as debugInfoHelper,
+  debugTable as debugTableHelper,
+  emitRuntimeShapeLog as emitRuntimeShapeLogHelper,
+} from "./fullscreen-debug-trace.js";
+import {
+  applyChangedHtmlEditableOnly as applyChangedHtmlEditableOnlyHelper,
+  applyEditableFallbackInSectionHosts as applyEditableFallbackInSectionHostsHelper,
+  applyDatastarPatchElement as applyDatastarPatchElementHelper,
+  applyDatastarPatchToNodes as applyDatastarPatchToNodesHelper,
+  syncNonEditableImagesFromPatch as syncNonEditableImagesFromPatchHelper,
+  parseDatastarEventBlock,
+  keyDepth,
+  isDescendantKey,
+  hasDescendantScopedDrafts as hasDescendantScopedDraftsHelper,
+  isScopeOrDescendantKey,
+} from "./fullscreen-preview-sync.js";
+import {
+  getActiveHierarchy as getActiveHierarchyHelper,
+  resolveBreadcrumbTargetFromScope,
+  resolveContentIdForScopeMeta,
+  getBreadcrumbContentId,
+  buildSessionScopeLens as buildSessionScopeLensHelper,
+  getLensNode as getLensNodeHelper,
+  syncSessionScopeLensState,
+  resolveLensNodeForBreadcrumb as resolveLensNodeForBreadcrumbHelper,
+  resolveCanonicalMarkdownForLensNode as resolveCanonicalMarkdownForLensNodeHelper,
+  resolveMarkerBearingCanonicalMarkdownForLens as resolveMarkerBearingCanonicalMarkdownForLensHelper,
+  resolveIndexedMarkdownForLensNode as resolveIndexedMarkdownForLensNodeHelper,
+  resolveMarkerBearingMarkdownForLensNode as resolveMarkerBearingMarkdownForLensNodeHelper,
+  buildVirtualTargetFromLensNode as buildVirtualTargetFromLensNodeHelper,
+  applyActiveOriginKeyToVirtualTarget as applyActiveOriginKeyToVirtualTargetHelper,
+  deriveHierarchyFromPayload,
+  updateBreadcrumbAnchorFromPayload as updateBreadcrumbAnchorFromPayloadHelper,
+  buildBreadcrumbParts as buildBreadcrumbPartsHelper,
+  buildBreadcrumbItems as buildBreadcrumbItemsHelper,
+  getBreadcrumbsCurrentTarget as getBreadcrumbsCurrentTargetHelper,
+  resolveHierarchyFromSessionScopeLens as resolveHierarchyFromSessionScopeLensHelper,
+} from "./fullscreen-scope-lens.js";
 
 let activeEditor = null;
 let primaryEditor = null;
@@ -432,39 +479,30 @@ let lastPrimaryDirtyFieldId = null;
 let stateTraceSnapshotDepth = 0;
 const stateIdByElementAndLang = new WeakMap();
 
+/**
+ * Report fullscreen state-id drift using the shared debug-trace helper.
+ * Does not reconcile or mutate state after the drift is detected.
+ */
 function warnStateIdDrift(detail = {}) {
-  const message = {
-    type: "MFE_STATE_ID_DRIFT",
-    previousOriginKey: String(detail.previousOriginKey || ""),
-    incomingOriginKey: String(detail.incomingOriginKey || ""),
-    previousStateId: String(detail.previousStateId || ""),
-    nextStateId: String(detail.nextStateId || ""),
-    language: String(detail.language || ""),
-    currentScope: String(detail.currentScope || ""),
-    reason: String(detail.reason || ""),
-    stack: String(detail.stack || ""),
-  };
-  console.warn("MFE_STATE_ID_DRIFT", JSON.stringify(message));
-  if (isStateTraceEnabled()) {
-    throw new Error("[mfe] MFE_STATE_ID_DRIFT");
-  }
+  return warnStateIdDriftHelper(detail, {
+    traceEnabled: isStateTraceEnabled(),
+  });
 }
 
+/**
+ * Read whether fullscreen trace diagnostics are enabled for this request.
+ * Does not decide mutation or save authority.
+ */
 function isStateTraceEnabled() {
-  return window.MarkdownFrontEditorConfig?.debug === true;
+  return isStateTraceEnabledHelper(window.MarkdownFrontEditorConfig || {});
 }
 
-function hashStateIdentity(value) {
-  const text = typeof value === "string" ? value : "";
-  let hash = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    hash = (hash * 31 + text.charCodeAt(index)) >>> 0;
-  }
-  return `${text.length}:${hash.toString(16)}`;
-}
-
+/**
+ * Read the persisted markdown identity used by fullscreen trace snapshots.
+ * Does not inspect editor-local runtime projection state.
+ */
 function getPersistedIdentityHashForTrace() {
-  return hashStateIdentity(getDocumentConfigMarkdown());
+  return getPersistedIdentityHashForTraceHelper(getDocumentConfigMarkdown);
 }
 
 function getCanonicalDraftIdentityHashForTrace() {
@@ -482,21 +520,13 @@ function getCanonicalDraftIdentityHashForTrace() {
   }
 }
 
-function getStatusIdentityForTrace() {
-  const node = saveStatusEl;
-  if (!node) return "";
-  const text = String(node.textContent || "").trim();
-  const cls = String(node.className || "").trim();
-  return `${text}|${cls}`;
-}
-
 function snapshotStateTrace() {
   return {
     dirty: hasPrimaryCanonicalDrift(),
     pending: Boolean(pendingSavePromise),
     draftIdentityHash: getCanonicalDraftIdentityHashForTrace(),
     persistedIdentityHash: getPersistedIdentityHashForTrace(),
-    statusIdentity: getStatusIdentityForTrace(),
+    statusIdentity: getStatusIdentityForTrace(saveStatusEl),
   };
 }
 
@@ -579,37 +609,36 @@ function traceStateMutation({ reason, trigger, mutate, details = null }) {
   }
 }
 
+/**
+ * Emit a fullscreen dev warning without changing runtime behavior.
+ * Does not mutate state or projection authority.
+ */
 function debugWarn(...args) {
-  if (!isDevMode()) return;
-  console.warn(...args);
+  return debugWarnHelper(isDevMode(), ...args);
 }
 
+/**
+ * Emit a fullscreen dev info log without changing runtime behavior.
+ * Does not mutate state or projection authority.
+ */
 function debugInfo(...args) {
-  if (!isDevMode()) return;
-  console.info(...args);
+  return debugInfoHelper(isDevMode(), ...args);
 }
 
+/**
+ * Emit a fullscreen dev table log without changing runtime behavior.
+ * Does not mutate state or projection authority.
+ */
 function debugTable(rows) {
-  if (!isDevMode()) return;
-  if (!console.table) return;
-  if (!Array.isArray(rows) || !rows.length) return;
-  console.table(rows);
+  return debugTableHelper(isDevMode(), rows);
 }
 
+/**
+ * Emit a structured runtime shape log for fullscreen diagnostics.
+ * Does not persist logs or alter canonical/runtime authority.
+ */
 function emitRuntimeShapeLog(type, payload = {}) {
-  if (!isStateTraceEnabled()) return;
-  if (typeof console !== "undefined" && typeof console.info === "function") {
-    console.info(type, JSON.stringify(payload));
-  }
-}
-
-function hashPreview(value) {
-  const text = typeof value === "string" ? value : "";
-  let hash = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    hash = (hash * 31 + text.charCodeAt(index)) >>> 0;
-  }
-  return `${text.length}:${hash.toString(16)}`;
+  return emitRuntimeShapeLogHelper(isStateTraceEnabled(), type, payload);
 }
 
 function hasCanonicalMarkers(markdown) {
@@ -1521,286 +1550,72 @@ async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
   }
 }
 
+/**
+ * Patch editable hosts directly from scoped fragment updates.
+ * Does not read or mutate canonical markdown authority.
+ */
 function applyChangedHtmlEditableOnly({ changedKeys, htmlMap }) {
-  const keys = Array.isArray(changedKeys) ? changedKeys.filter(Boolean) : [];
-  if (!keys.length) return 0;
-  const keySet = new Set(keys);
-  let updated = 0;
-  document.querySelectorAll(".fe-editable").forEach((el) => {
-    if (el.closest('[data-mfe-window="true"]')) return;
-    const key = scopedHtmlKeyFromMeta(
-      getMetaAttr(el, "scope") || "field",
-      getMetaAttr(el, "section") || "",
-      getMetaAttr(el, "subsection") || "",
-      getMetaAttr(el, "name") || "",
-    );
-    if (!keySet.has(key)) return;
-    const html = htmlMap?.[key];
-    if (typeof html !== "string") return;
-    el.innerHTML = normalizeHtmlImageSources(html, {
-      resolveImageSrc: (src) => resolveHostImageSrc(document.body, src),
-    });
-    updated += 1;
+  return applyChangedHtmlEditableOnlyHelper({
+    changedKeys,
+    htmlMap,
+    resolveHostImageSrc,
   });
-  return updated;
 }
 
+/**
+ * Patch editable children inside section hosts when direct key patching is not enough.
+ * Does not infer save authority or alter scope state.
+ */
 function applyEditableFallbackInSectionHosts({
   sectionKeys,
   mountTargets,
   htmlMap,
 }) {
-  const keys = Array.isArray(sectionKeys) ? sectionKeys.filter(Boolean) : [];
-  if (!keys.length) return 0;
-  let updated = 0;
-  keys.forEach((sectionKey) => {
-    const targets = Array.isArray(mountTargets?.[sectionKey])
-      ? mountTargets[sectionKey]
-      : [];
-    targets.forEach((target) => {
-      const selector = target?.selector || "";
-      if (!selector) return;
-      const hosts = Array.from(document.querySelectorAll(selector));
-      hosts.forEach((host) => {
-        if (!host || !host.isConnected) return;
-        const editables = [];
-        if (host.classList?.contains("fe-editable")) editables.push(host);
-        host
-          .querySelectorAll?.(".fe-editable")
-          ?.forEach((el) => editables.push(el));
-        editables.forEach((el) => {
-          const key = scopedHtmlKeyFromMeta(
-            getMetaAttr(el, "scope") || "field",
-            getMetaAttr(el, "section") || "",
-            getMetaAttr(el, "subsection") || "",
-            getMetaAttr(el, "name") || "",
-          );
-          const html = htmlMap?.[key];
-          if (typeof html !== "string") return;
-          el.innerHTML = normalizeHtmlImageSources(html, {
-            resolveImageSrc: (src) => resolveHostImageSrc(document.body, src),
-          });
-          updated += 1;
-        });
-      });
-    });
+  return applyEditableFallbackInSectionHostsHelper({
+    sectionKeys,
+    mountTargets,
+    htmlMap,
+    resolveHostImageSrc,
   });
-  return updated;
 }
 
+/**
+ * Patch every node matched by a Datastar selector.
+ * Does not decide selector ordering or patch safety.
+ */
 function applyDatastarPatchElement({ selector, mode, elements, cycleId }) {
-  if (!selector) return 0;
-  const nodes = Array.from(document.querySelectorAll(selector));
-  return applyDatastarPatchToNodes({ nodes, mode, elements, cycleId });
+  return applyDatastarPatchElementHelper({ selector, mode, elements, cycleId });
 }
 
+/**
+ * Patch a provided node list with Datastar HTML.
+ * Does not normalize selectors or compute patch contents.
+ */
 function applyDatastarPatchToNodes({ nodes, mode, elements, cycleId }) {
-  if (!nodes.length) return 0;
-  const patchMode = mode || "inner";
-  let updated = 0;
-  nodes.forEach((node) => {
-    if (!node || !node.isConnected) return;
-    if (patchMode === "outer" || patchMode === "replace") {
-      node.outerHTML = elements || "";
-      updated += 1;
-      return;
-    }
-    node.innerHTML = elements || "";
-    if (cycleId !== undefined && cycleId !== null) {
-      node.setAttribute("data-mfe-last-patch", String(cycleId));
-    }
-    updated += 1;
-  });
-  return updated;
+  return applyDatastarPatchToNodesHelper({ nodes, mode, elements, cycleId });
 }
 
-function parseFragmentHtmlDocument(html) {
-  try {
-    const parser = new DOMParser();
-    return parser.parseFromString(String(html || ""), "text/html");
-  } catch (_e) {
-    return null;
-  }
-}
-
-function collectNonEditableImages(root) {
-  if (!root || !root.querySelectorAll) return [];
-  return Array.from(root.querySelectorAll("img")).filter(
-    (img) => !img.closest(".fe-editable"),
+/**
+ * Sync non-editable media after a fragment patch.
+ * Does not update editable fullscreen content or canonical markdown.
+ */
+function syncNonEditableImagesFromPatch(host, patchHtml) {
+  return syncNonEditableImagesFromPatchHelper(
+    host,
+    patchHtml,
+    resolveHostImageSrc,
   );
 }
 
-function collectNonEditableMediaRoots(root) {
-  if (!root || !root.querySelectorAll) return [];
-  return Array.from(root.querySelectorAll("picture, img")).filter((node) => {
-    if (node.closest(".fe-editable")) return false;
-    if (node.tagName?.toLowerCase() === "img" && node.closest("picture")) {
-      return false;
-    }
-    return true;
-  });
-}
-
-function normalizeSrcsetForHost(host, srcset) {
-  const value = String(srcset || "").trim();
-  if (!value) return "";
-  return value
-    .split(",")
-    .map((entry) => {
-      const trimmed = entry.trim();
-      if (!trimmed) return "";
-      const parts = trimmed.split(/\s+/);
-      const url = parts.shift() || "";
-      const descriptor = parts.join(" ");
-      const resolvedUrl = resolveHostImageSrc(host, url);
-      return descriptor ? `${resolvedUrl} ${descriptor}` : resolvedUrl;
-    })
-    .filter(Boolean)
-    .join(", ");
-}
-
-function normalizeMediaNodeUrlsForHost(host, node) {
-  if (!node || !node.querySelectorAll) return;
-  const elements = [];
-  if (node.matches?.("img, source")) elements.push(node);
-  node.querySelectorAll?.("img, source")?.forEach((el) => elements.push(el));
-  elements.forEach((el) => {
-    const src = el.getAttribute("src") || "";
-    if (src) {
-      el.setAttribute("src", resolveHostImageSrc(host, src));
-    }
-    const srcset = el.getAttribute("srcset") || "";
-    if (srcset) {
-      el.setAttribute("srcset", normalizeSrcsetForHost(host, srcset));
-    }
-  });
-}
-
-function syncNonEditableImagesFromPatch(host, patchHtml) {
-  if (!host || !host.querySelectorAll) return 0;
-  const parsed = parseFragmentHtmlDocument(patchHtml);
-  if (!parsed) return 0;
-
-  const liveMediaRoots = collectNonEditableMediaRoots(host);
-  const patchMediaRoots = collectNonEditableMediaRoots(parsed.body || parsed);
-  if (liveMediaRoots.length && patchMediaRoots.length) {
-    if (liveMediaRoots.length !== patchMediaRoots.length) return 0;
-    let mediaUpdated = 0;
-    liveMediaRoots.forEach((liveNode, idx) => {
-      const patchNode = patchMediaRoots[idx];
-      if (!patchNode || !liveNode?.isConnected) return;
-      const patchClone = patchNode.cloneNode(true);
-      normalizeMediaNodeUrlsForHost(host, patchClone);
-      const nextHtml = patchClone.outerHTML || "";
-      const currentHtml = liveNode.outerHTML || "";
-      if (!nextHtml || nextHtml === currentHtml) return;
-      liveNode.outerHTML = nextHtml;
-      mediaUpdated += 1;
-    });
-    if (mediaUpdated > 0) return mediaUpdated;
-  }
-
-  const liveImages = collectNonEditableImages(host);
-  const patchImages = collectNonEditableImages(parsed.body || parsed);
-  if (!liveImages.length || !patchImages.length) return 0;
-  if (liveImages.length !== patchImages.length) return 0;
-
-  let updated = 0;
-  liveImages.forEach((liveImg, idx) => {
-    const patchImg = patchImages[idx];
-    if (!patchImg) return;
-
-    const srcRaw = patchImg.getAttribute("src") || "";
-    if (srcRaw) {
-      const nextSrc = resolveHostImageSrc(host, srcRaw);
-      if ((liveImg.getAttribute("src") || "") !== nextSrc) {
-        liveImg.setAttribute("src", nextSrc);
-        updated += 1;
-      }
-    }
-
-    const nextAlt = patchImg.getAttribute("alt") || "";
-    if ((liveImg.getAttribute("alt") || "") !== nextAlt) {
-      liveImg.setAttribute("alt", nextAlt);
-    }
-
-    const nextTitle = patchImg.getAttribute("title");
-    if (nextTitle === null || nextTitle === "") {
-      if (liveImg.hasAttribute("title")) liveImg.removeAttribute("title");
-    } else if ((liveImg.getAttribute("title") || "") !== nextTitle) {
-      liveImg.setAttribute("title", nextTitle);
-    }
-  });
-
-  return updated;
-}
-
-function parseDatastarEventBlock(block) {
-  const lines = String(block || "")
-    .split(/\r?\n/)
-    .filter(Boolean);
-  let event = "message";
-  const payload = {};
-  lines.forEach((line) => {
-    if (line.startsWith("event:")) {
-      event = line.slice(6).trim();
-      return;
-    }
-    if (!line.startsWith("data:")) return;
-    let raw = line.slice(5);
-    if (raw.startsWith(" ")) raw = raw.slice(1);
-    const sep = raw.indexOf(" ");
-    if (sep <= 0) return;
-    const key = raw.slice(0, sep);
-    const value = raw.slice(sep + 1);
-    if (key === "elements") {
-      payload.elements = payload.elements
-        ? `${payload.elements}\n${value}`
-        : value;
-      return;
-    }
-    payload[key] = value;
-  });
-  return { event, payload };
-}
-
-function keyDepth(key) {
-  if (!key) return 99;
-  if (key.startsWith("section:")) return 1;
-  if (key.startsWith("field:")) return 2;
-  if (key.startsWith("subsection:")) return key.split(":").length >= 4 ? 3 : 2;
-  return 50;
-}
-
-function isDescendantKey(child, parent) {
-  if (!child || !parent || child === parent) return false;
-  if (parent.startsWith("section:")) {
-    const sec = parent.slice("section:".length);
-    return (
-      child.startsWith(`field:${sec}:`) ||
-      child.startsWith(`subsection:${sec}:`)
-    );
-  }
-  if (parent.startsWith("subsection:")) {
-    const parts = parent.split(":");
-    if (parts.length === 3) return child.startsWith(`${parent}:`);
-  }
-  return false;
-}
-
+/**
+ * Check whether a section key still has descendant draft keys.
+ * Does not read draft contents or mutate draft state.
+ */
 function hasDescendantScopedDrafts(sectionKey) {
-  if (!sectionKey || !sectionKey.startsWith("section:")) return false;
-  for (const scopedKey of draftMarkdownByScopedKey.keys()) {
-    if (isDescendantKey(scopedKey, sectionKey)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function isScopeOrDescendantKey(key, scopeKey) {
-  if (!key || !scopeKey) return false;
-  return key === scopeKey || isDescendantKey(key, scopeKey);
+  return hasDescendantScopedDraftsHelper(
+    sectionKey,
+    draftMarkdownByScopedKey.keys(),
+  );
 }
 
 async function requestRenderedFragmentsDatastar({
@@ -7242,29 +7057,19 @@ function hasBlockingExtraContent(editor = activeEditor) {
 /**
  * Build a breadcrumb label for the window hierarchy
  */
+/**
+ * Read the active fullscreen hierarchy from the current target state.
+ * Does not mutate the scope lens or canonical markdown.
+ */
 function getActiveHierarchy() {
-  const scope = activeFieldScope || "field";
-  const name = activeFieldName || "";
-  const type = activeFieldType || "";
-  const isContainer = type === "container";
-  const explicitSection =
-    activeFieldSection || getMetaAttr(activeTarget, "section") || "";
-  const explicitSubsection =
-    activeFieldSubsection || getMetaAttr(activeTarget, "subsection") || "";
-  const inferredSectionFromSub =
-    scope === "subsection" ? findSectionNameForSubsection(name) : "";
-  let subsection = explicitSubsection || (scope === "subsection" ? name : "");
-  if (!subsection && scope === "field" && activeTarget?.closest) {
-    const subWrap = activeTarget.closest('[data-mfe-scope="subsection"]');
-    subsection = getMetaAttr(subWrap, "name") || "";
-  }
-  const section =
-    explicitSection ||
-    inferredSectionFromSub ||
-    (scope === "section" ? name : "") ||
-    (subsection ? findSectionNameForSubsection(subsection) : "");
-
-  return { scope, name, section, subsection, type, isContainer };
+  return getActiveHierarchyHelper({
+    activeFieldScope,
+    activeFieldName,
+    activeFieldType,
+    activeFieldSection,
+    activeFieldSubsection,
+    activeTarget,
+  });
 }
 
 function getConfiguredSectionsIndex() {
@@ -7272,726 +7077,219 @@ function getConfiguredSectionsIndex() {
   return Array.isArray(cfg.sectionsIndex) ? cfg.sectionsIndex : [];
 }
 
-function resolveBreadcrumbTargetFromScope(scope, type) {
-  const normalizedScope = normalizeScopeKind(scope || "field");
-  if (normalizedScope === "document") return "document";
-  if (normalizedScope === "section") return "section";
-  if (normalizedScope === "subsection") return "subsection";
-  return String(type || "") === "container" ? "container" : "field";
-}
-
-function resolveContentIdForScopeMeta({
-  scope = "field",
-  type = "tag",
-  section = "",
-  subsection = "",
-  name = "",
-} = {}) {
-  const target = resolveBreadcrumbTargetFromScope(scope, type);
-  if (target === "document") return "document:root";
-  if (target === "section") {
-    const sectionName = section || name;
-    return getBreadcrumbContentId("section", sectionName, "", sectionName);
-  }
-  if (target === "subsection") {
-    const sectionName = section || "";
-    const subsectionName = subsection || name;
-    return getBreadcrumbContentId(
-      "subsection",
-      sectionName,
-      subsectionName,
-      subsectionName,
-    );
-  }
-  return getBreadcrumbContentId(target, section, subsection, name);
-}
-
-function ensureLensNode(lens, node, parentContentId) {
-  if (!lens || !node?.contentId) return;
-  if (!lens.nodesByContentId.has(node.contentId)) {
-    lens.nodesByContentId.set(node.contentId, node);
-  }
-  if (parentContentId && !lens.parentByContentId.has(node.contentId)) {
-    lens.parentByContentId.set(node.contentId, parentContentId);
-  }
-}
-
+/**
+ * Build the session scope lens from current indexes.
+ * Does not read live editor state or canonical markdown.
+ */
 function buildSessionScopeLens() {
-  const lens = {
-    nodesByContentId: new Map(),
-    parentByContentId: new Map(),
-  };
-
-  ensureLensNode(
-    lens,
-    {
-      contentId: "document:root",
-      target: "document",
-      scope: "document",
-      section: "",
-      subsection: "",
-      name: "document",
-      type: "container",
-      isContainer: true,
-    },
-    "",
-  );
-
-  getConfiguredSectionsIndex().forEach((sectionEntry) => {
-    const sectionName = String(sectionEntry?.name || "").trim();
-    if (!sectionName) return;
-    const sectionId = resolveContentIdForScopeMeta({
-      scope: "section",
-      section: sectionName,
-      name: sectionName,
-      type: "container",
-    });
-    ensureLensNode(
-      lens,
-      {
-        contentId: sectionId,
-        target: "section",
-        scope: "section",
-        section: sectionName,
-        subsection: "",
-        name: sectionName,
-        type: "container",
-        isContainer: true,
-      },
-      "document:root",
-    );
-
-    const subsectionEntries = Array.isArray(sectionEntry?.subsections)
-      ? sectionEntry.subsections
-      : [];
-    subsectionEntries.forEach((subsectionEntry) => {
-      const subsectionName = String(subsectionEntry?.name || "").trim();
-      if (!subsectionName) return;
-      const subsectionId = resolveContentIdForScopeMeta({
-        scope: "subsection",
-        section: sectionName,
-        subsection: subsectionName,
-        name: subsectionName,
-        type: "container",
-      });
-      ensureLensNode(
-        lens,
-        {
-          contentId: subsectionId,
-          target: "subsection",
-          scope: "subsection",
-          section: sectionName,
-          subsection: subsectionName,
-          name: subsectionName,
-          type: "container",
-          isContainer: true,
-        },
-        sectionId,
-      );
-    });
+  return buildSessionScopeLensHelper({
+    sectionsIndex: getConfiguredSectionsIndex(),
+    fieldsIndex: getFieldsIndex(),
+    contentIndexTargets: buildContentIndex()?.targets || [],
   });
-
-  getFieldsIndex().forEach((fieldEntry) => {
-    const name = String(fieldEntry?.name || "").trim();
-    if (!name) return;
-    const section = String(fieldEntry?.section || "").trim();
-    const subsection = String(fieldEntry?.subsection || "").trim();
-    const fieldType = String(fieldEntry?.fieldType || "tag").trim() || "tag";
-    const target = fieldType === "container" ? "container" : "field";
-    const contentId = resolveContentIdForScopeMeta({
-      scope: "field",
-      type: fieldType,
-      section,
-      subsection,
-      name,
-    });
-    if (!contentId) return;
-    const parentContentId = subsection
-      ? resolveContentIdForScopeMeta({
-          scope: "subsection",
-          section,
-          subsection,
-          name: subsection,
-        })
-      : section
-        ? resolveContentIdForScopeMeta({
-            scope: "section",
-            section,
-            name: section,
-          })
-        : "document:root";
-    ensureLensNode(
-      lens,
-      {
-        contentId,
-        target,
-        scope: "field",
-        section,
-        subsection,
-        name,
-        type: fieldType,
-        isContainer: target === "container",
-      },
-      parentContentId,
-    );
-  });
-
-  const index = buildContentIndex();
-  const targets = Array.isArray(index?.targets) ? index.targets : [];
-  targets.forEach((targetEntry) => {
-    const scope = normalizeScopeKind(targetEntry?.scope || "field");
-    const name = String(targetEntry?.name || "").trim();
-    const section = String(targetEntry?.section || "").trim();
-    const subsection = String(targetEntry?.subsection || "").trim();
-    const type = String(targetEntry?.fieldType || "tag").trim() || "tag";
-    const contentId = resolveContentIdForScopeMeta({
-      scope,
-      type,
-      section,
-      subsection,
-      name,
-    });
-    if (!contentId || contentId === "document:root") return;
-    const parentContentId =
-      scope === "section"
-        ? "document:root"
-        : scope === "subsection"
-          ? resolveContentIdForScopeMeta({
-              scope: "section",
-              section,
-              name: section,
-            })
-          : subsection
-            ? resolveContentIdForScopeMeta({
-                scope: "subsection",
-                section,
-                subsection,
-                name: subsection,
-              })
-            : section
-              ? resolveContentIdForScopeMeta({
-                  scope: "section",
-                  section,
-                  name: section,
-                })
-              : "document:root";
-    ensureLensNode(
-      lens,
-      {
-        contentId,
-        target: resolveBreadcrumbTargetFromScope(scope, type),
-        scope,
-        section,
-        subsection,
-        name,
-        type,
-        isContainer: type === "container",
-      },
-      parentContentId,
-    );
-  });
-
-  return lens;
 }
 
+/**
+ * Read a lens node from the active session scope lens.
+ * Does not infer missing nodes.
+ */
 function getLensNode(contentId) {
-  if (!sessionScopeLens || !contentId) return null;
-  return sessionScopeLens.nodesByContentId.get(contentId) || null;
+  return getLensNodeHelper(sessionScopeLens, contentId);
 }
 
-function resolveAnchorContentIdFromOriginKey(originKey) {
-  const originMeta = parseOriginScopeMeta(originKey);
-  if (!originMeta) return "document:root";
-  return (
-    resolveContentIdForScopeMeta({
-      scope: originMeta.scopeKind,
-      section: originMeta.section || "",
-      subsection: originMeta.subsection || "",
-      name: originMeta.name || "",
-      type: "tag",
-    }) || "document:root"
-  );
-}
-
-function resolveSessionScopeAnchorContentId(payload) {
-  const originKey = String(
-    payload?.originFieldKey || payload?.originKey || payload?.fieldId || "",
-  );
-  const originResolved = resolveAnchorContentIdFromOriginKey(originKey);
-  if (originResolved && originResolved !== "document:root") {
-    return originResolved;
-  }
-  const hierarchy = deriveHierarchyFromPayload(payload || {});
-  return (
-    resolveContentIdForScopeMeta({
-      scope: hierarchy.scope || "field",
-      type: hierarchy.type || "tag",
-      section: hierarchy.section || "",
-      subsection: hierarchy.subsection || "",
-      name: hierarchy.name || "",
-    }) || "document:root"
-  );
-}
-
-function resolveSessionScopeActiveContentId(payload) {
-  const hierarchy = deriveHierarchyFromPayload(payload || {});
-  return (
-    resolveContentIdForScopeMeta({
-      scope: hierarchy.scope || "field",
-      type: hierarchy.type || "tag",
-      section: hierarchy.section || "",
-      subsection: hierarchy.subsection || "",
-      name: hierarchy.name || "",
-    }) || "document:root"
-  );
-}
-
+/**
+ * Sync the active session scope lens globals from payload identity.
+ * Does not open editors or mutate canonical markdown.
+ */
 function syncSessionScopeLens(payload, identityKey) {
-  const nextIdentityKey = String(identityKey || "");
-  const shouldRebuild =
-    !sessionScopeLens || sessionScopeIdentityKey !== nextIdentityKey;
-  if (shouldRebuild) {
-    sessionScopeLens = buildSessionScopeLens();
-    sessionScopeIdentityKey = nextIdentityKey;
-    sessionScopeAnchorContentId = resolveSessionScopeAnchorContentId(payload);
-  }
-  sessionScopeActiveContentId = resolveSessionScopeActiveContentId(payload);
-  if (!getLensNode(sessionScopeAnchorContentId)) {
-    sessionScopeAnchorContentId = "document:root";
-  }
-  if (!getLensNode(sessionScopeActiveContentId)) {
-    sessionScopeActiveContentId =
-      sessionScopeAnchorContentId || "document:root";
-  }
+  const nextState = syncSessionScopeLensState({
+    sessionScopeLens,
+    sessionScopeIdentityKey,
+    sessionScopeAnchorContentId,
+    sessionScopeActiveContentId,
+    payload,
+    identityKey,
+    sectionsIndex: getConfiguredSectionsIndex(),
+    fieldsIndex: getFieldsIndex(),
+    contentIndexTargets: buildContentIndex()?.targets || [],
+  });
+  sessionScopeLens = nextState.sessionScopeLens;
+  sessionScopeIdentityKey = nextState.sessionScopeIdentityKey;
+  sessionScopeAnchorContentId = nextState.sessionScopeAnchorContentId;
+  sessionScopeActiveContentId = nextState.sessionScopeActiveContentId;
 }
 
+/**
+ * Resolve hierarchy from the active session scope lens globals.
+ * Does not fall back to DOM-derived active target state.
+ */
 function resolveHierarchyFromSessionScopeLens() {
-  const activeNode = getLensNode(sessionScopeActiveContentId);
-  const anchorNode = getLensNode(sessionScopeAnchorContentId);
-  const fallbackNode = getLensNode("document:root");
-  const node = anchorNode || activeNode || fallbackNode;
-  if (!node) return null;
-  const scope = node.scope || "field";
-  const name = node.name || "";
-  const section = node.section || "";
-  const subsection = node.subsection || "";
-  const type = node.type || (node.isContainer ? "container" : "tag");
-  const isContainer = type === "container";
-  return { scope, name, section, subsection, type, isContainer };
-}
-
-function resolveLensNodeForBreadcrumb({
-  type = "",
-  contentId = "",
-  section = "",
-  subsection = "",
-  name = "",
-} = {}) {
-  if (!sessionScopeLens) return null;
-  const normalizedType = String(type || "")
-    .trim()
-    .toLowerCase();
-  const candidates = [];
-  if (contentId) candidates.push(String(contentId));
-
-  if (normalizedType === "document") {
-    candidates.push("document:root");
-  }
-  if (normalizedType === "section") {
-    const sectionName = String(section || name || "").trim();
-    candidates.push(
-      resolveContentIdForScopeMeta({
-        scope: "section",
-        section: sectionName,
-        name: sectionName,
-        type: "container",
-      }),
-    );
-  }
-  if (normalizedType === "subsection") {
-    const sectionName = String(section || "").trim();
-    const subsectionName = String(subsection || name || "").trim();
-    candidates.push(
-      resolveContentIdForScopeMeta({
-        scope: "subsection",
-        section: sectionName,
-        subsection: subsectionName,
-        name: subsectionName,
-        type: "container",
-      }),
-    );
-  }
-  if (normalizedType === "field" || normalizedType === "container") {
-    const sectionName = String(section || "").trim();
-    const subsectionName = String(subsection || "").trim();
-    const fieldName = String(name || "").trim();
-    candidates.push(
-      resolveContentIdForScopeMeta({
-        scope: "field",
-        type: normalizedType === "container" ? "container" : "tag",
-        section: sectionName,
-        subsection: subsectionName,
-        name: fieldName,
-      }),
-    );
-    candidates.push(
-      resolveContentIdForScopeMeta({
-        scope: "field",
-        type: "tag",
-        section: sectionName,
-        subsection: subsectionName,
-        name: fieldName,
-      }),
-    );
-  }
-
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    const node = getLensNode(candidate);
-    if (node) return node;
-  }
-  return null;
-}
-
-function resolveCanonicalMarkdownForLensNode(node) {
-  const canonicalMarkdown = resolveMarkerBearingCanonicalMarkdownForLens();
-  if (!node || node.scope === "document") {
-    return canonicalMarkdown;
-  }
-  return resolveMarkdownForScopeFromCanonical({
-    markdown: canonicalMarkdown,
-    scope: node.scope || "field",
-    section: node.section || "",
-    subsection: node.subsection || "",
-    name: node.name || "",
+  return resolveHierarchyFromSessionScopeLensHelper({
+    sessionScopeLens,
+    sessionScopeActiveContentId,
+    sessionScopeAnchorContentId,
   });
 }
 
+/**
+ * Resolve a breadcrumb target to an existing lens node.
+ * Does not rebuild the lens or open editors.
+ */
+function resolveLensNodeForBreadcrumb(params = {}) {
+  return resolveLensNodeForBreadcrumbHelper({
+    sessionScopeLens,
+    ...params,
+  });
+}
+
+/**
+ * Resolve marker-bearing canonical markdown for the current fullscreen lens.
+ * Does not mutate canonical state or runtime projection caches.
+ */
 function resolveMarkerBearingCanonicalMarkdownForLens() {
-  const canonicalStateMarkdown = String(
-    getCanonicalMarkdownState().markdown || "",
-  );
-  if (hasCanonicalMarkers(canonicalStateMarkdown)) {
-    return canonicalStateMarkdown;
-  }
-  const currentLang = normalizeLangValue(getLanguagesConfig().current);
-  const stateForCurrentLang = getStateForLanguage(currentLang);
-  const stateDraftForCurrentLang = String(
-    stateForCurrentLang?.getDraft?.() || "",
-  );
-  if (hasCanonicalMarkers(stateDraftForCurrentLang)) {
-    return stateDraftForCurrentLang;
-  }
-  const activeStateDraft = String(activeDocumentState?.getDraft?.() || "");
-  if (hasCanonicalMarkers(activeStateDraft)) {
-    return activeStateDraft;
-  }
-  const configMarkdown = getDocumentConfigMarkdownRaw();
-  if (hasCanonicalMarkers(configMarkdown)) {
-    return configMarkdown;
-  }
-  return canonicalStateMarkdown;
+  return resolveMarkerBearingCanonicalMarkdownForLensHelper({
+    getCanonicalMarkdownState,
+    getLanguagesConfig,
+    getStateForLanguage: (lang) => getStateForLanguage(normalizeLangValue(lang)),
+    activeDocumentState,
+    getDocumentConfigMarkdownRaw,
+    hasCanonicalMarkers,
+  });
 }
 
+/**
+ * Resolve canonical markdown for a specific lens node.
+ * Does not build or mutate the lens graph.
+ */
+function resolveCanonicalMarkdownForLensNode(node) {
+  return resolveCanonicalMarkdownForLensNodeHelper(node, {
+    getCanonicalMarkdownState,
+    getLanguagesConfig,
+    getStateForLanguage: (lang) => getStateForLanguage(normalizeLangValue(lang)),
+    activeDocumentState,
+    getDocumentConfigMarkdownRaw,
+    hasCanonicalMarkers,
+  });
+}
+
+/**
+ * Resolve indexed markdown for a lens node.
+ * Does not synthesize canonical fallback content.
+ */
 function resolveIndexedMarkdownForLensNode(node) {
-  if (!node) return "";
-  if (node.scope === "section") {
-    const sectionEntry = node.section ? getSectionEntry(node.section) : null;
-    return decodeMaybeB64(sectionEntry?.markdownB64 || "");
-  }
-  if (node.scope === "subsection") {
-    const subsectionEntry =
-      node.section && node.subsection
-        ? getSubsectionEntry(node.section, node.subsection)
-        : null;
-    return decodeMaybeB64(subsectionEntry?.markdownB64 || "");
-  }
-  if (node.scope === "field") {
-    const fields = getFieldsIndex();
-    const exact = fields.find((field) => {
-      if ((field?.name || "") !== (node.name || "")) return false;
-      if ((field?.section || "") !== (node.section || "")) return false;
-      if ((field?.subsection || "") !== (node.subsection || "")) {
-        return false;
-      }
-      return true;
-    });
-    const fallback =
-      exact ||
-      fields.find((field) => {
-        if ((field?.name || "") !== (node.name || "")) return false;
-        if ((field?.section || "") !== (node.section || "")) return false;
-        return true;
-      });
-    return decodeMaybeB64(fallback?.markdownB64 || "");
-  }
-  return "";
+  return resolveIndexedMarkdownForLensNodeHelper(node, decodeMaybeB64);
 }
 
+/**
+ * Resolve marker-bearing markdown for a lens node with canonical fallback.
+ * Does not change session or breadcrumb state.
+ */
 function resolveMarkerBearingMarkdownForLensNode(node) {
-  const indexedMarkdown = resolveIndexedMarkdownForLensNode(node);
-  if (hasCanonicalMarkers(indexedMarkdown)) {
-    return indexedMarkdown;
-  }
-  try {
-    const canonicalSlice = resolveCanonicalMarkdownForLensNode(node);
-    if (hasCanonicalMarkers(canonicalSlice)) {
-      return canonicalSlice;
-    }
-  } catch (error) {
-    debugWarn("[mfe:lens] canonical-slice-resolve failed", {
-      scope: String(node?.scope || ""),
-      section: String(node?.section || ""),
-      subsection: String(node?.subsection || ""),
-      name: String(node?.name || ""),
-      error: String(error?.message || error || ""),
-    });
-  }
-  return resolveMarkerBearingCanonicalMarkdownForLens();
-}
-
-function buildVirtualTargetFromLensNode(node) {
-  if (!node || !activeTarget) return null;
-  const pageId = activeTarget.getAttribute("data-page") || "0";
-  const virtual = document.createElement("div");
-  virtual.className = "fe-editable md-edit mfe-virtual";
-  virtual.setAttribute("data-page", pageId);
-  virtual.setAttribute("data-mfe-scope", node.scope || "field");
-  virtual.setAttribute("data-mfe-name", node.name || "document");
-  virtual.setAttribute("data-field-type", node.type || "tag");
-  virtual.setAttribute(
-    "data-mfe-markdown-kind",
-    node.scope === "document" ? "canonical" : "scoped",
-  );
-  if (node.section) {
-    virtual.setAttribute("data-mfe-section", node.section);
-  }
-  if (node.subsection) {
-    virtual.setAttribute("data-mfe-subsection", node.subsection);
-  }
-  const scopeKey = buildScopeKeyFromMeta({
-    scopeKind: node.scope || "field",
-    section: node.section || "",
-    subsection: node.subsection || "",
-    name: node.name || "document",
+  return resolveMarkerBearingMarkdownForLensNodeHelper(node, {
+    decodeMaybeB64,
+    hasCanonicalMarkers,
+    getCanonicalMarkdownState,
+    getLanguagesConfig,
+    getStateForLanguage: (lang) => getStateForLanguage(normalizeLangValue(lang)),
+    activeDocumentState,
+    getDocumentConfigMarkdownRaw,
+    debugWarn,
   });
-  if (scopeKey) {
-    virtual.setAttribute("data-mfe-key", scopeKey);
-  }
-  applyActiveOriginKeyToVirtualTarget(virtual);
-  virtual.setAttribute(
-    "data-markdown-b64",
-    encodeMarkdownBase64(resolveMarkerBearingMarkdownForLensNode(node)),
-  );
-  return virtual;
 }
 
+/**
+ * Stamp the active origin key on a virtual breadcrumb target.
+ * Does not derive or mutate the origin key.
+ */
 function applyActiveOriginKeyToVirtualTarget(virtual) {
-  if (!virtual) return;
-  const originKey = String(activeOriginFieldKey || activeOriginKey || "");
-  if (!originKey) return;
-  virtual.setAttribute("data-mfe-origin-key", originKey);
-}
-
-function deriveHierarchyFromPayload(payload) {
-  const scope = payload?.fieldScope || "field";
-  const type = payload?.fieldType || "tag";
-  const isContainer = type === "container";
-  const name = payload?.fieldName || "";
-  let section = payload?.fieldSection || "";
-  let subsection = payload?.fieldSubsection || "";
-
-  if (scope === "section") {
-    section = name;
-    subsection = "";
-  } else if (scope === "subsection") {
-    subsection = name;
-    if (!section && subsection) {
-      section = findSectionNameForSubsection(subsection) || "";
-    }
-  } else if (!section && subsection) {
-    section = findSectionNameForSubsection(subsection) || "";
-  }
-
-  if (scope === "document" && !section && !subsection) {
-    const originScopeMeta = parseOriginScopeMeta(
-      payload?.originFieldKey || payload?.originKey || payload?.fieldId || "",
-    );
-    if (originScopeMeta) {
-      section = originScopeMeta.section || "";
-      subsection = originScopeMeta.subsection || "";
-    }
-  }
-
-  const resolvedName =
-    scope === "document" && name === "document"
-      ? parseOriginScopeMeta(
-          payload?.originFieldKey ||
-            payload?.originKey ||
-            payload?.fieldId ||
-            "",
-        )?.name || name
-      : name;
-
-  return {
-    scope,
-    name: resolvedName,
-    section,
-    subsection,
-    type,
-    isContainer,
-  };
-}
-
-function updateBreadcrumbAnchorFromPayload(payload) {
-  const pageId = String(payload?.pageId || "0");
-  const originKey = String(
-    payload?.originFieldKey || payload?.originKey || payload?.fieldId || "",
-  );
-  const nextIdentityKey = `${pageId}|${originKey}`;
-  syncSessionScopeLens(payload, nextIdentityKey);
-  if (breadcrumbAnchor && breadcrumbAnchorIdentityKey === nextIdentityKey) {
-    return;
-  }
-  breadcrumbAnchor = deriveHierarchyFromPayload(payload);
-  breadcrumbAnchorIdentityKey = nextIdentityKey;
-}
-
-function getBreadcrumbContentId(target, section, subsection, name) {
-  if (target === "section") {
-    return section ? `section:${section}` : "";
-  }
-  if (target === "subsection") {
-    return section && subsection ? `subsection:${section}:${subsection}` : "";
-  }
-  if (target === "container" || target === "field") {
-    if (section && subsection && name) {
-      return `subsection:${section}:${subsection}:${name}`;
-    }
-    return name ? `field:${section ? `${section}:` : ""}${name}` : "";
-  }
-  return "";
-}
-
-function buildBreadcrumbParts() {
-  const active = getActiveHierarchy();
-  const source =
-    resolveHierarchyFromSessionScopeLens() || breadcrumbAnchor || active;
-  const { scope, name, section, subsection, type, isContainer } = source;
-
-  const parts = [
-    {
-      label: "Document",
-      target: "document",
-      section,
-      subsection,
-      name,
-      contentId: "document:root",
-    },
-  ];
-  if (section) {
-    parts.push({
-      label: `Section: ${section}`,
-      target: "section",
-      section,
-      subsection,
-      name,
-      contentId: getBreadcrumbContentId("section", section, subsection, name),
-    });
-  }
-  if (subsection) {
-    parts.push({
-      label: `Sub: ${subsection}`,
-      target: "subsection",
-      section,
-      subsection,
-      name,
-      contentId: getBreadcrumbContentId(
-        "subsection",
-        section,
-        subsection,
-        name,
-      ),
-    });
-  }
-  if (scope === "field" && isContainer && name) {
-    parts.push({
-      label: `Container: ${name}`,
-      target: "container",
-      section,
-      subsection,
-      name,
-      contentId: getBreadcrumbContentId("container", section, subsection, name),
-    });
-  }
-  if (!isContainer && scope === "field" && name) {
-    parts.push({
-      label: `Field: ${name}`,
-      target: "field",
-      section,
-      subsection,
-      name,
-      contentId: getBreadcrumbContentId("field", section, subsection, name),
-    });
-  }
-
-  if (!parts.length) {
-    if (scope === "section") return [{ label: "Section", target: "section" }];
-    if (scope === "subsection") {
-      return [{ label: "Subsection", target: "subsection" }];
-    }
-    if (type === "container") {
-      return [{ label: "Container", target: "container" }];
-    }
-    return [{ label: "Field", target: "field" }];
-  }
-
-  return parts;
-}
-
-function buildBreadcrumbItems() {
-  const parts = buildBreadcrumbParts();
-  const currentTarget = getBreadcrumbsCurrentTarget();
-
-  return parts.map((part) => {
-    if (part.target === currentTarget) {
-      return {
-        label: part.label,
-        target: part.target,
-        contentId: part.contentId || "",
-        section: part.section || "",
-        subsection: part.subsection || "",
-        name: part.name || "",
-        state: "current",
-      };
-    }
-
-    return {
-      label: part.label,
-      target: part.target,
-      contentId: part.contentId || "",
-      section: part.section || "",
-      subsection: part.subsection || "",
-      name: part.name || "",
-      state: "link",
-    };
+  return applyActiveOriginKeyToVirtualTargetHelper(virtual, {
+    activeOriginFieldKey,
+    activeOriginKey,
   });
 }
 
-function getBreadcrumbsCurrentTarget() {
-  const activeLensNode = getLensNode(sessionScopeActiveContentId);
-  if (activeLensNode) {
-    if (activeLensNode.target === "document") return "document";
-    if (activeLensNode.target === "section") return "section";
-    if (activeLensNode.target === "subsection") return "subsection";
-    if (activeLensNode.target === "container") return "container";
-    return "field";
+/**
+ * Build a virtual target element for breadcrumb navigation.
+ * Does not open the editor or mutate session state.
+ */
+function buildVirtualTargetFromLensNode(node) {
+  return buildVirtualTargetFromLensNodeHelper(node, {
+    activeTarget,
+    activeOriginFieldKey,
+    activeOriginKey,
+    encodeMarkdownBase64,
+    decodeMaybeB64,
+    hasCanonicalMarkers,
+    getCanonicalMarkdownState,
+    getLanguagesConfig,
+    getStateForLanguage: (lang) => getStateForLanguage(normalizeLangValue(lang)),
+    activeDocumentState,
+    getDocumentConfigMarkdownRaw,
+    debugWarn,
+  });
+}
+
+/**
+ * Recompute breadcrumb anchor state from a payload and current lens.
+ * Does not open editors or mutate canonical markdown.
+ */
+function updateBreadcrumbAnchorFromPayload(payload) {
+  const nextState = updateBreadcrumbAnchorFromPayloadHelper({
+    payload,
+    breadcrumbAnchorIdentityKey,
+    sessionScopeLens,
+    sessionScopeIdentityKey,
+    sessionScopeAnchorContentId,
+    sessionScopeActiveContentId,
+    sectionsIndex: getConfiguredSectionsIndex(),
+    fieldsIndex: getFieldsIndex(),
+    contentIndexTargets: buildContentIndex()?.targets || [],
+  });
+  sessionScopeLens = nextState.sessionScopeLens;
+  sessionScopeIdentityKey = nextState.sessionScopeIdentityKey;
+  sessionScopeAnchorContentId = nextState.sessionScopeAnchorContentId;
+  sessionScopeActiveContentId = nextState.sessionScopeActiveContentId;
+  if (nextState.breadcrumbAnchor !== null) {
+    breadcrumbAnchor = nextState.breadcrumbAnchor;
+    breadcrumbAnchorIdentityKey = nextState.breadcrumbAnchorIdentityKey;
   }
-  if (isDocumentScopeActive()) return "document";
-  if (activeFieldScope === "section") return "section";
-  if (activeFieldScope === "subsection") return "subsection";
-  if (activeFieldType === "container") return "container";
-  return "field";
+}
+
+/**
+ * Build breadcrumb parts from active hierarchy and lens state.
+ * Does not resolve click behavior.
+ */
+function buildBreadcrumbParts() {
+  return buildBreadcrumbPartsHelper({
+    activeHierarchy: getActiveHierarchy(),
+    lensHierarchy: resolveHierarchyFromSessionScopeLens(),
+    breadcrumbAnchor,
+  });
+}
+
+/**
+ * Build breadcrumb items with current/link state.
+ * Does not resolve navigation targets beyond item metadata.
+ */
+function buildBreadcrumbItems() {
+  return buildBreadcrumbItemsHelper({
+    parts: buildBreadcrumbParts(),
+    currentTarget: getBreadcrumbsCurrentTarget(),
+  });
+}
+
+/**
+ * Resolve the current breadcrumb target from lens state and fullscreen mode.
+ * Does not build breadcrumb labels.
+ */
+function getBreadcrumbsCurrentTarget() {
+  return getBreadcrumbsCurrentTargetHelper({
+    sessionScopeLens,
+    sessionScopeActiveContentId,
+    isDocumentScopeActive,
+    activeFieldScope,
+    activeFieldType,
+  });
 }
 
 function getCanonicalPreviewSnapshot() {
@@ -9749,8 +9047,7 @@ function recompileMountGraph() {
 }
 
 function isDevMode() {
-  const cfg = window.MarkdownFrontEditorConfig || {};
-  return Boolean(cfg.debug || cfg.debugShowSections || cfg.debugLabels);
+  return isDevModeHelper(window.MarkdownFrontEditorConfig || {});
 }
 
 function nodeTouchesMfe(node) {
