@@ -21,12 +21,12 @@ function buildScopeSessionScopeKey(scopeMeta = {}) {
 export function createScopeSession(params = {}) {
   const stateId = normalizeText(params.stateId);
   if (!stateId) {
-    throw new Error("[mfe] scope-session-v2: stateId is required");
+    throw new Error("[mfe] scope-session: stateId is required");
   }
   const scopeMeta = freezeScopeMeta(params.scopeMeta || {});
   const scopeKey = buildScopeSessionScopeKey(scopeMeta);
   if (!scopeKey) {
-    throw new Error("[mfe] scope-session-v2: unable to resolve scope key");
+    throw new Error("[mfe] scope-session: unable to resolve scope key");
   }
   return Object.freeze({
     stateId,

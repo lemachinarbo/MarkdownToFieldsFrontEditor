@@ -10,8 +10,8 @@ import {
   projectCanonicalSlice,
   resolveCanonicalScopeSlice,
 } from "../src/canonical-scope-session.js";
-import { createScopeSession } from "../src/scope-session-v2.js";
-import { applyScopedEditV2 } from "../src/mutation-plan-v2.js";
+import { createScopeSession } from "../src/scope-session.js";
+import { applyScopedEdit } from "../src/mutation-plan.js";
 import { parseStructuralDocument } from "../src/structural-document.js";
 
 const CANONICAL = [
@@ -246,7 +246,7 @@ describe("runtime projection authority", () => {
 
       expect(validation.ok).toBe(true);
 
-      const result = applyScopedEditV2({
+      const result = applyScopedEdit({
         session: createScopeSession({
           stateId: "session:stable|en",
           lang: "en",

@@ -21,7 +21,7 @@ No scope creates a second document.
   - Tracks frontmatter separately and recomposes on save.
   - Emits state lifecycle (`STATE_OPENED`, `STATE_UPDATED`, `STATE_SAVED`, etc).
 
-- **Scope Session v2** (`src/scope-session-v2.js`)
+- **Scope Session** (`src/scope-session.js`)
   - Locks a state to one active scope key.
   - Save/edit is blocked if scope session does not match.
 
@@ -34,8 +34,8 @@ No scope creates a second document.
   - Keeps runtime editable boundaries in the editor.
   - Maps boundaries through transactions.
 
-- **Mutation Plan v2** (`src/mutation-plan-v2.js`)
-  - The single mutation engine (`applyScopedEditV2`) for scoped edits.
+- **Mutation Plan** (`src/mutation-plan.js`)
+  - The single mutation engine (`applyScopedEdit`) for scoped edits.
   - Used during live edits and save commit.
 
 ## 3) Open flow (what happens when editor opens)
@@ -55,8 +55,8 @@ Result: editor starts from canonical markdown, not from ad-hoc HTML.
 1. Editor update accepted only from human input source.
 2. Current scope meta is resolved from active scope.
 3. `applyMarkdownToState` routes to `applyScopeSlice`.
-4. `applyScopeSlice` calls `applyScopedEditV2`.
-5. V2 mutation rewrites only the allowed canonical range.
+4. `applyScopeSlice` calls `applyScopedEdit`.
+5. The mutation engine rewrites only the allowed canonical range.
 6. Leak checks ensure no out-of-scope byte mutation.
 7. `DocumentState.setDraft` stores new canonical body.
 8. Status goes to **Draft**.
@@ -67,7 +67,7 @@ Result: scope edits still mutate one canonical body.
 
 1. Build save plan from dirty language states.
 2. Validate scope-session lock (must match current scope).
-3. Re-run V2 mutation for commit input.
+3. Re-run the mutation engine for commit input.
 4. Run invariants before network:
    - marker graph safety
    - marker boundary adjacency safety
@@ -95,7 +95,7 @@ Result: live preview tries to stay structurally safe.
 
 - Single canonical draft per `(session, language)`.
 - Scope is a lens, not a copy.
-- One mutation path (`applyScopedEditV2`) for scoped rewriting.
+- One mutation path (`applyScopedEdit`) for scoped rewriting.
 - Scope-session lock prevents cross-scope accidental writes.
 - Pre-commit invariants are explicit and centralized.
 - Readback verification gate before final mark-saved.
@@ -146,7 +146,7 @@ If you are validating deterministic markdown preservation behavior, fullscreen i
 
 - One markdown source of truth per language (DocumentState + canonical body).
 - Scope as lens (no state fork; rebinds same state).
-- Deterministic scoped mutation path (applyScopedEditV2) for edit/save.
+- Deterministic scoped mutation path (`applyScopedEdit`) for edit/save.
 - Save safety gates (scope-session match, range leak checks, marker/boundary checks).
 - Readback verification before markSaved.
 - Draft/No changes/Saved status lifecycle is implemented. (*Partially fulfilled / remaining gaps*)

@@ -1,9 +1,8 @@
 import {
   createScopeSession,
   doesScopeSessionMatch,
-} from "../src/scope-session-v2.js";
-
-describe("scope-session-v2", () => {
+} from "../src/scope-session.js";
+describe("scope-session", () => {
   test("creates immutable session with stable scope key", () => {
     const session = createScopeSession({
       stateId: "state-1|en",

@@ -986,18 +986,18 @@ function applyProjectedScopeEdit({
     ? validationErrors[0]
     : "protected-span-count-mismatch";
   throw new Error(
-    `[mfe] mutation-plan-v2: protected spans changed (${failureReason})`,
+    `[mfe] mutation-plan: protected spans changed (${failureReason})`,
   );
 }
 
-export function applyScopedEditV2({
+export function applyScopedEdit({
   session,
   structuralDocument,
   editorContent,
   runtimeProjection = null,
 }) {
   if (!session || typeof session !== "object") {
-    throw new Error("[mfe] mutation-plan-v2: session is required");
+    throw new Error("[mfe] mutation-plan: session is required");
   }
   const scopeMeta = session.scopeMeta || {};
   const scopeKind = normalizeScopeKind(scopeMeta.scopeKind || "field");
@@ -1024,7 +1024,7 @@ export function applyScopedEditV2({
     );
     if (!graphAfterProjection.ok) {
       throw new Error(
-        `[mfe] mutation-plan-v2: document marker topology changed (${graphAfterProjection.reason})`,
+        `[mfe] mutation-plan: document marker topology changed (${graphAfterProjection.reason})`,
       );
     }
     const normalizedDocumentOutput = enforceMarkerBlankLineSeparation(
@@ -1032,7 +1032,7 @@ export function applyScopedEditV2({
     );
     if (hasStructuralMarkerBoundaryViolations(normalizedDocumentOutput)) {
       throw new Error(
-        "[mfe] mutation-plan-v2: document marker boundary violation",
+        "[mfe] mutation-plan: document marker boundary violation",
       );
     }
     return {
@@ -1079,7 +1079,7 @@ export function applyScopedEditV2({
     return {
       scopeKind,
       ok: false,
-      reason: "unsupported-scope-v2",
+      reason: "unsupported-scope",
       canonicalBody: beforeBody,
     };
   }
@@ -1087,7 +1087,7 @@ export function applyScopedEditV2({
   const boundaryViolation = hasStructuralMarkerBoundaryViolations(canonicalBody);
   if (boundaryViolation) {
     throw new Error(
-      "[mfe] mutation-plan-v2: marker boundary violation after scoped patch",
+      "[mfe] mutation-plan: marker boundary violation after scoped patch",
     );
   }
 
@@ -1097,7 +1097,7 @@ export function applyScopedEditV2({
     afterRange.contentStart,
     afterRange.trimmedContentEnd,
   );
-  const scopedOutboundMarkdown = buildOutboundPayloadV2({
+  const scopedOutboundMarkdown = buildOutboundPayload({
     canonicalBody,
     scopeMeta,
   });
@@ -1121,7 +1121,7 @@ export function applyScopedEditV2({
   };
 }
 
-export function buildOutboundPayloadV2({
+export function buildOutboundPayload({
   canonicalBody,
   scopeMeta,
 }) {

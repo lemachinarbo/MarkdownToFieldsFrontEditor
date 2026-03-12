@@ -1,4 +1,4 @@
-import { createScopeSession } from "../src/scope-session-v2.js";
+import { createScopeSession } from "../src/scope-session.js";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -7,7 +7,7 @@ import {
   parseStructuralDocument,
   resolveStructuralScopeRange,
 } from "../src/structural-document.js";
-import { applyScopedEditV2 } from "../src/mutation-plan-v2.js";
+import { applyScopedEdit } from "../src/mutation-plan.js";
 import {
   projectCanonicalSlice,
   resolveCanonicalScopeSlice,
@@ -93,7 +93,7 @@ const CHIROLOGY_MARKER_REGRESSION_FIXTURE = fs
   )
   .replace(/^---\n[\s\S]*?\n---\n\n/, "");
 
-describe("mutation-plan-v2", () => {
+describe("mutation-plan", () => {
   test("field right-edge edit keeps marker separation", () => {
     const session = createScopeSession({
       stateId: "s1|en",
@@ -106,7 +106,7 @@ describe("mutation-plan-v2", () => {
       },
     });
     const structuralDoc = parseStructuralDocument(CANONICAL);
-    const result = applyScopedEditV2({
+    const result = applyScopedEdit({
       session,
       structuralDocument: structuralDoc,
       editorContent: "# The Urban <br>Far",
@@ -149,7 +149,7 @@ describe("mutation-plan-v2", () => {
       lang: "en",
       scopeMeta,
     });
-    const result = applyScopedEditV2({
+    const result = applyScopedEdit({
       session,
       structuralDocument: parseStructuralDocument(CANONICAL_WITH_PLAIN_TAG_FIELD),
       editorContent,
@@ -196,13 +196,13 @@ describe("mutation-plan-v2", () => {
       },
     });
 
-    const first = applyScopedEditV2({
+    const first = applyScopedEdit({
       session: introSession,
       structuralDocument: parseStructuralDocument(CANONICAL),
       editorContent:
         "We grow food and ideas in the city. From rooftop gardens to indoor farms, we craft systems that actually produce. We work where soil, design, and tech collide.sss",
     });
-    const second = applyScopedEditV2({
+    const second = applyScopedEdit({
       session: titleSession,
       structuralDocument: parseStructuralDocument(first.canonicalBody),
       editorContent: "# The Urban <br>Farms",
@@ -239,7 +239,7 @@ describe("mutation-plan-v2", () => {
       "The Urban <br>Farms",
     );
 
-    const result = applyScopedEditV2({
+    const result = applyScopedEdit({
       session,
       structuralDocument: parseStructuralDocument(CANONICAL),
       editorContent: editedDisplay,
@@ -317,7 +317,7 @@ describe("mutation-plan-v2", () => {
       "#Next",
     ].join("\n");
 
-    const result = applyScopedEditV2({
+    const result = applyScopedEdit({
       session,
       structuralDocument: parseStructuralDocument(canonical),
       editorContent: editedDisplay,
@@ -358,7 +358,7 @@ describe("mutation-plan-v2", () => {
     const projection = projectCanonicalSlice(documentSlice);
     const editedDisplay = String(projection.displayText || "").replace(/^\n+/, "");
 
-    const result = applyScopedEditV2({
+    const result = applyScopedEdit({
       session,
       structuralDocument: parseStructuralDocument(CANONICAL),
       editorContent: editedDisplay,
@@ -422,7 +422,7 @@ describe("mutation-plan-v2", () => {
       "The Urban <br>Farms",
     );
 
-    const result = applyScopedEditV2({
+    const result = applyScopedEdit({
       session,
       structuralDocument: parseStructuralDocument(canonical),
       editorContent: editedDisplay,
@@ -485,7 +485,7 @@ describe("mutation-plan-v2", () => {
       runtimeBoundaries[5] = runtimeBoundaries[5] + 1;
     }
 
-    const result = applyScopedEditV2({
+    const result = applyScopedEdit({
       session,
       structuralDocument: parseStructuralDocument(COMPLEX_CANONICAL_BODY),
       editorContent: editedDisplay,
@@ -542,7 +542,7 @@ describe("mutation-plan-v2", () => {
       "Mushrooms and sprouts V2",
     );
 
-    const result = applyScopedEditV2({
+    const result = applyScopedEdit({
       session: sectionSession,
       structuralDocument: parseStructuralDocument(CANONICAL_WITH_SUBSECTIONS),
       editorContent: editedDisplay,
@@ -581,7 +581,7 @@ describe("mutation-plan-v2", () => {
       "How we work V2",
     );
 
-    const result = applyScopedEditV2({
+    const result = applyScopedEdit({
       session: subsectionSession,
       structuralDocument: parseStructuralDocument(CANONICAL_WITH_SUBSECTIONS),
       editorContent: editedDisplay,
@@ -668,7 +668,7 @@ describe("mutation-plan-v2", () => {
     const projection = projectCanonicalSlice(scopeSlice);
     const editedDisplay = mutate(projection.displayText);
 
-    const result = applyScopedEditV2({
+    const result = applyScopedEdit({
       session,
       structuralDocument: parseStructuralDocument(CANONICAL_WITH_SUBSECTIONS),
       editorContent: editedDisplay,
@@ -714,7 +714,7 @@ describe("mutation-plan-v2", () => {
     expect(anchor).toBeGreaterThan(0);
     const editedDisplay = `${display.slice(0, anchor)}steady ${display.slice(anchor)}`;
 
-    const result = applyScopedEditV2({
+    const result = applyScopedEdit({
       session,
       structuralDocument: parseStructuralDocument(COMPLEX_DOCUMENT_BOUNDARY_FIXTURE),
       editorContent: editedDisplay,
@@ -752,7 +752,7 @@ describe("mutation-plan-v2", () => {
       scopeMeta,
     });
 
-    const result = applyScopedEditV2({
+    const result = applyScopedEdit({
       session,
       structuralDocument: parseStructuralDocument(CHIROLOGY_MARKER_REGRESSION_FIXTURE),
       editorContent: "# Moderne Chirologiex",
@@ -783,7 +783,7 @@ describe("mutation-plan-v2", () => {
       scopeMeta,
     });
 
-    const result = applyScopedEditV2({
+    const result = applyScopedEdit({
       session,
       structuralDocument: parseStructuralDocument(CHIROLOGY_MARKER_REGRESSION_FIXTURE),
       editorContent: [
@@ -844,7 +844,7 @@ describe("mutation-plan-v2", () => {
     const insertAt = Math.max(0, Math.min(display.length, anchor + Number(offset || 0)));
     const editedDisplay = `${display.slice(0, insertAt)}${token}${display.slice(insertAt)}`;
 
-    const result = applyScopedEditV2({
+    const result = applyScopedEdit({
       session,
       structuralDocument: parseStructuralDocument(COMPLEX_DOCUMENT_BOUNDARY_FIXTURE),
       editorContent: editedDisplay,

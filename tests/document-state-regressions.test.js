@@ -1,9 +1,9 @@
-import { createScopeSession, doesScopeSessionMatch } from "../src/scope-session-v2.js";
+import { createScopeSession, doesScopeSessionMatch } from "../src/scope-session.js";
 import {
   assertStructuralMarkerGraphEqual,
   parseStructuralDocument,
 } from "../src/structural-document.js";
-import { applyScopedEditV2 } from "../src/mutation-plan-v2.js";
+import { applyScopedEdit } from "../src/mutation-plan.js";
 import {
   projectCanonicalSlice,
   resolveCanonicalScopeSlice,
@@ -45,7 +45,7 @@ function applyScoped({ canonicalBody, scopeMeta, editorContent, runtimeProjectio
     originKey: "field:hero:title",
     scopeMeta,
   });
-  return applyScopedEditV2({
+  return applyScopedEdit({
     session,
     structuralDocument: parseStructuralDocument(canonicalBody),
     editorContent,

@@ -701,15 +701,15 @@ async function appendTokenAndAssertVisible(page, token, maxAttempts = 3) {
   expect(tokenVisible).toBe(true);
 }
 
-async function assertV2SavePathForScope(page, scopeKind) {
+async function assertMutationSavePathForScope(page, scopeKind) {
   const metrics = await page.evaluate((scopeKind) => {
     const logs = Array.isArray(window.__MFE_DOC_STATE_LOGS)
       ? window.__MFE_DOC_STATE_LOGS
       : [];
-    const v2Matches = logs.filter(
+    const mutationMatches = logs.filter(
       (entry) =>
         entry &&
-        entry.type === "MFE_MUTATION_PLAN_V2_APPLIED" &&
+        entry.type === "MFE_MUTATION_PLAN_APPLIED" &&
         String(entry.scopeKind || "") === String(scopeKind || ""),
     );
     const pathMatches = logs.filter(
@@ -720,13 +720,13 @@ async function assertV2SavePathForScope(page, scopeKind) {
     );
     const lastPath = pathMatches[pathMatches.length - 1] || null;
     return {
-      v2Count: v2Matches.length,
+      mutationCount: mutationMatches.length,
       saveMode: String(lastPath?.mode || ""),
     };
   }, scopeKind);
-  expect(metrics.v2Count).toBeGreaterThan(0);
+  expect(metrics.mutationCount).toBeGreaterThan(0);
   if (metrics.saveMode) {
-    expect(metrics.saveMode).toBe("structural-mutation-v2");
+    expect(metrics.saveMode).toBe("structural-mutation");
   }
 }
 
@@ -1813,7 +1813,7 @@ test.describe("document save roundtrip", () => {
     await expect
       .poll(async () => (await readEn()).includes(token), { timeout: 20000 })
       .toBe(true);
-    await assertV2SavePathForScope(page, "field");
+    await assertMutationSavePathForScope(page, "field");
     await assertNoCriticalDocStateEvents(
       page,
       "field-section-document-field-rebound-save",
@@ -1851,7 +1851,7 @@ test.describe("document save roundtrip", () => {
     await expect
       .poll(async () => (await readEn()).includes(token), { timeout: 20000 })
       .toBe(true);
-    await assertV2SavePathForScope(page, "document");
+    await assertMutationSavePathForScope(page, "document");
     await assertNoCriticalDocStateEvents(
       page,
       "rapid-dirty-scope-switch-save",
@@ -1979,7 +1979,7 @@ test.describe("document save roundtrip", () => {
     await expect
       .poll(async () => (await readEn()).includes(esToken), { timeout: 5000 })
       .toBe(false);
-    await assertV2SavePathForScope(page, "field");
+    await assertMutationSavePathForScope(page, "field");
     await assertNoCriticalDocStateEvents(
       page,
       "split-dirty-scope-oscillation-save",
@@ -2033,7 +2033,7 @@ test.describe("document save roundtrip", () => {
     await expect
       .poll(async () => (await readEn()).includes(token), { timeout: 20000 })
       .toBe(true);
-    await assertV2SavePathForScope(page, "field");
+    await assertMutationSavePathForScope(page, "field");
     await assertNoCriticalDocStateEvents(
       page,
       "projection-lifecycle:field-rebind",
@@ -2370,7 +2370,7 @@ test.describe("document save roundtrip", () => {
       await expect
         .poll(async () => (await readEn()).includes(token), { timeout: 20000 })
         .toBe(true);
-      await assertV2SavePathForScope(page, entry.scopeKind);
+      await assertMutationSavePathForScope(page, entry.scopeKind);
     }
   });
 
@@ -2418,7 +2418,7 @@ test.describe("document save roundtrip", () => {
       await expect
         .poll(async () => (await readEs()).includes(tokenEs), { timeout: 20000 })
         .toBe(true);
-      await assertV2SavePathForScope(page, entry.scopeKind);
+      await assertMutationSavePathForScope(page, entry.scopeKind);
     }
   });
 
@@ -2591,7 +2591,7 @@ test.describe("document save roundtrip", () => {
           })
           .toBe(true);
       }
-      await assertV2SavePathForScope(page, entry.scopeKind);
+      await assertMutationSavePathForScope(page, entry.scopeKind);
     }
   });
 
@@ -2621,7 +2621,7 @@ test.describe("document save roundtrip", () => {
     page.on("console", (msg) => {
       const text = String(msg.text() || "");
       if (
-        /(MFE_SAVE_LOOP_ERROR|Save promise error|MFE_SAVE_SAFETY_BLOCKED|scope-session-v2:lock-conflict|mutation-plan-v2: protected spans changed)/.test(
+        /(MFE_SAVE_LOOP_ERROR|Save promise error|MFE_SAVE_SAFETY_BLOCKED|scope-session:lock-conflict|mutation-plan: protected spans changed)/.test(
           text,
         )
       ) {
@@ -2719,7 +2719,7 @@ test.describe("document save roundtrip", () => {
         consoleIssues: criticalConsoleIssues,
         consoleCursor,
       });
-      await assertV2SavePathForScope(page, step.scopeKind);
+      await assertMutationSavePathForScope(page, step.scopeKind);
       await assertNoCriticalDocStateEvents(page, step.label);
       assertNoCriticalConsoleSince(
         criticalConsoleIssues,
@@ -2973,7 +2973,7 @@ test.describe("document save roundtrip", () => {
         consoleIssues: criticalConsoleIssues,
         consoleCursor,
       });
-      await assertV2SavePathForScope(page, entry.scopeKind);
+      await assertMutationSavePathForScope(page, entry.scopeKind);
       await assertNoCriticalDocStateEvents(page, entry.label);
       assertNoCriticalConsoleSince(
         criticalConsoleIssues,
@@ -3043,7 +3043,7 @@ test.describe("document save roundtrip", () => {
       consoleIssues: criticalConsoleIssues,
       consoleCursor,
     });
-    await assertV2SavePathForScope(page, "document");
+    await assertMutationSavePathForScope(page, "document");
     await assertNoCriticalDocStateEvents(page, "section-document-complex");
     assertNoCriticalConsoleSince(
       criticalConsoleIssues,
@@ -3175,7 +3175,7 @@ test.describe("document save roundtrip", () => {
         consoleIssues: criticalConsoleIssues,
         consoleCursor,
       });
-      await assertV2SavePathForScope(page, entry.scopeKind);
+      await assertMutationSavePathForScope(page, entry.scopeKind);
       await assertNoCriticalDocStateEvents(page, entry.label);
       assertNoCriticalConsoleSince(
         criticalConsoleIssues,
@@ -3343,7 +3343,7 @@ test.describe("document save roundtrip", () => {
         consoleIssues: criticalConsoleIssues,
         consoleCursor,
       });
-      await assertV2SavePathForScope(page, entry.scopeKind);
+      await assertMutationSavePathForScope(page, entry.scopeKind);
       await assertNoCriticalDocStateEvents(page, entry.label);
       assertNoCriticalConsoleSince(
         criticalConsoleIssues,
@@ -3473,7 +3473,7 @@ test.describe("document save roundtrip", () => {
           consoleIssues: criticalConsoleIssues,
           consoleCursor,
         });
-        await assertV2SavePathForScope(page, sweep.scopeKind);
+        await assertMutationSavePathForScope(page, sweep.scopeKind);
         await assertNoCriticalDocStateEvents(page, `${sweep.label}:${index}`);
         assertNoCriticalConsoleSince(
           criticalConsoleIssues,

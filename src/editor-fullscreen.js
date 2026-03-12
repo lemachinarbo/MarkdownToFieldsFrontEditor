@@ -195,16 +195,16 @@ import {
 import {
   createScopeSession,
   doesScopeSessionMatch,
-} from "./scope-session-v2.js";
+} from "./scope-session.js";
 import {
   assertStructuralMarkerGraphEqual,
   hasStructuralMarkerBoundaryViolations,
   parseStructuralDocument,
 } from "./structural-document.js";
 import {
-  applyScopedEditV2,
-  buildOutboundPayloadV2,
-} from "./mutation-plan-v2.js";
+  applyScopedEdit,
+  buildOutboundPayload,
+} from "./mutation-plan.js";
 import {
   normalizeLineEndingsToLf,
   splitLeadingFrontmatter,
@@ -304,7 +304,7 @@ let activeSessionStateId = "";
 let activeRawMarkdown = null;
 let activeDisplayMarkdown = null;
 const canonicalMutationSessionByStateId = new Map();
-const scopeSessionV2ByStateId = new Map();
+const scopeSessionByStateId = new Map();
 let activeSession = null;
 let scopedModeMarkdown = null;
 let scopedModeTarget = null;
@@ -380,20 +380,20 @@ function lockScopeSessionV2ForState(
     openedFrom: String(openedFrom || "unknown"),
     scopeMeta: normalizedScopeMeta,
   });
-  const existing = scopeSessionV2ByStateId.get(stateId) || null;
+  const existing = scopeSessionByStateId.get(stateId) || null;
   if (existing) {
     if (
       String(existing.scopeKey || "") === String(nextSession.scopeKey || "")
     ) {
       return existing;
     }
-    scopeSessionV2ByStateId.set(stateId, nextSession);
+    scopeSessionByStateId.set(stateId, nextSession);
     emitDocStateLog("MFE_SCOPE_SESSION_REBOUND", {
       stateId,
       language: String(state.lang || ""),
       originKey: String(state.originKey || ""),
       currentScope: normalizedScopeMeta.scopeKind,
-      reason: "scope-session-v2:rebound",
+      reason: "scope-session:rebound",
       trigger: "scope-navigation",
       previousScopeKey: String(existing.scopeKey || ""),
       nextScopeKey: String(nextSession.scopeKey || ""),
@@ -401,13 +401,13 @@ function lockScopeSessionV2ForState(
     });
     return nextSession;
   }
-  scopeSessionV2ByStateId.set(stateId, nextSession);
+  scopeSessionByStateId.set(stateId, nextSession);
   emitDocStateLog("MFE_SCOPE_SESSION_LOCKED", {
     stateId,
     language: String(state.lang || ""),
     originKey: String(state.originKey || ""),
     currentScope: normalizedScopeMeta.scopeKind,
-    reason: "scope-session-v2:locked",
+    reason: "scope-session:locked",
     trigger: "scope-navigation",
     scopeKey: String(nextSession.scopeKey || ""),
     openedFrom: String(nextSession.openedFrom || ""),
@@ -415,10 +415,10 @@ function lockScopeSessionV2ForState(
   return nextSession;
 }
 
-function getScopeSessionV2ForState(stateId) {
+function getScopeSessionForState(stateId) {
   const key = String(stateId || "");
   if (!key) return null;
-  return scopeSessionV2ByStateId.get(key) || null;
+  return scopeSessionByStateId.get(key) || null;
 }
 
 const SAVE_SAFETY_BLOCKED_MESSAGE =
@@ -3053,7 +3053,7 @@ function clearStateRuntimeTracking(stateId, reason = "") {
   if (!key) return;
   markerBaselineCountByStateId.delete(key);
   canonicalMutationSessionByStateId.delete(key);
-  scopeSessionV2ByStateId.delete(key);
+  scopeSessionByStateId.delete(key);
   emitDocStateLog("MFE_RUNTIME_STATE_TRACKING_CLEARED", {
     stateId: key,
     language: "",
@@ -4173,7 +4173,7 @@ function saveAllEditors() {
       let scopedMarkdownForSave = scopedEditedMarkdownSourceFirst.markdown;
       let finalCanonicalMarkdown = "";
       let finalCanonicalBody = stateDraftMarkdown;
-      let saveMode = "structural-mutation-v2";
+      let saveMode = "structural-mutation";
       const canonicalBefore = state.recomposeMarkdownForSave(
         state.getPersistedMarkdown(),
       );
@@ -4184,8 +4184,8 @@ function saveAllEditors() {
         section: applyScopeMeta.section,
         subsection: applyScopeMeta.subsection,
       });
-      const scopeSessionForV2 = getScopeSessionV2ForState(state.id);
-      if (!scopeSessionForV2) {
+      const scopeSessionForSave = getScopeSessionForState(state.id);
+      if (!scopeSessionForSave) {
         emitSaveSafetyBlocked({
           state,
           saveScope,
@@ -4195,13 +4195,13 @@ function saveAllEditors() {
         });
         throw createSaveSafetyBlockedError();
       }
-      if (!doesScopeSessionMatch(scopeSessionForV2, saveScopeMeta)) {
+      if (!doesScopeSessionMatch(scopeSessionForSave, saveScopeMeta)) {
         emitSaveSafetyBlocked({
           state,
           saveScope,
           reason: "saveAllEditors:scopeSessionMismatch",
           scopeKeyExpected: buildScopeKeyFromMeta(saveScopeMeta),
-          scopeKeyActual: String(scopeSessionForV2.scopeKey || ""),
+          scopeKeyActual: String(scopeSessionForSave.scopeKey || ""),
         });
         throw createSaveSafetyBlockedError();
       }
@@ -4218,40 +4218,40 @@ function saveAllEditors() {
           reason: "saveAllEditors",
         },
       );
-      const v2Mutation = applyScopedEditV2({
-        session: scopeSessionForV2,
+      const scopedMutation = applyScopedEdit({
+        session: scopeSessionForSave,
         structuralDocument: structuralDocumentBefore,
         editorContent: scopedEditedMarkdownSourceFirst.markdown,
         runtimeProjection: runtimeProjectionResolution.runtimeProjection,
       });
-      if (!v2Mutation || v2Mutation.ok === false) {
+      if (!scopedMutation || scopedMutation.ok === false) {
         throw new Error(
-          String(v2Mutation?.reason || "[mfe] mutation-plan-v2 failed"),
+          String(scopedMutation?.reason || "[mfe] mutation-plan failed"),
         );
       }
-      finalCanonicalBody = String(v2Mutation.canonicalBody || splitBefore.body);
-      scopedMarkdownForSave = buildOutboundPayloadV2({
+      finalCanonicalBody = String(scopedMutation.canonicalBody || splitBefore.body);
+      scopedMarkdownForSave = buildOutboundPayload({
         canonicalBody: finalCanonicalBody,
         scopeMeta: saveScopeMeta,
       });
       effectiveCanonicalMutation = {
         canonicalBody: finalCanonicalBody,
         scopedComparableMarkdown: String(
-          v2Mutation.scopedComparableMarkdown || scopedMarkdownForSave,
+          scopedMutation.scopedComparableMarkdown || scopedMarkdownForSave,
         ),
         scopedOutboundMarkdown: String(scopedMarkdownForSave || ""),
-        startOffset: Number(v2Mutation.startOffset || 0),
-        endOffset: Number(v2Mutation.endOffset || 0),
+        startOffset: Number(scopedMutation.startOffset || 0),
+        endOffset: Number(scopedMutation.endOffset || 0),
       };
-      emitDocStateLog("MFE_MUTATION_PLAN_V2_APPLIED", {
+      emitDocStateLog("MFE_MUTATION_PLAN_APPLIED", {
         stateId: state.id,
         language: state.lang,
         originKey: state.originKey,
         currentScope: activeFieldScope || saveScope,
-        reason: "saveAllEditors:mutationPlanV2Applied",
+        reason: "saveAllEditors:mutationPlanApplied",
         trigger: "save-commit",
         scopeKind: saveScope,
-        scopeKey: String(scopeSessionForV2?.scopeKey || ""),
+        scopeKey: String(scopeSessionForSave?.scopeKey || ""),
         startOffset: effectiveCanonicalMutation.startOffset,
         endOffset: effectiveCanonicalMutation.endOffset,
       });
@@ -4267,7 +4267,7 @@ function saveAllEditors() {
           saveScope,
           reason: "saveAllEditors:markerBoundaryAdjacency",
           scopeKeyExpected: buildScopeKeyFromMeta(saveScopeMeta),
-          scopeKeyActual: String(scopeSessionForV2?.scopeKey || ""),
+          scopeKeyActual: String(scopeSessionForSave?.scopeKey || ""),
         });
         throw createSaveSafetyBlockedError();
       }
@@ -5988,7 +5988,7 @@ function applyScopeSlice(state, scopeMeta, scopedMarkdown, reason, trigger) {
   const strictSafetyThrow =
     String(reason || "").startsWith("saveAllEditors:") ||
     String(trigger || "") === "save-commit";
-  const session = getScopeSessionV2ForState(state.id);
+  const session = getScopeSessionForState(state.id);
   if (session && !doesScopeSessionMatch(session, scopeMetaForMutation)) {
     emitSaveSafetyBlocked({
       state,
@@ -6013,7 +6013,7 @@ function applyScopeSlice(state, scopeMeta, scopedMarkdown, reason, trigger) {
       : stateLang === secondaryNormalizedLang
         ? secondaryEditor
         : activeEditor || primaryEditor;
-  const v2Session =
+  const scopeSession =
     session ||
     createScopeSession({
       stateId: String(state.id || ""),
@@ -6031,24 +6031,24 @@ function applyScopeSlice(state, scopeMeta, scopedMarkdown, reason, trigger) {
       reason: reason || "applyScopeSlice",
     },
   );
-  const v2Result = applyScopedEditV2({
-    session: v2Session,
+  const scopedEditResult = applyScopedEdit({
+    session: scopeSession,
     structuralDocument: structuralDoc,
     editorContent: normalizedScopedMarkdown,
     runtimeProjection: runtimeProjectionResolution.runtimeProjection,
   });
-  if (!v2Result || v2Result.ok === false) {
+  if (!scopedEditResult || scopedEditResult.ok === false) {
     throw new Error(
-      String(v2Result?.reason || "[mfe] mutation-plan-v2 failed"),
+      String(scopedEditResult?.reason || "[mfe] mutation-plan failed"),
     );
   }
-  nextDraft = String(v2Result.canonicalBody || before);
+  nextDraft = String(scopedEditResult.canonicalBody || before);
   mutationResult = {
     canonicalBody: nextDraft,
-    startOffset: Number(v2Result.startOffset || 0),
-    endOffset: Number(v2Result.endOffset || 0),
-    scopedComparableMarkdown: String(v2Result.scopedComparableMarkdown || ""),
-    scopedOutboundMarkdown: String(v2Result.scopedOutboundMarkdown || ""),
+    startOffset: Number(scopedEditResult.startOffset || 0),
+    endOffset: Number(scopedEditResult.endOffset || 0),
+    scopedComparableMarkdown: String(scopedEditResult.scopedComparableMarkdown || ""),
+    scopedOutboundMarkdown: String(scopedEditResult.scopedOutboundMarkdown || ""),
   };
   if (hasMarkerLineBoundaryViolations(nextDraft)) {
     emitSaveSafetyBlocked({
@@ -6057,7 +6057,7 @@ function applyScopeSlice(state, scopeMeta, scopedMarkdown, reason, trigger) {
       reason: `${reason || "applyScopeSlice"}:markerBoundaryAdjacency`,
       trigger: trigger || "user-command",
       scopeKeyExpected: buildScopeKeyFromMeta(scopeMetaForMutation),
-      scopeKeyActual: String(v2Session.scopeKey || ""),
+      scopeKeyActual: String(scopeSession.scopeKey || ""),
     });
     if (strictSafetyThrow || isDevMode()) {
       throw createSaveSafetyBlockedError();
@@ -6070,15 +6070,15 @@ function applyScopeSlice(state, scopeMeta, scopedMarkdown, reason, trigger) {
     subsection: scopeMeta?.subsection || "",
     name: scopeMeta?.name || "",
   });
-  emitDocStateLog("MFE_MUTATION_PLAN_V2_APPLIED", {
+  emitDocStateLog("MFE_MUTATION_PLAN_APPLIED", {
     stateId: state.id,
     language: state.lang,
     originKey: state.originKey,
     currentScope,
-    reason: reason || "applyScopeSlice:mutationPlanV2Applied",
+    reason: reason || "applyScopeSlice:mutationPlanApplied",
     trigger: trigger || "user-command",
     scopeKind: incomingScopeKind,
-    scopeKey: String(v2Session.scopeKey || ""),
+    scopeKey: String(scopeSession.scopeKey || ""),
     startOffset: mutationResult.startOffset,
     endOffset: mutationResult.endOffset,
   });
@@ -6685,7 +6685,7 @@ function cleanupEditorOnly() {
     fullscreenSessionEventScope = null;
   }
   disposeFullscreenKeydown = null;
-  scopeSessionV2ByStateId.clear();
+  scopeSessionByStateId.clear();
 
   setFullscreenShellOpen(false);
   traceStateMutation({
