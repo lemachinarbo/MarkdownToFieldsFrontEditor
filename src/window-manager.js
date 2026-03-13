@@ -25,6 +25,54 @@ const windowManagerGlobalEventScope = windowManagerEventRegistry.createScope(
   "window-manager-global",
 );
 
+function setupOverlayChromeMetrics(overlay) {
+  if (!(overlay instanceof HTMLElement)) {
+    return {
+      refresh: () => {},
+      cleanup: () => {},
+    };
+  }
+
+  const menuBar = overlay.querySelector(".mfe-window-menubar");
+  if (!(menuBar instanceof HTMLElement)) {
+    return {
+      refresh: () => {},
+      cleanup: () => {},
+    };
+  }
+
+  const applyMetrics = () => {
+    const nextHeight = Math.max(
+      48,
+      Math.ceil(menuBar.getBoundingClientRect().height || menuBar.offsetHeight || 0),
+    );
+    overlay.style.setProperty("--mfe-menubar-height", `${nextHeight}px`);
+  };
+
+  applyMetrics();
+
+  let resizeObserver = null;
+  if (typeof ResizeObserver === "function") {
+    resizeObserver = new ResizeObserver(() => {
+      applyMetrics();
+    });
+    resizeObserver.observe(menuBar);
+  }
+
+  const handleWindowResize = () => {
+    applyMetrics();
+  };
+  window.addEventListener("resize", handleWindowResize);
+
+  return {
+    refresh: applyMetrics,
+    cleanup: () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", handleWindowResize);
+    },
+  };
+}
+
 function clearToastTimer() {
   if (toastTimer) {
     window.clearTimeout(toastTimer);
@@ -322,6 +370,8 @@ export function openWindow({
   // Append overlay to DOM
   document.body.appendChild(overlay);
 
+  const chromeMetrics = setupOverlayChromeMetrics(overlay);
+
   const windowInstance = {
     id,
     dom: overlay,
@@ -331,6 +381,8 @@ export function openWindow({
     breadcrumbItems,
     breadcrumbClickHandler,
     menuBarDisabled,
+    refreshChromeMetrics: chromeMetrics.refresh,
+    cleanupChromeMetrics: chromeMetrics.cleanup,
   };
 
   windowStack.push(windowInstance);
@@ -338,6 +390,7 @@ export function openWindow({
   reparentToastToActiveHost();
 
   if (onMount) onMount(overlay, windowInstance);
+  chromeMetrics.refresh();
 
   return windowInstance;
 }
@@ -354,6 +407,7 @@ export function closeTopWindow() {
   }
 
   const win = windowStack.pop();
+  win?.cleanupChromeMetrics?.();
 
   if (win.dom && toastEl && win.dom.contains(toastEl)) {
     pinToastToBody();
@@ -396,6 +450,7 @@ export function closeWindow(winOrId) {
   }
 
   const [win] = windowStack.splice(index, 1);
+  win?.cleanupChromeMetrics?.();
   if (win.dom && toastEl && win.dom.contains(toastEl)) {
     pinToastToBody();
   }

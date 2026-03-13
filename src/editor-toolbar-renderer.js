@@ -19,6 +19,9 @@ export function renderToolbarButtons({
     );
   };
   const buttonRefreshers = [];
+  const mainGroup = document.createElement("div");
+  mainGroup.className = "editor-toolbar-main";
+  toolbar.appendChild(mainGroup);
 
   const createEditorAwareRefresher = (updateStyle) => {
     let boundEditor = null;
@@ -63,7 +66,7 @@ export function renderToolbarButtons({
     if (item.type === "separator") {
       const sep = document.createElement("span");
       sep.className = "editor-toolbar-separator";
-      toolbar.appendChild(sep);
+      mainGroup.appendChild(sep);
       return;
     }
 
@@ -115,17 +118,17 @@ export function renderToolbarButtons({
     const refreshButton = createEditorAwareRefresher(updateStyle);
     buttonRefreshers.push(refreshButton);
     refreshButton();
-    toolbar.appendChild(btn);
+    mainGroup.appendChild(btn);
   });
 
-  const spacer = document.createElement("div");
-  spacer.className = "editor-toolbar-spacer";
-  toolbar.appendChild(spacer);
+  const metaGroup = document.createElement("div");
+  metaGroup.className = "editor-toolbar-meta";
+  toolbar.appendChild(metaGroup);
 
   const status = document.createElement("div");
   status.className = "editor-toolbar-status";
   status.textContent = "";
-  toolbar.appendChild(status);
+  metaGroup.appendChild(status);
 
   const saveBtn = buttons.find((btn) => btn.key === "save");
   let saveButtonEl = null;
@@ -177,7 +180,7 @@ export function renderToolbarButtons({
     const refreshButton = createEditorAwareRefresher(updateStyle);
     buttonRefreshers.push(refreshButton);
     refreshButton();
-    toolbar.appendChild(btn);
+    metaGroup.appendChild(btn);
     saveButtonEl = btn;
   }
 

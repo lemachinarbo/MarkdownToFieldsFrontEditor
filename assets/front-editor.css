@@ -126,6 +126,7 @@ body[data-mfe-label-style="inside"] .mfe-hover-overlay .mfe-hover-label {
 :root {
   --mfe-menubar-offset: 12px;
   --mfe-menubar-top: var(--mfe-menubar-offset);
+  --mfe-menubar-height: 48px;
 }
 
 .mfe-window-overlay {
@@ -152,11 +153,10 @@ body[data-mfe-label-style="inside"] .mfe-hover-overlay .mfe-hover-label {
 }
 
 .mfe-window-menubar .mfe-window-inner {
-  height: 100%;
   justify-content: center;
   /* inner container no longer has visual styling; it only positions the toolbar
      the outer menubar handles border, background, and rounding */
-  padding: 0 12px;
+  padding: 8px 12px;
   width: 100%;
 }
 
@@ -174,7 +174,7 @@ body[data-mfe-label-style="inside"] .mfe-hover-overlay .mfe-hover-label {
     calc(100% - (var(--mfe-window-side-gutter) * 2)),
     var(--mfe-window-max-width)
   );
-  height: 48px;
+  min-height: 48px;
   border-bottom: 0;
   display: flex;
   align-items: center;
@@ -300,7 +300,8 @@ body[data-mfe-label-style="inside"] .mfe-hover-overlay .mfe-hover-label {
   top: calc(
     /* close button should align with menubar; use offset directly for
        predictable inheritance even when --mfe-menubar-top isn't set locally */
-    var(--mfe-menubar-offset, 0px) + (48px - var(--mfe-window-close-size)) / 2
+    var(--mfe-menubar-offset, 0px) +
+      (var(--mfe-menubar-height, 48px) - var(--mfe-window-close-size)) / 2
   );
   right: calc(
     var(--mfe-window-side-gutter) - var(--mfe-window-close-size) +
@@ -407,13 +408,30 @@ body[data-mfe-label-style="inside"] .mfe-hover-overlay .mfe-hover-label {
 .mfe-toolbar {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   flex-wrap: wrap;
   padding: 0;
   height: 100%;
   margin: 0;
   width: 100%;
-  justify-content: center;
+  justify-content: flex-start;
+}
+
+.editor-toolbar-main {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 0;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.editor-toolbar-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .mfe-toolbar button {

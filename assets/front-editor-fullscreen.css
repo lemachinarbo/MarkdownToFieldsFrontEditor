@@ -18,7 +18,9 @@ body.mfe-no-scroll {
 /* Reserve top spacing so fixed menubar doesn't overlap scrolling content in
    fullscreen mode. Uses menubar top offset plus menubar height (48px). */
 .mfe-state-fullscreen-open .mfe-window-container {
-  padding-top: calc(var(--mfe-menubar-top, 0px) + 64px);
+  padding-top: calc(
+    var(--mfe-menubar-top, 0px) + var(--mfe-menubar-height, 48px) + 16px
+  );
 }
 
 .mfe-state-fullscreen-open .mfe-editor-shell {
@@ -541,6 +543,22 @@ body.mfe-split-resizing {
   padding: 4px 8px;
 }
 
+.mfe-state-fullscreen-open .mfe-toolbar {
+  align-items: center;
+  justify-content: flex-start;
+  row-gap: 6px;
+}
+
+.mfe-state-fullscreen-open .editor-toolbar-main {
+  align-items: center;
+  flex: 1 1 720px;
+  min-width: 0;
+}
+
+.mfe-state-fullscreen-open .editor-toolbar-meta {
+  flex: 0 0 auto;
+}
+
 .mfe-state-fullscreen-open .editor-toolbar-btn {
   padding: 6px 10px;
   border: 0;
@@ -589,7 +607,7 @@ body.mfe-split-resizing {
   color: #64748b;
   opacity: 0;
   transition: opacity 0.2s ease;
-  margin-right: 8px;
+  margin-right: 0;
 }
 
 .mfe-state-fullscreen-open .editor-toolbar-status.is-saved {
@@ -623,9 +641,20 @@ body.mfe-split-resizing {
   margin: 0 6px;
 }
 
-.mfe-state-fullscreen-open .editor-toolbar-spacer {
-  flex: 1 1 auto;
-  min-width: 40px;
+@media (max-width: 1180px) {
+  .mfe-state-fullscreen-open .editor-toolbar-separator {
+    display: none;
+  }
+}
+
+@media (max-width: 960px) {
+  .mfe-state-fullscreen-open .editor-toolbar-btn {
+    padding: 6px 8px;
+  }
+
+  .mfe-state-fullscreen-open .editor-toolbar-main {
+    flex-basis: 100%;
+  }
 }
 
 /* Toolbar animation removed for stable positioning */

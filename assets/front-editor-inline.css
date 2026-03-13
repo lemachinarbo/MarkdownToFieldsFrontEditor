@@ -43,11 +43,6 @@
   margin: 0 6px;
 }
 
-.mfe-state-inline-open .editor-toolbar-spacer {
-  flex: 1 1 auto;
-  min-width: 20px;
-}
-
 .mfe-state-inline-open .editor-toolbar-status {
   font-size: 11px;
   color: #64748b;
@@ -94,6 +89,18 @@
   margin: 0 6px 0 0;
 }
 
+.mfe-state-inline-open .mfe-inline-toolbar {
+  align-items: center;
+  justify-content: flex-start;
+  row-gap: 6px;
+}
+
+.mfe-state-inline-open .mfe-inline-toolbar .editor-toolbar-main {
+  align-items: center;
+  flex: 1 1 720px;
+  min-width: 0;
+}
+
 .mfe-state-inline-open .mfe-inline-close {
   font-size: 18px;
   line-height: 1;
@@ -101,6 +108,22 @@
   height: 28px;
   padding: 0;
   margin-left: 4px;
+}
+
+@media (max-width: 1180px) {
+  .mfe-state-inline-open .editor-toolbar-separator {
+    display: none;
+  }
+}
+
+@media (max-width: 960px) {
+  .mfe-state-inline-open .editor-toolbar-btn {
+    padding: 6px 8px;
+  }
+
+  .mfe-state-inline-open .mfe-inline-toolbar .editor-toolbar-main {
+    flex-basis: 100%;
+  }
 }
 
 .mfe-state-inline-open .mfe-inline-active::after {

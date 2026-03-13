@@ -1204,7 +1204,12 @@ function createInlineToolbar() {
     closeInlineEditor({ saveOnClose: false, promptOnClose: true });
   };
 
-  toolbar.appendChild(closeBtn);
+  const toolbarMeta = toolbar.querySelector(".editor-toolbar-meta");
+  if (toolbarMeta) {
+    toolbarMeta.appendChild(closeBtn);
+  } else {
+    toolbar.appendChild(closeBtn);
+  }
   attachToolbarToMenubarInner(menubarInner, toolbar);
 
   document.body.appendChild(menubar);

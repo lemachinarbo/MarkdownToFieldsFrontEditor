@@ -2,12 +2,12 @@
 
 ## v0.8
 
-- Human version: this release proves the fullscreen editor is now the trustworthy reference path. One canonical draft per language, one real save pipeline, safe scope rebinding, and deterministic reopen/discard behavior.
-- Fullscreen reference pipeline is now considered **PROVEN**.
+- This release proves the fullscreen editor is now the trustworthy reference path. One canonical draft per language, one real save pipeline, safe scope rebinding, and deterministic reopen/discard behavior.
 - Scope changes now behave as lenses over the same canonical document state, with explicit runtime projection revoke/reseed handling and browser-verifiable authority traces.
 - Fullscreen save remains centralized through one canonical pipeline, with stricter runtime projection validation and no legacy save-path ambiguity.
 - Structural cleanup reduced `editor-fullscreen.js` by moving debug/trace, preview sync, and scope-lens helpers into focused files without changing behavior.
 - Documentation now matches the verified model more closely: persisted markdown outside editing, canonical `DocumentState` draft during editing, runtime projection as cache, inline as non-reference.
+- New responsive layout for toolbar
 
 ## v7.0.3
 
