@@ -15,9 +15,6 @@ import TableRow from "@tiptap/extension-table-row";
 import TableHeader from "@tiptap/extension-table-header";
 import TableCell from "@tiptap/extension-table-cell";
 import { common, createLowlight } from "lowlight";
-import { NodeSelection } from "prosemirror-state";
-import { createToolbarButtons } from "./editor-toolbar.js";
-import { renderToolbarButtons } from "./editor-toolbar-renderer.js";
 import { createStatusManager } from "./editor-status.js";
 import {
   HeadingSingleLineExtension,
@@ -34,8 +31,6 @@ import {
   getLanguagesConfig,
   fetchTranslations,
   saveTranslation,
-  getFragmentsUrl,
-  fetchCsrfToken,
   assertMarkdownInvariant,
 } from "./editor-core.js";
 import {
@@ -69,15 +64,11 @@ import {
 import { Marker, GapSentinel } from "./marker-extension.js";
 import {
   buildContentIndex,
-  getSectionEntry,
-  getSubsectionEntry,
   getFieldsIndex,
   findSectionNameForSubsection,
 } from "./content-index.js";
-import { createImagePicker } from "./image-picker.js";
 import {
   normalizeComparableMarkdown,
-  clearDraftsCoveredByChangedKeys,
 } from "./draft-utils.js";
 import {
   computeCanonicalMarkdownStateFromInputs,
@@ -93,15 +84,8 @@ import {
 import {
   buildSemanticLookup,
   scopedHtmlKeyFromMeta,
-  collectMountTargetsByKey,
   compileMountTargetsByKey,
-  detectCanonicalScopedKeyOrderViolation,
-  syncEditableMarkdownAttributesFromFieldsIndex as syncFieldsIndexToEditableAttrs,
 } from "./sync-by-key.js";
-import {
-  buildFragmentStaleScopeEventDetail,
-  sortCanonicalScopedKeys,
-} from "./fragment-stale-scope-event.js";
 import {
   openWindow,
   closeWindow,
@@ -236,39 +220,41 @@ import {
   emitRuntimeShapeLog as emitRuntimeShapeLogHelper,
 } from "./fullscreen-debug-trace.js";
 import {
-  applyChangedHtmlEditableOnly as applyChangedHtmlEditableOnlyHelper,
-  applyEditableFallbackInSectionHosts as applyEditableFallbackInSectionHostsHelper,
-  applyDatastarPatchElement as applyDatastarPatchElementHelper,
-  applyDatastarPatchToNodes as applyDatastarPatchToNodesHelper,
-  syncNonEditableImagesFromPatch as syncNonEditableImagesFromPatchHelper,
-  parseDatastarEventBlock,
-  keyDepth,
-  isDescendantKey,
-  hasDescendantScopedDrafts as hasDescendantScopedDraftsHelper,
-  isScopeOrDescendantKey,
-} from "./fullscreen-preview-sync.js";
+  handlePrimarySaveResponse,
+  requestRenderedFragmentsDatastar,
+} from "./fullscreen-post-save-sync.js";
+import {
+  applySplitSecondarySize as applySplitSecondarySizeHelper,
+  hydrateTranslationsForActiveScope as hydrateTranslationsForActiveScopeHelper,
+  setupSplitResizeHandle as setupSplitResizeHandleHelper,
+  openSplit as openSplitHelper,
+  closeSplit as closeSplitHelper,
+  toggleSplit as toggleSplitHelper,
+  openImagePicker as openImagePickerHelper,
+  createToolbar as createToolbarHelper,
+  setupKeyboardShortcuts as setupKeyboardShortcutsHelper,
+} from "./fullscreen-chrome-controls.js";
 import {
   getActiveHierarchy as getActiveHierarchyHelper,
-  resolveBreadcrumbTargetFromScope,
-  resolveContentIdForScopeMeta,
-  getBreadcrumbContentId,
   buildSessionScopeLens as buildSessionScopeLensHelper,
   getLensNode as getLensNodeHelper,
-  syncSessionScopeLensState,
+  syncSessionScopeLens as syncSessionScopeLensHelper,
+  resolveHierarchyFromSessionScopeLens as resolveHierarchyFromSessionScopeLensHelper,
   resolveLensNodeForBreadcrumb as resolveLensNodeForBreadcrumbHelper,
-  resolveCanonicalMarkdownForLensNode as resolveCanonicalMarkdownForLensNodeHelper,
   resolveMarkerBearingCanonicalMarkdownForLens as resolveMarkerBearingCanonicalMarkdownForLensHelper,
+  resolveCanonicalMarkdownForLensNode as resolveCanonicalMarkdownForLensNodeHelper,
   resolveIndexedMarkdownForLensNode as resolveIndexedMarkdownForLensNodeHelper,
   resolveMarkerBearingMarkdownForLensNode as resolveMarkerBearingMarkdownForLensNodeHelper,
-  buildVirtualTargetFromLensNode as buildVirtualTargetFromLensNodeHelper,
   applyActiveOriginKeyToVirtualTarget as applyActiveOriginKeyToVirtualTargetHelper,
-  deriveHierarchyFromPayload,
+  buildVirtualTargetFromLensNode as buildVirtualTargetFromLensNodeHelper,
   updateBreadcrumbAnchorFromPayload as updateBreadcrumbAnchorFromPayloadHelper,
   buildBreadcrumbParts as buildBreadcrumbPartsHelper,
   buildBreadcrumbItems as buildBreadcrumbItemsHelper,
   getBreadcrumbsCurrentTarget as getBreadcrumbsCurrentTargetHelper,
-  resolveHierarchyFromSessionScopeLens as resolveHierarchyFromSessionScopeLensHelper,
-} from "./fullscreen-scope-lens.js";
+  createBreadcrumbVirtualTarget as createBreadcrumbVirtualTargetHelper,
+  resolveBreadcrumbNavigationTarget as resolveBreadcrumbNavigationTargetHelper,
+  handleBreadcrumbClick as handleBreadcrumbClickHelper,
+} from "./fullscreen-breadcrumb-navigation.js";
 
 let activeEditor = null;
 let primaryEditor = null;
@@ -1204,769 +1190,6 @@ function syncDirtyStatusForActiveField() {
       lastPrimaryDirtyFieldId = null;
     },
   });
-}
-
-async function handlePrimarySaveResponse(data, finalMarkdown, options = {}) {
-  const {
-    updateActiveEditor = true,
-    documentCacheFallbackB64 = "",
-    preferDocumentCacheFallback = false,
-    savedScopeKind = "",
-  } = options;
-  const resolvedSavedScopeKind = normalizeScopeKind(
-    savedScopeKind || activeFieldScope || "field",
-  );
-  const activeScopedKey = getActiveScopedHtmlKey();
-  const htmlMapKeys =
-    data?.htmlMap && typeof data.htmlMap === "object"
-      ? Object.keys(data.htmlMap)
-      : [];
-  const htmlMapOrderViolation =
-    htmlMapKeys.length > 1
-      ? detectCanonicalScopedKeyOrderViolation(htmlMapKeys)
-      : null;
-  if (htmlMapOrderViolation) {
-    debugWarn("[mfe:save-sync] htmlMap key ordering violation", {
-      actual: htmlMapOrderViolation.actual,
-      expected: htmlMapOrderViolation.expected,
-    });
-  }
-  const htmlMap =
-    data.fragments ||
-    data.htmlMap ||
-    (typeof data.html === "object" ? data.html : {});
-  const changedKeys =
-    Array.isArray(data.changed) && data.changed.length
-      ? data.changed
-      : activeScopedKey
-        ? [activeScopedKey]
-        : [];
-  const rawRequestedKeysFromServer = Array.from(
-    new Set((Array.isArray(changedKeys) ? changedKeys : []).filter(Boolean)),
-  );
-  const canonicalResponseKeys = new Set(
-    htmlMap && typeof htmlMap === "object" ? Object.keys(htmlMap) : [],
-  );
-  const requestedKeysFromServer =
-    canonicalResponseKeys.size > 0
-      ? rawRequestedKeysFromServer.filter((key) =>
-          canonicalResponseKeys.has(key),
-        )
-      : rawRequestedKeysFromServer;
-  debugWarn("[mfe:save-sync] fragment response", {
-    activeScopedKey,
-    changedKeys,
-    requestedKeys: requestedKeysFromServer,
-    hasFragments: Boolean(data.fragments),
-    fragmentsKeys: data.fragments ? Object.keys(data.fragments).length : 0,
-    htmlMapKeys: data.htmlMap ? Object.keys(data.htmlMap).length : 0,
-  });
-  traceStateMutation({
-    reason: "handlePrimarySaveResponse:applySavedState",
-    trigger: "save-commit",
-    mutate: () => {
-      if (resolvedSavedScopeKind === "document") {
-        primaryDraftsByFieldId.clear();
-        draftMarkdownByScopedKey.clear();
-        documentDraftMarkdown = "";
-      } else {
-        clearDraftsCoveredByChangedKeys({
-          changedKeys,
-          draftMarkdownByScopedKey,
-          primaryDraftsByFieldId,
-          clearDirtyByFieldId: (fieldId) => statusManager.clearDirty(fieldId),
-        });
-        if (activeFieldId) {
-          primaryDraftsByFieldId.delete(activeFieldId);
-        }
-        if (activeScopedKey) {
-          draftMarkdownByScopedKey.delete(activeScopedKey);
-        }
-      }
-      syncDirtyStatusForActiveField();
-    },
-  });
-
-  if (data.sectionsIndex) {
-    window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
-    window.MarkdownFrontEditorConfig.sectionsIndex = data.sectionsIndex;
-  }
-  if (data.fieldsIndex) {
-    window.MarkdownFrontEditorConfig = window.MarkdownFrontEditorConfig || {};
-    window.MarkdownFrontEditorConfig.fieldsIndex = data.fieldsIndex;
-  }
-  const nextDocumentB64 = preferDocumentCacheFallback
-    ? documentCacheFallbackB64 || data.documentMarkdownB64
-    : data.documentMarkdownB64 || documentCacheFallbackB64;
-  if (nextDocumentB64) {
-    writeDocumentMarkdownCache({
-      markdownB64: nextDocumentB64,
-      source: "handlePrimarySaveResponse",
-    });
-  }
-  const sections = Array.isArray(
-    window.MarkdownFrontEditorConfig?.sectionsIndex,
-  )
-    ? window.MarkdownFrontEditorConfig.sectionsIndex
-    : [];
-  const fields = Array.isArray(window.MarkdownFrontEditorConfig?.fieldsIndex)
-    ? window.MarkdownFrontEditorConfig.fieldsIndex
-    : [];
-  const semanticLookup = buildSemanticLookup({ sections, fields });
-
-  const compiled = compileMountTargetsByKey({
-    changedKeys: requestedKeysFromServer,
-    root: document,
-    getMetaAttr,
-    semanticLookup,
-  });
-  const mountTargets =
-    compiled.targetsByKey ||
-    collectMountTargetsByKey({
-      changedKeys: requestedKeysFromServer,
-      root: document,
-      getMetaAttr,
-      semanticLookup,
-    });
-  const requestedKeys = Object.keys(mountTargets || {});
-  const nonMountedRequestedKeys = requestedKeysFromServer.filter(
-    (k) => !requestedKeys.includes(k),
-  );
-  lastCompileReport = compiled.report || null;
-  debugWarn("[mfe:fragment-sync] mount targets", {
-    changedKeys: requestedKeysFromServer,
-    targetKeys: requestedKeys,
-    nonMountedRequestedKeys,
-    report: lastCompileReport,
-  });
-  if (lastCompileReport?.graphChecksum) {
-    window.__MFE_GRAPH = lastCompileReport.graphChecksum;
-  }
-  if (
-    lastCompileReport?.ambiguous?.length ||
-    lastCompileReport?.unresolved?.length
-  ) {
-    debugWarn("[mfe:bind] compile report", lastCompileReport);
-    const rows = [
-      ...(lastCompileReport.ambiguous || []).map((v) => ({
-        type: "ambiguous",
-        value: v,
-      })),
-      ...(lastCompileReport.unresolved || []).map((v) => ({
-        type: "unresolved",
-        value: v,
-      })),
-    ];
-    debugTable(rows);
-  }
-
-  const { current } = getLanguagesConfig();
-  const currentPageId =
-    activeTarget?.getAttribute("data-page") ||
-    activeFieldId?.split(":")?.[0] ||
-    "0";
-  if (!requestedKeys.length) {
-    debugWarn(
-      "[mfe:fragment-sync] no canonical mount keys, preview patch skipped",
-      {
-        changedKeys: requestedKeysFromServer,
-      },
-    );
-  } else {
-    try {
-      const patchResult = await requestRenderedFragmentsDatastar({
-        pageId: currentPageId,
-        lang: current,
-        keys: requestedKeys,
-        mountTargets,
-        graphChecksum: lastCompileReport?.graphChecksum || "",
-        graphNodeCount: Number(lastCompileReport?.graphNodeCount || 0),
-        graphKeys: Array.isArray(lastCompileReport?.graphKeys)
-          ? lastCompileReport.graphKeys
-          : [],
-      });
-      if (isDevMode()) {
-        const appliedKeys = Array.from(
-          new Set(
-            (Array.isArray(patchResult?.applied) ? patchResult.applied : [])
-              .filter((a) => Number(a?.updated || 0) > 0)
-              .map((a) => String(a?.key || ""))
-              .filter(Boolean),
-          ),
-        );
-        const skippedKeys = Array.from(
-          new Set([
-            ...nonMountedRequestedKeys,
-            ...requestedKeys.filter((k) => !appliedKeys.includes(k)),
-          ]),
-        );
-        debugWarn("[mfe:fragment-sync] coverage", {
-          cycleId: patchResult?.cycleId,
-          requestedKeys,
-          appliedKeys,
-          skippedKeys,
-        });
-      }
-      if (
-        Array.isArray(patchResult?.missingKeys) &&
-        patchResult.missingKeys.length
-      ) {
-        const staleScopeKeys = Array.isArray(patchResult?.staleScopeKeys)
-          ? patchResult.staleScopeKeys
-          : [];
-        const fallbackMissingKeys = patchResult.missingKeys.filter(
-          (key) =>
-            !staleScopeKeys.some((scopeKey) =>
-              isScopeOrDescendantKey(key, scopeKey),
-            ),
-        );
-        const editableFallbackUpdated = applyChangedHtmlEditableOnly({
-          changedKeys: fallbackMissingKeys,
-          htmlMap,
-        });
-        debugWarn("[mfe:fragment-sync] missing-key editable fallback", {
-          missingKeys: fallbackMissingKeys,
-          editableFallbackUpdated,
-        });
-      }
-      if (
-        Array.isArray(patchResult?.skippedSectionKeys) &&
-        patchResult.skippedSectionKeys.length
-      ) {
-        const staleScopeKeys = Array.isArray(patchResult?.staleScopeKeys)
-          ? patchResult.staleScopeKeys
-          : [];
-        const fallbackSectionKeys = patchResult.skippedSectionKeys.filter(
-          (key) => !staleScopeKeys.includes(key),
-        );
-        const sectionEditableUpdated = applyEditableFallbackInSectionHosts({
-          sectionKeys: fallbackSectionKeys,
-          mountTargets,
-          htmlMap,
-        });
-        debugWarn("[mfe:fragment-sync] skipped-section editable fallback", {
-          skippedSectionKeys: fallbackSectionKeys,
-          sectionEditableUpdated,
-        });
-      }
-      debugWarn("[mfe:fragment-sync] datastar applied", patchResult);
-    } catch (e) {
-      debugWarn("[mfe:fragment-sync] datastar fetch failed, preview skipped", {
-        message: e?.message || String(e),
-        changedKeys: requestedKeys,
-      });
-    }
-  }
-  syncFieldsIndexToEditableAttrs({
-    root: document,
-    fields,
-    sections,
-    getMetaAttr,
-    decodeMarkdownBase64,
-  });
-  annotateBoundImages();
-  initEditors();
-
-  if (updateActiveEditor && activeTarget) {
-    const currentScopedMarkdown = trimTrailingLineBreaks(
-      typeof finalMarkdown === "string" ? finalMarkdown : "",
-    );
-    const currentLang = normalizeLangValue(getLanguagesConfig().current);
-    const canonicalMarkdown = nextDocumentB64
-      ? normalizeCanonicalMarkdownForIngress(decodeMaybeB64(nextDocumentB64), {
-          enforceDocumentBodyLeadingBreakPolicy: true,
-        })
-      : "";
-    const canonicalBody = canonicalMarkdown
-      ? splitLeadingFrontmatter(canonicalMarkdown).body
-      : "";
-    const activeScope = getMetaAttr(activeTarget, "scope") || "field";
-    const activeName = getMetaAttr(activeTarget, "name") || "";
-    const activeSection = getMetaAttr(activeTarget, "section") || "";
-    const activeSubsection = getMetaAttr(activeTarget, "subsection") || "";
-    let scopedMarkdown = currentScopedMarkdown;
-    if (activeScope === "document") {
-      scopedMarkdown = canonicalBody
-        ? trimTrailingLineBreaks(canonicalBody)
-        : currentScopedMarkdown;
-    } else if (canonicalBody) {
-      try {
-        scopedMarkdown = resolveMarkdownForScopeFromCanonical({
-          markdown: canonicalBody,
-          scope: activeScope,
-          section: activeSection,
-          subsection: activeSubsection,
-          name: activeName,
-        });
-      } catch (error) {
-        debugWarn("[mfe:save-sync] scoped canonical resolve fallback", {
-          scope: activeScope,
-          section: activeSection,
-          subsection: activeSubsection,
-          name: activeName,
-          error: error?.message || String(error),
-        });
-        scopedMarkdown = currentScopedMarkdown;
-      }
-    }
-
-    activeTarget.dataset.markdown = scopedMarkdown;
-    if (activeTarget.classList?.contains("fe-editable")) {
-      activeTarget.setAttribute(
-        "data-markdown-b64",
-        encodeMarkdownBase64(scopedMarkdown),
-      );
-    }
-    activeRawMarkdown = scopedMarkdown;
-    activeDisplayMarkdown = scopedMarkdown;
-    if (primaryEditor) {
-      const editorBody = enforceBodyOnlyEditorInput(scopedMarkdown, {
-        source: "handlePrimarySaveResponse:updateActiveEditor",
-        lang: currentLang,
-        scope: activeScope,
-      });
-      const sanitizedEditorBody = sanitizeEditorMarkdownForScope(
-        editorBody,
-        activeScope,
-      );
-      const selection = primaryEditor.state.selection;
-      runWithoutDirtyTracking(() => {
-        try {
-          const canonicalDoc = parseMarkdownToDoc(
-            sanitizedEditorBody,
-            primaryEditor.schema,
-          );
-          primaryEditor.commands.setContent(canonicalDoc.toJSON(), false);
-        } catch (_error) {
-          debugWarn("[mfe:editor-sync] parse-failed:updateActiveEditor", {
-            scope: activeScope,
-            lang: currentLang,
-            error: _error?.message || String(_error),
-          });
-        }
-      });
-      primaryEditor.commands.setTextSelection(selection);
-    }
-  }
-}
-
-/**
- * Patch editable hosts directly from scoped fragment updates.
- * Does not read or mutate canonical markdown authority.
- */
-function applyChangedHtmlEditableOnly({ changedKeys, htmlMap }) {
-  return applyChangedHtmlEditableOnlyHelper({
-    changedKeys,
-    htmlMap,
-    resolveHostImageSrc,
-  });
-}
-
-/**
- * Patch editable children inside section hosts when direct key patching is not enough.
- * Does not infer save authority or alter scope state.
- */
-function applyEditableFallbackInSectionHosts({
-  sectionKeys,
-  mountTargets,
-  htmlMap,
-}) {
-  return applyEditableFallbackInSectionHostsHelper({
-    sectionKeys,
-    mountTargets,
-    htmlMap,
-    resolveHostImageSrc,
-  });
-}
-
-/**
- * Patch every node matched by a Datastar selector.
- * Does not decide selector ordering or patch safety.
- */
-function applyDatastarPatchElement({ selector, mode, elements, cycleId }) {
-  return applyDatastarPatchElementHelper({ selector, mode, elements, cycleId });
-}
-
-/**
- * Patch a provided node list with Datastar HTML.
- * Does not normalize selectors or compute patch contents.
- */
-function applyDatastarPatchToNodes({ nodes, mode, elements, cycleId }) {
-  return applyDatastarPatchToNodesHelper({ nodes, mode, elements, cycleId });
-}
-
-/**
- * Sync non-editable media after a fragment patch.
- * Does not update editable fullscreen content or canonical markdown.
- */
-function syncNonEditableImagesFromPatch(host, patchHtml) {
-  return syncNonEditableImagesFromPatchHelper(
-    host,
-    patchHtml,
-    resolveHostImageSrc,
-  );
-}
-
-/**
- * Check whether a section key still has descendant draft keys.
- * Does not read draft contents or mutate draft state.
- */
-function hasDescendantScopedDrafts(sectionKey) {
-  return hasDescendantScopedDraftsHelper(
-    sectionKey,
-    draftMarkdownByScopedKey.keys(),
-  );
-}
-
-async function requestRenderedFragmentsDatastar({
-  pageId,
-  lang,
-  keys,
-  mountTargets,
-  graphChecksum,
-  graphNodeCount,
-  graphKeys,
-}) {
-  const cycleId = ++patchCycleCounter;
-  debugWarn("[mfe:fragment-api] request", {
-    cycleId,
-    pageId,
-    lang: lang || "",
-    keys: Array.isArray(keys) ? keys : [],
-    mountTargetKeys: Object.keys(mountTargets || {}),
-  });
-  const csrf = await fetchCsrfToken();
-  const formData = new FormData();
-  formData.append("pageId", String(pageId || "0"));
-  if (lang) formData.append("lang", String(lang));
-  const renderPath =
-    typeof window !== "undefined" && window.location
-      ? `${window.location.pathname || ""}${window.location.search || ""}`
-      : "";
-  if (renderPath) formData.append("renderPath", renderPath);
-  formData.append("transport", "datastar");
-  formData.append("keys", JSON.stringify(keys || []));
-  formData.append("mountTargets", JSON.stringify(mountTargets || {}));
-  if (graphChecksum) formData.append("graphChecksum", String(graphChecksum));
-  if (Number.isFinite(graphNodeCount) && graphNodeCount > 0) {
-    formData.append("graphNodeCount", String(graphNodeCount));
-  }
-  if (Array.isArray(graphKeys) && graphKeys.length > 0) {
-    formData.append("graphKeys", JSON.stringify(graphKeys));
-  }
-  if (csrf) formData.append(csrf.name, csrf.value);
-
-  const response = await fetch(getFragmentsUrl(), {
-    method: "POST",
-    body: formData,
-    credentials: "same-origin",
-    headers: {
-      Accept: "text/event-stream",
-    },
-  });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  if (!response.body) return { updated: 0 };
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let updated = 0;
-  let events = 0;
-  let patches = 0;
-  let signals = 0;
-  const applied = [];
-  const queued = [];
-  const missingKeys = [];
-  const skippedSectionKeys = [];
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const chunks = buffer.split(/\n\n/);
-    buffer = chunks.pop() || "";
-    chunks.forEach((chunk) => {
-      const evt = parseDatastarEventBlock(chunk);
-      if (!evt) return;
-      events += 1;
-      if (evt.event === "datastar-patch-signals") {
-        signals += 1;
-        try {
-          const parsedSignals = JSON.parse(evt.payload?.signals || "{}");
-          const missing = Array.isArray(parsedSignals?.mfe_missing)
-            ? parsedSignals.mfe_missing
-            : [];
-          missing.forEach((k) => {
-            if (typeof k === "string" && k.trim() !== "") {
-              missingKeys.push(k.trim());
-            }
-          });
-        } catch (error) {
-          debugWarn("[mfe:fragment-api] invalid signal payload", {
-            payload: evt.payload || {},
-            message: error?.message || String(error),
-          });
-        }
-        debugWarn("[mfe:fragment-api] signal", evt.payload || {});
-        return;
-      }
-      if (evt.event !== "datastar-patch-elements") return;
-      patches += 1;
-      queued.push({
-        key: evt.payload.key || "",
-        selector: evt.payload.selector || "",
-        mode: evt.payload.mode || "inner",
-        elements: evt.payload.elements || "",
-      });
-    });
-  }
-  if (buffer.trim() !== "") {
-    const evt = parseDatastarEventBlock(buffer);
-    if (evt && evt.event === "datastar-patch-elements") {
-      patches += 1;
-      queued.push({
-        key: evt.payload.key || "",
-        selector: evt.payload.selector || "",
-        mode: evt.payload.mode || "inner",
-        elements: evt.payload.elements || "",
-      });
-    }
-  }
-
-  queued.sort((a, b) => keyDepth(a.key) - keyDepth(b.key));
-  const staleScopeEventDetail = buildFragmentStaleScopeEventDetail({
-    cycleId,
-    requestedKeys: Array.isArray(keys) ? keys : [],
-    missingKeys,
-  });
-  const staleScopeKeys = Array.isArray(staleScopeEventDetail?.staleScopeKeys)
-    ? staleScopeEventDetail.staleScopeKeys
-    : [];
-  const orderedMissingKeys = Array.isArray(staleScopeEventDetail?.missingKeys)
-    ? staleScopeEventDetail.missingKeys
-    : sortCanonicalScopedKeys(missingKeys);
-  if (staleScopeEventDetail) {
-    window.dispatchEvent(
-      new CustomEvent("mfe:fragment-stale-scope", {
-        detail: staleScopeEventDetail,
-      }),
-    );
-  }
-  const appliedParents = new Set();
-  const queuedScopedKeys = queued
-    .map((entry) => String(entry.key || "").trim())
-    .filter(Boolean);
-  const strictSectionReplace =
-    window.MarkdownFrontEditorConfig?.strictSectionReplace !== false;
-  queued.forEach((patch) => {
-    if (
-      staleScopeKeys.some((scopeKey) =>
-        isScopeOrDescendantKey(patch.key, scopeKey),
-      )
-    ) {
-      if (
-        (patch.key?.startsWith("section:") ||
-          patch.key?.startsWith("subsection:")) &&
-        !skippedSectionKeys.includes(patch.key)
-      ) {
-        skippedSectionKeys.push(patch.key);
-      }
-      debugWarn("[mfe:fragment-api] scope patch skipped", {
-        cycleId,
-        key: patch.key,
-        selector: patch.selector,
-        reason: "stale-scope-incomplete",
-      });
-      return;
-    }
-    for (const parent of appliedParents) {
-      if (isDescendantKey(patch.key, parent)) {
-        debugWarn("[mfe:fragment-api] patch skipped child-after-parent", {
-          key: patch.key,
-          parent,
-          selector: patch.selector,
-        });
-        return;
-      }
-    }
-    const patchHtml = patch.elements || "";
-    const candidateNodes = Array.from(
-      document.querySelectorAll(patch.selector || ""),
-    );
-    const keyParts = String(patch.key || "").split(":");
-    const isSectionParentKey =
-      patch.key?.startsWith("section:") && keyParts.length === 2;
-    const isSubsectionParentKey =
-      patch.key?.startsWith("subsection:") && keyParts.length === 3;
-    const hasQueuedDescendantKey = queuedScopedKeys.some((queuedKey) =>
-      isDescendantKey(queuedKey, patch.key),
-    );
-    const isNestedScopeReplaceRisk =
-      (isSectionParentKey || isSubsectionParentKey) &&
-      candidateNodes.some(
-        (n) =>
-          n &&
-          (n.classList?.contains("fe-editable") ||
-            n.querySelector?.(".fe-editable")),
-      ) &&
-      !patchHtml.includes("fe-editable");
-    const isParentWithoutEditablePayload =
-      (isSectionParentKey || isSubsectionParentKey) &&
-      hasQueuedDescendantKey &&
-      !patchHtml.includes("fe-editable");
-    if (isParentWithoutEditablePayload) {
-      const safeNodes = candidateNodes.filter(
-        (n) =>
-          n &&
-          !n.classList?.contains("fe-editable") &&
-          !n.querySelector?.(".fe-editable"),
-      );
-      if (safeNodes.length > 0) {
-        const safeUpdated = applyDatastarPatchToNodes({
-          nodes: safeNodes,
-          mode: patch.mode || "inner",
-          elements: patchHtml,
-          cycleId,
-        });
-        updated += safeUpdated;
-        applied.push({
-          key: patch.key || "",
-          selector: patch.selector || "",
-          mode: patch.mode || "inner",
-          htmlLen: (patch.elements || "").length,
-          updated: safeUpdated,
-        });
-        debugWarn("[mfe:fragment-api] scope patch partial", {
-          cycleId,
-          key: patch.key,
-          selector: patch.selector,
-          reason: "descendant-keys-safe-noneditable",
-          safeNodeCount: safeNodes.length,
-          updated: safeUpdated,
-        });
-        return;
-      }
-
-      const imageSynced = candidateNodes.reduce(
-        (count, node) =>
-          count + syncNonEditableImagesFromPatch(node, patchHtml),
-        0,
-      );
-      if (imageSynced > 0) {
-        applied.push({
-          key: patch.key || "",
-          selector: patch.selector || "",
-          mode: "image-sync",
-          htmlLen: (patch.elements || "").length,
-          updated: imageSynced,
-        });
-        updated += imageSynced;
-        debugWarn("[mfe:fragment-api] scope patch partial", {
-          cycleId,
-          key: patch.key,
-          selector: patch.selector,
-          reason: "descendant-keys-noneditable-image-sync",
-          updated: imageSynced,
-        });
-        return;
-      }
-
-      if (!skippedSectionKeys.includes(patch.key)) {
-        skippedSectionKeys.push(patch.key);
-      }
-      debugWarn("[mfe:fragment-api] scope patch skipped", {
-        cycleId,
-        key: patch.key,
-        selector: patch.selector,
-        reason: "descendant-keys-present",
-        hasQueuedDescendantKey,
-      });
-      return;
-    }
-    if (isNestedScopeReplaceRisk) {
-      if (strictSectionReplace) {
-        const hasInlineOpen = isInlineOpen();
-        const hasFullscreenUnsaved = hasPendingUnsavedChanges();
-        const hasDescendantDrafts = hasDescendantScopedDrafts(patch.key);
-        const canStrictReplace =
-          !hasInlineOpen && !hasFullscreenUnsaved && !hasDescendantDrafts;
-        if (!canStrictReplace) {
-          if (!skippedSectionKeys.includes(patch.key)) {
-            skippedSectionKeys.push(patch.key);
-          }
-          debugWarn("[mfe:fragment-api] scope patch skipped", {
-            cycleId,
-            key: patch.key,
-            selector: patch.selector,
-            reason: "unsafe-state",
-            hasInlineOpen,
-            hasFullscreenUnsaved,
-            hasDescendantDrafts,
-          });
-          return;
-        }
-      } else {
-        if (!skippedSectionKeys.includes(patch.key)) {
-          skippedSectionKeys.push(patch.key);
-        }
-        debugWarn("[mfe:fragment-api] scope patch skipped", {
-          cycleId,
-          key: patch.key,
-          selector: patch.selector,
-          reason: "strict-disabled",
-        });
-        return;
-      }
-    }
-    const appliedCount = applyDatastarPatchElement({
-      selector: patch.selector || "",
-      mode: patch.mode || "inner",
-      elements: patchHtml,
-      cycleId,
-    });
-    updated += appliedCount;
-    if (appliedCount > 0 && patch.key) {
-      appliedParents.add(patch.key);
-    }
-    applied.push({
-      key: patch.key || "",
-      selector: patch.selector || "",
-      mode: patch.mode || "inner",
-      htmlLen: (patch.elements || "").length,
-      updated: appliedCount,
-    });
-    debugWarn("[mfe:fragment-api] patch", {
-      cycleId,
-      key: patch.key || "",
-      selector: patch.selector || "",
-      mode: patch.mode || "inner",
-      htmlLen: (patch.elements || "").length,
-      updated: appliedCount,
-    });
-    if (isNestedScopeReplaceRisk && appliedCount > 0) {
-      debugInfo("[mfe:fragment-api] scope patch applied", {
-        cycleId,
-        key: patch.key,
-        selector: patch.selector,
-        updated: appliedCount,
-        strictSectionReplace,
-      });
-    }
-  });
-
-  const result = {
-    cycleId,
-    updated,
-    events,
-    patches,
-    signals,
-    missingKeys: orderedMissingKeys,
-    skippedSectionKeys,
-    staleScopeKeys,
-    applied,
-  };
-  debugWarn("[mfe:fragment-api] result", result);
-  return result;
 }
 
 function emitRuntimeBoundaryWriteTrace(payload = {}) {
@@ -5166,13 +4389,68 @@ function saveAllEditors() {
               },
             );
           }
-          await handlePrimarySaveResponse(data, saveUiMarkdown, {
-            updateActiveEditor: true,
-            documentCacheFallbackB64: isDocumentScopeActive()
-              ? encodeMarkdownBase64(finalCanonicalMarkdown)
-              : "",
-            preferDocumentCacheFallback: preserveSentDocumentCache,
-            savedScopeKind: saveScope,
+          await handlePrimarySaveResponse({
+            data,
+            finalMarkdown: saveUiMarkdown,
+            options: {
+              updateActiveEditor: true,
+              documentCacheFallbackB64: isDocumentScopeActive()
+                ? encodeMarkdownBase64(finalCanonicalMarkdown)
+                : "",
+              preferDocumentCacheFallback: preserveSentDocumentCache,
+              savedScopeKind: saveScope,
+            },
+            activeFieldScope,
+            activeFieldId,
+            activeTarget,
+            primaryEditor,
+            statusManager,
+            primaryDraftsByFieldId,
+            draftMarkdownByScopedKey,
+            getActiveScopedHtmlKey,
+            syncDirtyStatusForActiveField,
+            setDocumentDraftMarkdown: (value) => {
+              documentDraftMarkdown = value;
+            },
+            traceStateMutation,
+            writeDocumentMarkdownCache,
+            requestRenderedFragments: (params) =>
+              requestRenderedFragmentsDatastar({
+                ...params,
+                patchCycleCounter: {
+                  next: () => ++patchCycleCounter,
+                },
+                hasPendingUnsavedChanges,
+                resolveHostImageSrc,
+                debugWarn,
+                debugInfo,
+                isInlineOpen,
+                draftScopedKeys: Array.from(draftMarkdownByScopedKey.keys()),
+              }),
+            setLastCompileReport: (value) => {
+              lastCompileReport = value;
+            },
+            getLanguagesConfig,
+            resolveHostImageSrc,
+            debugWarn,
+            debugInfo,
+            debugTable,
+            isDevMode,
+            annotateBoundImages,
+            initEditors,
+            setActiveMarkdownState: ({ rawMarkdown, displayMarkdown }) => {
+              activeRawMarkdown = rawMarkdown;
+              activeDisplayMarkdown = displayMarkdown;
+            },
+            enforceBodyOnlyEditorInput,
+            sanitizeEditorMarkdownForScope,
+            decodeMaybeB64,
+            encodeMarkdownBase64,
+            normalizeCanonicalMarkdownForIngress,
+            normalizeScopeKind,
+            normalizeLangValue,
+            runWithoutDirtyTracking,
+            getMetaAttr,
           });
         }
         const markSavedOk = state.markSaved(finalCanonicalBody, {
@@ -5320,240 +4598,134 @@ function saveAllEditors() {
   return pendingSavePromise;
 }
 
+/**
+ * Applies split-pane presentation sizing for the fullscreen shell.
+ * Does not bind translation state or mutate canonical document authority.
+ */
 function applySplitSecondarySize(percent) {
-  const numeric = Number(percent);
-  if (!Number.isFinite(numeric)) return;
-  splitSecondarySizePercent = Math.max(30, Math.min(70, numeric));
-  if (editorShell?.style?.setProperty) {
-    editorShell.style.setProperty(
-      "--mfe-split-secondary-size",
-      `${splitSecondarySizePercent}%`,
-    );
-  }
+  return applySplitSecondarySizeHelper({
+    percent,
+    editorShell,
+    setSplitSecondarySizePercent: (value) => {
+      splitSecondarySizePercent = value;
+    },
+  });
 }
 
+/**
+ * Hydrates translation-side document states used by the split pane.
+ * Does not decide secondary editor authority or save routing.
+ */
 function hydrateTranslationsForActiveScope(reasonPrefix = "openSplit") {
-  const translationLoadKey = buildTranslationHydrationKey({
-    sessionStateId: getActiveSessionStateKey(),
-    originKey: activeOriginFieldKey || activeOriginKey || activeFieldId || "",
-    pageId: activeTarget?.getAttribute("data-page") || "0",
-    scope: activeFieldScope || "field",
-    section: activeFieldSection || "",
-    subsection: activeFieldSubsection || "",
-    name: activeFieldName || "",
+  return hydrateTranslationsForActiveScopeHelper({
+    reasonPrefix,
+    buildTranslationHydrationKey,
+    getActiveSessionStateKey,
+    activeOriginFieldKey,
+    activeOriginKey,
+    activeFieldId,
+    activeTarget,
+    activeFieldScope,
+    activeFieldSection,
+    activeFieldSubsection,
+    activeFieldName,
+    pendingTranslationHydrationByKey,
+    normalizeLangValue,
+    getLanguagesConfig,
+    fetchTranslations,
+    isStateTraceEnabled,
+    getDocumentStateForActiveField,
+    ingestDocumentStateMarkdown,
   });
-  if (!translationLoadKey) return Promise.resolve(false);
-  const pending = pendingTranslationHydrationByKey.get(translationLoadKey);
-  if (pending) {
-    return pending;
-  }
-
-  const pageId = activeTarget?.getAttribute("data-page") || "";
-  const currentLang = normalizeLangValue(getLanguagesConfig().current);
-  const sessionStateKey = getActiveSessionStateKey();
-  const run = fetchTranslations("document", pageId, "document", "")
-    .then((data) => {
-      const translations = data && typeof data === "object" ? data : {};
-      Object.entries(translations).forEach(([lang, markdown]) => {
-        const normalizedLang = normalizeLangValue(lang);
-        if (!normalizedLang) {
-          return;
-        }
-        if (normalizedLang === currentLang) {
-          if (
-            isStateTraceEnabled() &&
-            typeof console !== "undefined" &&
-            typeof console.info === "function"
-          ) {
-            console.info(
-              "HYDRATE_SKIPPED_PRIMARY",
-              JSON.stringify({
-                reason: `${reasonPrefix}:hydrateTranslations`,
-                language: normalizedLang,
-                stateId: sessionStateKey
-                  ? `${sessionStateKey}|${normalizedLang}`
-                  : "",
-              }),
-            );
-          }
-          return;
-        }
-        const state = getDocumentStateForActiveField(normalizedLang, {
-          reason: `${reasonPrefix}:hydrateStateBind`,
-          trigger: "scope-navigation",
-        });
-        ingestDocumentStateMarkdown(state, String(markdown || ""), {
-          lang: normalizedLang,
-          source: `${reasonPrefix}:hydrateTranslations`,
-          trigger: "system-rehydrate",
-        });
-      });
-      return true;
-    })
-    .catch(() => false)
-    .finally(() => {
-      pendingTranslationHydrationByKey.delete(translationLoadKey);
-    });
-
-  pendingTranslationHydrationByKey.set(translationLoadKey, run);
-  return run;
 }
 
+/**
+ * Installs split-pane resize handlers for the fullscreen chrome.
+ * Does not create panes or own editor lifecycle authority.
+ */
 function setupSplitResizeHandle() {
-  if (!splitHandle || !editorShell || splitResizeCleanup) return;
-  splitResizeEventScope = fullscreenEventRegistry.createScope(
-    "fullscreen-split-resize",
-  );
-
-  let dragging = false;
-  const onPointerMove = (event) => {
-    if (!dragging || !editorShell) return;
-    const rect = editorShell.getBoundingClientRect();
-    if (!rect.width) return;
-    const handleWidth = splitHandle?.getBoundingClientRect?.().width || 14;
-    const pointerX = Number(event.clientX || 0) - rect.left;
-    const minPrimaryPx = 320;
-    const minSecondaryPx = 320;
-    const minPct = ((minSecondaryPx + handleWidth) / rect.width) * 100;
-    const maxPct =
-      100 - ((minPrimaryPx + handleWidth) / Math.max(1, rect.width)) * 100;
-    const rawSecondaryPct = ((rect.width - pointerX) / rect.width) * 100;
-    const clamped = Math.max(minPct, Math.min(maxPct, rawSecondaryPct));
-    applySplitSecondarySize(clamped);
-  };
-
-  const stopDragging = () => {
-    if (!dragging) return;
-    dragging = false;
-    document.body.classList.remove("mfe-split-resizing");
-  };
-
-  const startDragging = (event) => {
-    event.preventDefault();
-    dragging = true;
-    document.body.classList.add("mfe-split-resizing");
-  };
-
-  splitResizeEventScope.register(splitHandle, "pointerdown", startDragging);
-  splitResizeEventScope.register(window, "pointermove", onPointerMove);
-  splitResizeEventScope.register(window, "pointerup", stopDragging);
-  splitResizeEventScope.register(window, "blur", stopDragging);
-
-  splitResizeCleanup = () => {
-    splitResizeEventScope?.disposeAll();
-    splitResizeEventScope = null;
-    splitResizeCleanup = null;
-    document.body.classList.remove("mfe-split-resizing");
-  };
+  return setupSplitResizeHandleHelper({
+    splitHandle,
+    editorShell,
+    splitResizeCleanup,
+    fullscreenEventRegistry,
+    onResizePercent: applySplitSecondarySize,
+    setSplitResizeEventScope: (value) => {
+      splitResizeEventScope = value;
+    },
+    setSplitResizeCleanup: (value) => {
+      splitResizeCleanup = value;
+    },
+  });
 }
 
+/**
+ * Opens the fullscreen split-pane chrome and secondary editor shell.
+ * Does not own secondary language mutation authority.
+ */
 function openSplit() {
-  // source-contract marker: getDocumentStateForActiveField + activeOriginFieldKey
-  if (!editorShell || secondaryEditor) return;
-  const { langs, current } = getLanguagesConfig();
-  const currentName = normalizeLangValue(current);
-  const seen = new Set();
-  const otherLangs = (Array.isArray(langs) ? langs : []).filter((lang) => {
-    const name = normalizeLangValue(lang?.name);
-    if (!name || seen.has(name)) return false;
-    seen.add(name);
-    return name !== currentName;
-  });
-
-  if (otherLangs.length === 0) return;
-
-  editorShell.classList.add("mfe-editor-shell--split");
-  applySplitSecondarySize(splitSecondarySizePercent);
-
-  splitRegion = document.createElement("div");
-  splitRegion.className = "mfe-editor-split-region";
-
-  splitHandle = document.createElement("button");
-  splitHandle.type = "button";
-  splitHandle.className = "mfe-editor-split-handle";
-  splitHandle.setAttribute("aria-label", "Resize language split panes");
-  splitHandle.innerHTML =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M8 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M8 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M8 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /></svg>';
-
-  splitPane = document.createElement("div");
-  splitPane.className = "mfe-editor-pane mfe-editor-pane--secondary";
-
-  const header = document.createElement("div");
-  header.className = "mfe-editor-pane-header";
-  header.innerHTML = `
-    <label class="mfe-editor-pane-label">Language</label>
-    <select class="mfe-editor-pane-select"></select>
-  `;
-
-  const select = header.querySelector(".mfe-editor-pane-select");
-  otherLangs.forEach((lang) => {
-    const opt = document.createElement("option");
-    opt.value = lang.name;
-    const label =
-      typeof lang.title === "string" && lang.title.trim() !== ""
-        ? lang.title
-        : String(lang.title || lang.name);
-    opt.textContent = label;
-    select.appendChild(opt);
-  });
-  if (otherLangs[0]) {
-    const preferred = normalizeLangValue(splitPreferredLanguage);
-    const preferredOption = otherLangs.find(
-      (lang) => normalizeLangValue(lang?.name) === preferred,
-    );
-    select.value = preferredOption?.name || otherLangs[0].name;
-  }
-
-  const body = document.createElement("div");
-  body.className = "mfe-editor-pane-body";
-
-  splitPane.appendChild(header);
-  splitPane.appendChild(body);
-  splitRegion.appendChild(splitHandle);
-  splitRegion.appendChild(splitPane);
-  editorShell.appendChild(splitRegion);
-  setupSplitResizeHandle();
-
-  secondaryEditor = createEditorInstance(
-    body,
+  return openSplitHelper({
+    editorShell,
+    secondaryEditor,
+    getLanguagesConfig,
+    normalizeLangValue,
+    splitPreferredLanguage,
+    splitSecondarySizePercent,
+    applySplitSecondarySize,
+    createEditorInstance,
     activeFieldType,
     activeFieldName,
-  );
-  activeEditor = secondaryEditor;
-  if (typeof refreshToolbarState === "function") {
-    refreshToolbarState();
-  }
-
-  select.onchange = () => {
-    setSecondaryLanguage(select.value);
-  };
-
-  hydrateTranslationsForActiveScope("openSplit").finally(() => {
-    if (secondaryEditor) {
-      setSecondaryLanguage(select.value);
-    }
+    refreshToolbarState,
+    setupSplitResizeHandle,
+    hydrateTranslationsForActiveScope,
+    setSecondaryLanguage,
+    setSplitRegion: (value) => {
+      splitRegion = value;
+    },
+    setSplitHandle: (value) => {
+      splitHandle = value;
+    },
+    setSplitPane: (value) => {
+      splitPane = value;
+    },
+    setSecondaryEditor: (value) => {
+      secondaryEditor = value;
+    },
+    setActiveEditor: (value) => {
+      activeEditor = value;
+    },
+    getSecondaryEditor: () => secondaryEditor,
   });
 }
 
+/**
+ * Closes the fullscreen split-pane chrome and destroys the secondary editor shell.
+ * Does not clear translation document state ownership.
+ */
 function closeSplit() {
-  if (typeof splitResizeCleanup === "function") {
-    splitResizeCleanup();
-  }
-  if (secondaryEditor) {
-    secondaryEditor.destroy();
-    secondaryEditor = null;
-  }
-  if (splitRegion) {
-    splitRegion.remove();
-    splitRegion = null;
-  }
-  splitPane = null;
-  splitHandle = null;
-  editorShell?.classList?.remove("mfe-editor-shell--split");
-  activeEditor = primaryEditor;
-  if (typeof refreshToolbarState === "function") {
-    refreshToolbarState();
-  }
+  return closeSplitHelper({
+    splitResizeCleanup,
+    secondaryEditor,
+    splitRegion,
+    editorShell,
+    primaryEditor,
+    refreshToolbarState,
+    setSecondaryEditor: (value) => {
+      secondaryEditor = value;
+    },
+    setSplitRegion: (value) => {
+      splitRegion = value;
+    },
+    setSplitPane: (value) => {
+      splitPane = value;
+    },
+    setSplitHandle: (value) => {
+      splitHandle = value;
+    },
+    setActiveEditor: (value) => {
+      activeEditor = value;
+    },
+  });
 }
 
 function setSecondaryLanguage(lang) {
@@ -5705,14 +4877,19 @@ function setSecondaryLanguage(lang) {
   }
 }
 
+/**
+ * Toggles split-pane chrome visibility for fullscreen language editing.
+ * Does not bind the secondary editor to canonical state authority.
+ */
 function toggleSplit() {
-  if (secondaryEditor) {
-    splitEnabledByUser = false;
-    closeSplit();
-  } else {
-    splitEnabledByUser = true;
-    openSplit();
-  }
+  return toggleSplitHelper({
+    secondaryEditor,
+    setSplitEnabledByUser: (value) => {
+      splitEnabledByUser = value;
+    },
+    openSplit,
+    closeSplit,
+  });
 }
 
 function toggleOutlineView() {
@@ -6741,148 +5918,36 @@ function cleanupEditorOnly() {
 }
 
 /**
- * Open image picker and insert selected image
+ * Opens fullscreen image-picker UI and applies the selected image mutation.
+ * Does not own the canonical save path beyond invoking existing mutation callbacks.
  */
 function openImagePicker(initialData = null, imagePos = null) {
-  const editor = activeEditor || primaryEditor;
-  if (!editor) return;
-
-  createImagePicker({
+  return openImagePickerHelper({
     initialData,
-    onSelect: (imageData) => {
-      // imageData is { filename, url, alt, _resolveWarning? }
-      const editor = activeEditor || primaryEditor;
-      if (!editor) return;
-      markUserIntentToken("image-picker:select");
-
-      // Show soft warning if image resolution failed (deferred to render time)
-      if (imageData._resolveWarning) {
-        debugWarn(
-          "[mfe:image-picker] resolve warning",
-          String(imageData._resolveWarning || ""),
-        );
-        statusManager.setError("There was an error processing the image.");
-      }
-
-      let shouldReplaceSelectedImage = false;
-      if (typeof imagePos === "number") {
-        const imageNode = editor.state.doc.nodeAt(imagePos);
-        if (imageNode && imageNode.type.name === "image") {
-          const tr = editor.state.tr.setSelection(
-            NodeSelection.create(editor.state.doc, imagePos),
-          );
-          editor.view.dispatch(tr);
-          shouldReplaceSelectedImage = true;
-        }
-      }
-      if (!shouldReplaceSelectedImage) {
-        const { selection } = editor.state;
-        shouldReplaceSelectedImage =
-          selection.node && selection.node.type.name === "image";
-      }
-
-      if (shouldReplaceSelectedImage) {
-        editor
-          .chain()
-          .focus()
-          .updateAttributes("image", {
-            src: imageData.url,
-            alt: imageData.alt || "",
-            originalFilename: imageData.filename,
-          })
-          .run();
-      } else {
-        editor
-          .chain()
-          .focus()
-          .setImage({
-            src: imageData.url,
-            alt: imageData.alt || "",
-            originalFilename: imageData.filename,
-          })
-          .run();
-      }
-
-      // Mark as dirty
-      if (editor === primaryEditor) {
-        traceStateMutation({
-          reason: "openImagePicker:onSelect",
-          trigger: "user-edit",
-          mutate: () => {
-            const currentLang = normalizeLangValue(
-              getLanguagesConfig().current,
-            );
-            const applyScopeMeta = captureExplicitApplyScopeMeta(
-              "openImagePicker:onSelect:primary",
-            );
-            const scopeKind = applyScopeMeta.scopeKind;
-            const primaryState = getDocumentStateForActiveField(currentLang, {
-              reason: "openImagePicker:onSelect:primary:bind",
-              trigger: "scope-navigation",
-            });
-            if (primaryState) {
-              const primaryMarkdown = getMarkdownFromEditor(editor);
-              applyMarkdownToStateForReferenceScope(
-                primaryState,
-                primaryMarkdown,
-                scopeKind,
-                "openImagePicker:onSelect:primary",
-                {
-                  trigger: "user-command",
-                  applyScopeMeta,
-                  requireExplicitScope: true,
-                },
-              );
-              const nextDocumentDraft = primaryState.recomposeMarkdownForSave(
-                primaryState.getDraft(),
-              );
-              if (
-                normalizeComparableMarkdown(nextDocumentDraft) ===
-                normalizeComparableMarkdown(getDocumentConfigMarkdownRaw())
-              ) {
-                documentDraftMarkdown = "";
-              } else {
-                documentDraftMarkdown = nextDocumentDraft;
-              }
-            }
-            const scopedKey = getActiveScopedHtmlKey();
-            if (scopedKey) {
-              draftMarkdownByScopedKey.set(
-                scopedKey,
-                getMarkdownFromEditor(editor),
-              );
-            }
-            if (activeFieldId) {
-              statusManager.markDirty(activeFieldId);
-            }
-          },
-        });
-      }
-      if (editor === secondaryEditor && secondaryLang) {
-        const secondaryState = getDocumentStateForActiveField(secondaryLang);
-        const applyScopeMeta = captureExplicitApplyScopeMeta(
-          "openImagePicker:onSelect:secondary",
-        );
-        const secondaryScopeKind = applyScopeMeta.scopeKind;
-        if (secondaryState) {
-          applyMarkdownToStateForReferenceScope(
-            secondaryState,
-            getMarkdownFromEditor(editor),
-            secondaryScopeKind,
-            "openImagePicker:onSelect:secondary",
-            {
-              trigger: "user-command",
-              applyScopeMeta,
-              requireExplicitScope: true,
-            },
-          );
-        }
-      }
+    imagePos,
+    getActiveEditor: () => activeEditor,
+    getPrimaryEditor: () => primaryEditor,
+    getSecondaryEditor: () => secondaryEditor,
+    getSecondaryLang: () => secondaryLang,
+    markUserIntentToken,
+    debugWarn,
+    statusManager,
+    traceStateMutation,
+    normalizeLangValue,
+    getLanguagesConfig,
+    captureExplicitApplyScopeMeta,
+    getDocumentStateForActiveField,
+    getMarkdownFromEditor,
+    applyMarkdownToStateForReferenceScope,
+    normalizeComparableMarkdown,
+    getDocumentConfigMarkdownRaw,
+    setDocumentDraftMarkdown: (value) => {
+      documentDraftMarkdown = value;
     },
-    onClose: () => {
-      // Refocus editor after picker closes
-      afterNextPaint(() => editor.view.focus());
-    },
+    getActiveScopedHtmlKey,
+    draftMarkdownByScopedKey,
+    activeFieldId,
+    afterNextPaint,
   });
 }
 
@@ -6890,111 +5955,49 @@ function openImagePicker(initialData = null, imagePos = null) {
 window.mfeOpenImagePicker = openImagePicker;
 
 /**
- * Create the toolbar
+ * Builds the fullscreen toolbar chrome and wires view toggles to existing callbacks.
+ * Does not own fullscreen lifecycle or canonical mutation authority.
  */
 function createToolbar() {
-  const toolbar = document.createElement("div");
-  toolbar.id = "editor-toolbar"; // Add ID for easy selection
-  toolbar.className = "mfe-toolbar";
-  toolbar.setAttribute("data-editor-toolbar", "true");
-
-  const buttons = createToolbarButtons({
-    getEditor: () => activeEditor,
-    onSave: saveAllEditors,
-    onToggleSplit: toggleSplit,
-    isSplitActive: () => Boolean(splitEnabledByUser),
-    onOpenDocumentView: openDocumentOutlineView,
-    canOpenDocumentView: () => {
-      const scopeKind =
-        activeSession?.metadata?.scopeKind || activeFieldScope || "field";
-      return scopeKind !== "document";
+  return createToolbarHelper({
+    getActiveEditor: () => activeEditor,
+    saveAllEditors,
+    toggleSplit,
+    isSplitEnabled: () => splitEnabledByUser,
+    openDocumentOutlineView,
+    getActiveSession: () => activeSession,
+    getActiveFieldScope: () => activeFieldScope,
+    isDocumentScopeActive,
+    isOutlineViewActive,
+    toggleOutlineView,
+    setRefreshToolbarState: (value) => {
+      refreshToolbarState = value;
     },
-    isDocumentView: () => isDocumentScopeActive() && isOutlineViewActive(),
-    onToggleOutlineView: toggleOutlineView,
-    isOutlineView: () => isOutlineViewActive(),
+    setSaveStatusEl: (value) => {
+      saveStatusEl = value;
+    },
+    statusManager,
   });
-
-  const baseConfigButtons =
-    window.MarkdownFrontEditorConfig?.toolbarButtons ||
-    "bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,code,codeblock,clear,|,split,document,outline";
-  const normalizedConfigButtons = String(baseConfigButtons || "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .map((entry) => (entry === "markers" ? "outline" : entry));
-  if (!normalizedConfigButtons.includes("document")) {
-    normalizedConfigButtons.push("document");
-  }
-  if (!normalizedConfigButtons.includes("outline")) {
-    normalizedConfigButtons.push("outline");
-  }
-  const configButtons = normalizedConfigButtons.join(",");
-  const { statusEl, refreshButtons } = renderToolbarButtons({
-    toolbar,
-    buttons,
-    configButtons,
-    getEditor: () => activeEditor,
-  });
-  refreshToolbarState = refreshButtons;
-  saveStatusEl = statusEl;
-  statusManager.registerStatusEl(statusEl);
-
-  return toolbar;
 }
 
 /**
- * Setup keyboard shortcuts
+ * Registers fullscreen keyboard shortcuts against the shared event scope.
+ * Does not decide save semantics beyond invoking the existing save entrypoint.
  */
 function setupKeyboardShortcuts() {
-  if (disposeFullscreenKeydown) {
-    disposeFullscreenKeydown();
-    disposeFullscreenKeydown = null;
-  }
-
-  const onFullscreenKeydown = (e) => {
-    if (!activeEditor) return;
-
-    // Handle Ctrl/Cmd+S for save
-    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-      e.preventDefault();
-      e.stopPropagation();
-      saveAllEditors();
-      return; // Important: return to avoid processing other cases
-    }
-
-    // Handle other Ctrl/Cmd shortcuts
-    if (e.ctrlKey || e.metaKey) {
-      switch (e.key.toLowerCase()) {
-        case "b":
-          e.preventDefault();
-          activeEditor.chain().focus().toggleBold().run();
-          return;
-        case "i":
-          e.preventDefault();
-          activeEditor.chain().focus().toggleItalic().run();
-          return;
-        case "k":
-          e.preventDefault();
-          // show link prompt
-          const url = prompt("Enter URL:");
-          if (url) {
-            activeEditor.chain().focus().setLink({ href: url }).run();
-          }
-          return;
-      }
-    }
-  };
-
-  if (!fullscreenSessionEventScope) {
-    fullscreenSessionEventScope =
-      fullscreenEventRegistry.createScope("fullscreen-session");
-  }
-  disposeFullscreenKeydown = fullscreenSessionEventScope.register(
-    document,
-    "keydown",
-    onFullscreenKeydown,
-    true,
-  );
+  return setupKeyboardShortcutsHelper({
+    getDisposeFullscreenKeydown: () => disposeFullscreenKeydown,
+    setDisposeFullscreenKeydown: (value) => {
+      disposeFullscreenKeydown = value;
+    },
+    getFullscreenSessionEventScope: () => fullscreenSessionEventScope,
+    setFullscreenSessionEventScope: (value) => {
+      fullscreenSessionEventScope = value;
+    },
+    fullscreenEventRegistry,
+    getActiveEditor: () => activeEditor,
+    saveAllEditors,
+  });
 }
 
 /**
@@ -7094,7 +6097,10 @@ function buildSessionScopeLens() {
  * Does not infer missing nodes.
  */
 function getLensNode(contentId) {
-  return getLensNodeHelper(sessionScopeLens, contentId);
+  return getLensNodeHelper({
+    sessionScopeLens,
+    contentId,
+  });
 }
 
 /**
@@ -7102,7 +6108,7 @@ function getLensNode(contentId) {
  * Does not open editors or mutate canonical markdown.
  */
 function syncSessionScopeLens(payload, identityKey) {
-  const nextState = syncSessionScopeLensState({
+  const nextState = syncSessionScopeLensHelper({
     sessionScopeLens,
     sessionScopeIdentityKey,
     sessionScopeAnchorContentId,
@@ -8473,199 +7479,56 @@ async function flushToCanonical() {
   return true;
 }
 
+/**
+ * Builds virtual breadcrumb targets for fullscreen navigation clicks.
+ * Does not open editors or mutate session ownership.
+ */
 function createBreadcrumbVirtualTarget(params) {
-  const { scope, name, pageId, fieldType, section, subsection, markdownB64 } =
-    params || {};
-  const virtual = document.createElement("div");
-  virtual.className = "fe-editable md-edit mfe-virtual";
-  virtual.setAttribute("data-page", pageId || "0");
-  virtual.setAttribute("data-mfe-scope", scope);
-  virtual.setAttribute("data-mfe-name", name || "");
-  if (fieldType) {
-    virtual.setAttribute("data-field-type", fieldType);
-  }
-  virtual.setAttribute("data-mfe-markdown-kind", "scoped");
-  if (section) {
-    virtual.setAttribute("data-mfe-section", section);
-  }
-  if (subsection) {
-    virtual.setAttribute("data-mfe-subsection", subsection);
-  }
-  const scopeKey = buildScopeKeyFromMeta({
-    scopeKind: scope || "field",
-    section: section || "",
-    subsection: subsection || "",
-    name: name || "document",
+  return createBreadcrumbVirtualTargetHelper({
+    ...(params || {}),
+    activeOriginFieldKey,
+    activeOriginKey,
   });
-  if (scopeKey) {
-    virtual.setAttribute("data-mfe-key", scopeKey);
-  }
-  virtual.setAttribute("data-markdown-b64", markdownB64 || "");
-  applyActiveOriginKeyToVirtualTarget(virtual);
-  return virtual;
 }
 
+/**
+ * Resolves breadcrumb clicks to existing or virtual fullscreen targets.
+ * Does not perform the open/replace lifecycle itself.
+ */
 function resolveBreadcrumbNavigationTarget(params) {
-  const { type, id, sectionName, subsectionName, fieldName, index } =
-    params || {};
-  if (!activeTarget) return null;
-
-  const lensNode = resolveLensNodeForBreadcrumb({
-    type,
-    contentId: id,
-    section: sectionName,
-    subsection: subsectionName,
-    name: fieldName,
+  return resolveBreadcrumbNavigationTargetHelper({
+    ...(params || {}),
+    activeTarget,
+    resolveLensNodeForBreadcrumb,
+    buildVirtualTargetFromLensNode,
+    activeOriginFieldKey,
+    activeOriginKey,
   });
-  if (lensNode) {
-    return buildVirtualTargetFromLensNode(lensNode);
-  }
-
-  const indexed = id ? index.byId.get(id) : null;
-  if (indexed?.element) {
-    return indexed.element;
-  }
-
-  const indexedScope = String(indexed?.scope || "");
-  const indexedScopeMismatch =
-    Boolean(indexed?.markdownB64) && indexedScope === "document";
-  if (indexed?.markdownB64 && !indexedScopeMismatch) {
-    const virtualScope = type === "container" ? "field" : type;
-    return createBreadcrumbVirtualTarget({
-      scope: virtualScope,
-      name: indexed.name || fieldName,
-      pageId: activeTarget.getAttribute("data-page") || "0",
-      fieldType: virtualScope === "section" ? "container" : "",
-      section: indexed.section || "",
-      subsection: indexed.subsection || "",
-      markdownB64: indexed.markdownB64,
-    });
-  }
-
-  if (type === "section") {
-    const entry = sectionName ? getSectionEntry(sectionName) : null;
-    if (entry) {
-      return createBreadcrumbVirtualTarget({
-        scope: "section",
-        name: sectionName,
-        pageId: activeTarget.getAttribute("data-page") || "0",
-        fieldType: "container",
-        markdownB64: entry.markdownB64 || "",
-      });
-    }
-  }
-
-  if (type === "subsection") {
-    const entry =
-      sectionName && subsectionName
-        ? getSubsectionEntry(sectionName, subsectionName)
-        : null;
-    if (entry) {
-      return createBreadcrumbVirtualTarget({
-        scope: "subsection",
-        name: subsectionName,
-        pageId: activeTarget.getAttribute("data-page") || "0",
-        fieldType: "container",
-        section: sectionName,
-        markdownB64: entry.markdownB64 || "",
-      });
-    }
-  }
-
-  if (type === "field" || type === "container") {
-    const fields = getFieldsIndex();
-    const exact = fields.find((field) => {
-      if ((field?.name || "") !== fieldName) return false;
-      if (sectionName && (field?.section || "") !== sectionName) return false;
-      if (subsectionName && (field?.subsection || "") !== subsectionName) {
-        return false;
-      }
-      return true;
-    });
-    const fallback =
-      exact ||
-      fields.find(
-        (field) =>
-          (field?.name || "") === fieldName &&
-          (field?.section || "") === sectionName,
-      );
-
-    if (fallback) {
-      return createBreadcrumbVirtualTarget({
-        scope: "field",
-        name: fallback.name || fieldName,
-        pageId: activeTarget.getAttribute("data-page") || "0",
-        fieldType: fallback.fieldType || "tag",
-        section: fallback.section || sectionName,
-        subsection: fallback.subsection || subsectionName,
-        markdownB64: fallback.markdownB64 || "",
-      });
-    }
-  }
-
-  return null;
 }
 
+/**
+ * Handles breadcrumb click routing for fullscreen navigation.
+ * Does not own fullscreen open lifecycle beyond delegating to the existing opener.
+ */
 async function handleBreadcrumbClick(e) {
-  // Find the breadcrumb link element
-  const target = e.target?.closest(".mfe-breadcrumb-link");
-
-  if (!target) {
-    return;
-  }
-  e.preventDefault();
-  e.stopPropagation();
-
-  const type = target.getAttribute("data-breadcrumb-target");
-  if (!type || !activeTarget) {
-    return;
-  }
-
-  debugWarn("[mfe:scope] breadcrumb:click", {
-    clickedTarget: type,
-    scope: activeFieldScope || "",
-    name: activeFieldName || "",
-    section: activeFieldSection || "",
-    subsection: activeFieldSubsection || "",
-    type: activeFieldType || "",
-    viewMode: editorViewMode,
-    activeScopedKey: getActiveScopedHtmlKey(),
+  return handleBreadcrumbClickHelper({
+    event: e,
+    activeTarget,
+    activeFieldScope,
+    activeFieldName,
+    activeFieldSection,
+    activeFieldSubsection,
+    activeFieldType,
+    editorViewMode,
+    getActiveScopedHtmlKey,
+    debugWarn,
+    openDocumentFromBreadcrumbPath,
+    resolveHierarchyFromSessionScopeLens,
+    breadcrumbAnchor,
+    getActiveHierarchy,
+    resolveBreadcrumbNavigationTarget,
+    openFullscreenEditorForElement,
   });
-
-  if (type === "document") {
-    openDocumentFromBreadcrumbPath();
-    return;
-  }
-
-  const index = buildContentIndex();
-  const hierarchy =
-    resolveHierarchyFromSessionScopeLens() ||
-    breadcrumbAnchor ||
-    getActiveHierarchy();
-  const sectionName =
-    target.getAttribute("data-breadcrumb-section") || hierarchy.section || "";
-  const subsectionName =
-    target.getAttribute("data-breadcrumb-subsection") ||
-    hierarchy.subsection ||
-    "";
-  const fieldName =
-    target.getAttribute("data-breadcrumb-name") || hierarchy.name || "";
-  let id = target.getAttribute("data-breadcrumb-id") || "";
-  if (!id) {
-    id = getBreadcrumbContentId(type, sectionName, subsectionName, fieldName);
-  }
-
-  const resolvedTarget = resolveBreadcrumbNavigationTarget({
-    type,
-    id,
-    sectionName,
-    subsectionName,
-    fieldName,
-    index,
-  });
-  if (resolvedTarget) {
-    openFullscreenEditorForElement(resolvedTarget);
-  }
 }
 
 function openFullscreenEditorFromPayload(payload) {

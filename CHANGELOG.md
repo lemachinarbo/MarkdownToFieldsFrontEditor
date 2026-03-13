@@ -7,7 +7,7 @@
 - Fullscreen save remains centralized through one canonical pipeline, with stricter runtime projection validation and no legacy save-path ambiguity.
 - Structural cleanup reduced `editor-fullscreen.js` by moving debug/trace, preview sync, and scope-lens helpers into focused files without changing behavior.
 - Documentation now matches the verified model more closely: persisted markdown outside editing, canonical `DocumentState` draft during editing, runtime projection as cache, inline as non-reference.
-- New responsive layout for toolbar
+- New responsive layout for toolbar.
 
 ## v7.0.3
 
