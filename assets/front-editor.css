@@ -692,3 +692,70 @@ body[data-mfe-label-style="outside"]
   [data-mfe]:not(.fe-editable)::before {
   border-radius: var(--mfe-label-radius);
 }
+
+.mfe-link-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(19, 24, 32, 0.55);
+}
+
+.mfe-link-picker__dialog {
+  width: min(960px, calc(100vw - 32px));
+  height: min(720px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+
+.mfe-link-picker__header,
+.mfe-link-picker__footer {
+  padding: 14px 16px;
+  background: #f8fafc;
+}
+
+.mfe-link-picker__header {
+  font-weight: 600;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.mfe-link-picker__body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.mfe-link-picker__frame {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border: 0;
+  background: #fff;
+}
+
+.mfe-link-picker__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.mfe-link-picker__button {
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  background: #111827;
+  color: #fff;
+  font: inherit;
+}
+
+.mfe-link-picker__button--secondary {
+  background: #e5e7eb;
+  color: #111827;
+}

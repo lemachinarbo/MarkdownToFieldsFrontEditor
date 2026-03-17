@@ -518,7 +518,10 @@ export function createMarkdownParser(schema) {
       }),
     },
     s: { mark: "strike" },
-    link: defaultMarkdownParser.tokens.link,
+    link: {
+      ...defaultMarkdownParser.tokens.link,
+      getAttrs: defaultMarkdownParser.tokens.link?.getAttrs,
+    },
     image: defaultMarkdownParser.tokens.image,
   };
 
@@ -653,6 +656,14 @@ function getSerializableImageSource(node) {
 
 function serializeImageSrc(src) {
   return (src || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)")
+    .replace(/\s/g, "%20");
+}
+
+function serializeLinkHref(src) {
+  return String(src || "")
     .replace(/\\/g, "\\\\")
     .replace(/\(/g, "\\(")
     .replace(/\)/g, "\\)")
@@ -881,6 +892,16 @@ const SERIALIZER_NODES_BLUEPRINT = deepFreeze({
 
 const SERIALIZER_MARKS_BLUEPRINT = deepFreeze({
   ...cloneMarkSpecMap(defaultMarkdownSerializer.marks),
+  link: {
+    open: () => "[",
+    close: (state, mark) => {
+      const href = serializeLinkHref(mark?.attrs?.href || "");
+      const title = String(mark?.attrs?.title || "").trim();
+      const titlePart = title ? ` "${state.esc(title)}"` : "";
+      return `](${href}${titlePart})`;
+    },
+    mixable: false,
+  },
   bold: {
     open: (_state, mark) =>
       String(mark?.attrs?.delimiter || "") === "__"

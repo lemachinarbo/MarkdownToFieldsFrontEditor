@@ -1,6 +1,5 @@
 import { Editor, Extension } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
-import Link from "@tiptap/extension-link";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
@@ -28,6 +27,7 @@ import {
   SubscriptMark,
   MarkerAwareItalic,
   createMfeImageExtension,
+  createMfeLinkExtension,
 } from "./editor-tiptap-extensions.js";
 import {
   getMetaAttr,
@@ -767,6 +767,7 @@ function createEditorInstance(host, fieldType, fieldName) {
   const SingleBlockEnterToastExtension =
     createSingleBlockEnterToastExtension(setError);
   const ImageExtension = createMfeImageExtension(getImageBaseUrl);
+  const LinkExtension = createMfeLinkExtension();
 
   const editor = new Editor({
     element: host,
@@ -789,10 +790,7 @@ function createEditorInstance(host, fieldType, fieldName) {
       CodeBlockLowlight.configure({
         lowlight,
       }),
-      Link.configure({
-        openOnClick: false,
-        linkOnPaste: true,
-      }),
+      LinkExtension,
       ImageExtension,
       InlineHtmlLabelExtension,
       ...(restrictToSingleBlock ? [SingleBlockEnterToastExtension] : []),

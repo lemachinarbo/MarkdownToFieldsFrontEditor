@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.8.1
+
+- Adds an in-editor link picker for choosing internal pages with language-aware insertions. 
+
 ## v0.8
 
 - This release proves the fullscreen editor is now the trustworthy reference path. One canonical draft per language, one real save pipeline, safe scope rebinding, and deterministic reopen/discard behavior.

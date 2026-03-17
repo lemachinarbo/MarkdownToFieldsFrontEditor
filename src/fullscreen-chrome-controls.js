@@ -2,6 +2,7 @@ import { NodeSelection } from "prosemirror-state";
 import { createToolbarButtons } from "./editor-toolbar.js";
 import { renderToolbarButtons } from "./editor-toolbar-renderer.js";
 import { createImagePicker } from "./image-picker.js";
+import { applyPickedLinkToEditor } from "./page-link-picker.js";
 
 /**
  * Applies the fullscreen split-pane width preference to the shell.
@@ -524,6 +525,8 @@ export function openImagePicker({
  */
 export function createToolbar({
   getActiveEditor,
+  getCurrentLanguage,
+  markUserIntentToken,
   saveAllEditors,
   toggleSplit,
   isSplitEnabled,
@@ -544,6 +547,8 @@ export function createToolbar({
 
   const buttons = createToolbarButtons({
     getEditor: getActiveEditor,
+    getCurrentLanguage,
+    markUserIntentToken,
     onSave: saveAllEditors,
     onToggleSplit: toggleSplit,
     isSplitActive: () => Boolean(isSplitEnabled()),
@@ -597,6 +602,7 @@ export function setupKeyboardShortcuts({
   setFullscreenSessionEventScope,
   fullscreenEventRegistry,
   getActiveEditor,
+  getCurrentLanguage,
   saveAllEditors,
 }) {
   const disposeFullscreenKeydown = getDisposeFullscreenKeydown();
@@ -628,10 +634,13 @@ export function setupKeyboardShortcuts({
           return;
         case "k": {
           event.preventDefault();
-          const url = prompt("Enter URL:");
-          if (url) {
-            activeEditor.chain().focus().setLink({ href: url }).run();
-          }
+          void applyPickedLinkToEditor(activeEditor, {
+            language:
+              typeof getCurrentLanguage === "function"
+                ? getCurrentLanguage()
+                : "",
+            markUserIntentToken,
+          });
           return;
         }
       }

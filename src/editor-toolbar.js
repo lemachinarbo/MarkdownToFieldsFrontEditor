@@ -2,9 +2,12 @@ import {
   toggleListWithFieldConstraints,
   clearFormattingWithFieldConstraints,
 } from "./field-constraints-toolbar.js";
+import { applyPickedLinkToEditor } from "./page-link-picker.js";
 
 export function createToolbarButtons({
   getEditor,
+  getCurrentLanguage,
+  markUserIntentToken,
   onSave,
   onToggleSplit,
   isSplitActive,
@@ -192,21 +195,15 @@ export function createToolbarButtons({
           <path stroke-linecap="round" stroke-linejoin="round" d="M9 12a3 3 0 0 1 3-3h4.5a3 3 0 0 1 0 6H12a3 3 0 0 1-3-3Zm6-3a3 3 0 0 1 3-3h1.5a3 3 0 0 1 0 6H18a3 3 0 0 1-3-3Z"></path>
         </svg>
       `,
-      action: withEditor((editor) => {
-        const previousUrl = editor.getAttributes("link").href || "";
-        const url = window.prompt("URL", previousUrl);
-        if (url === null) return;
-        if (url.trim() === "") {
-          editor.chain().focus().unsetLink().run();
-          return;
-        }
-        editor
-          .chain()
-          .focus()
-          .extendMarkRange("link")
-          .setLink({ href: url })
-          .run();
-      }),
+      action: withEditor((editor) =>
+        applyPickedLinkToEditor(editor, {
+          language:
+            typeof getCurrentLanguage === "function"
+              ? getCurrentLanguage()
+              : "",
+          markUserIntentToken,
+        }),
+      ),
       isActive: () => isActiveMark("link"),
       title: "Link",
     },

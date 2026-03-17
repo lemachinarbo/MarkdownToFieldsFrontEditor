@@ -465,6 +465,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         if (!$languages) {
             return [[
+                'id' => 0,
                 'name' => 'default',
                 'title' => 'Default',
                 'isDefault' => true,
@@ -485,6 +486,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         foreach ($languages as $lang) {
             $storageCode = $this->resolveLanguageStorageCode($lang);
             $langList[] = [
+                'id' => (int) $lang->id,
                 'name' => $storageCode,
                 'title' => (string)($lang->title ?: $lang->name),
                 'isDefault' => (bool)$lang->isDefault(),
@@ -543,6 +545,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'languages' => $langList,
             'currentLanguage' => $currentLanguage,
             'pageId' => (int)$page->id,
+            'adminUrl' => (string)$this->wire()->config->urls->admin,
             'imageBaseUrl' => $this->resolveConfiguredImageBaseUrl($page),
             'pageFilesBaseUrl' => $this->resolvePageFilesBaseUrl($page),
             'buildStamp' => $version,

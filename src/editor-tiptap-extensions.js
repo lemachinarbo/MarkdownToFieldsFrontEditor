@@ -3,6 +3,7 @@ import Image from "@tiptap/extension-image";
 import Bold from "@tiptap/extension-bold";
 import BulletList from "@tiptap/extension-bullet-list";
 import Italic from "@tiptap/extension-italic";
+import Link from "@tiptap/extension-link";
 import TaskList from "@tiptap/extension-task-list";
 import { Plugin } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
@@ -229,6 +230,31 @@ export const SubscriptMark = Mark.create({
     return ["sub", 0];
   },
 });
+
+export function createMfeLinkExtension() {
+  return Link.extend({
+    addAttributes() {
+      return {
+        ...(this.parent?.() || {}),
+        pageId: {
+          default: null,
+          parseHTML: (element) => element.getAttribute("data-pw-page"),
+          renderHTML: (attributes) =>
+            attributes.pageId ? { "data-pw-page": attributes.pageId } : {},
+        },
+        pageLang: {
+          default: null,
+          parseHTML: (element) => element.getAttribute("data-pw-lang"),
+          renderHTML: (attributes) =>
+            attributes.pageLang ? { "data-pw-lang": attributes.pageLang } : {},
+        },
+      };
+    },
+  }).configure({
+    openOnClick: false,
+    linkOnPaste: true,
+  });
+}
 
 export function createMfeImageExtension(resolveImageBaseUrl) {
   return Image.extend({

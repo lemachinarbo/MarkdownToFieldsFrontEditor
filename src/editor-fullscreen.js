@@ -7,7 +7,6 @@
 
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
-import Link from "@tiptap/extension-link";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import TaskItem from "@tiptap/extension-task-item";
 import { Table } from "@tiptap/extension-table";
@@ -43,6 +42,7 @@ import {
   createMfeImageExtension,
   MarkerAwareBulletList,
   MarkerAwareTaskList,
+  createMfeLinkExtension,
 } from "./editor-tiptap-extensions.js";
 import { createDocumentBoundaryExtension } from "./document-boundary-extension.js";
 import {
@@ -2553,6 +2553,7 @@ function createEditorInstance(element, fieldType, fieldName) {
     (message, options) => statusManager.setError(message, options),
   );
   const ImageExtension = createMfeImageExtension(getImageBaseUrl);
+  const LinkExtension = createMfeLinkExtension();
   const DocumentBoundaryExtension = createDocumentBoundaryExtension(
     () => editorViewMode,
   );
@@ -2578,10 +2579,7 @@ function createEditorInstance(element, fieldType, fieldName) {
       CodeBlockLowlight.configure({
         lowlight,
       }),
-      Link.configure({
-        openOnClick: false,
-        linkOnPaste: true,
-      }),
+      LinkExtension,
       ImageExtension,
       InlineHtmlLabelExtension,
       DocumentBoundaryExtension,
@@ -5961,6 +5959,9 @@ window.mfeOpenImagePicker = openImagePicker;
 function createToolbar() {
   return createToolbarHelper({
     getActiveEditor: () => activeEditor,
+    getCurrentLanguage: () =>
+      String(activeDocumentState?.lang || getLanguagesConfig().current || ""),
+    markUserIntentToken,
     saveAllEditors,
     toggleSplit,
     isSplitEnabled: () => splitEnabledByUser,
@@ -5996,6 +5997,8 @@ function setupKeyboardShortcuts() {
     },
     fullscreenEventRegistry,
     getActiveEditor: () => activeEditor,
+    getCurrentLanguage: () =>
+      String(activeDocumentState?.lang || getLanguagesConfig().current || ""),
     saveAllEditors,
   });
 }
