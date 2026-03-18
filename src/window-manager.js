@@ -62,13 +62,17 @@ function setupOverlayChromeMetrics(overlay) {
   const handleWindowResize = () => {
     applyMetrics();
   };
-  window.addEventListener("resize", handleWindowResize);
+  const disposeResize = windowManagerGlobalEventScope.register(
+    window,
+    "resize",
+    handleWindowResize,
+  );
 
   return {
     refresh: applyMetrics,
     cleanup: () => {
       resizeObserver?.disconnect();
-      window.removeEventListener("resize", handleWindowResize);
+      disposeResize();
     },
   };
 }

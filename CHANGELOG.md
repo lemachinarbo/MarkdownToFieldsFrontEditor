@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.2
+
+- Tightens fullscreen breadcrumb navigation so scope changes stay tied to the right session and target when moving up and down the content tree.
+- Cleans up internal browser event handling so popups and window chrome use the shared event registry instead of ad-hoc listeners.
+
+
 ## v0.8.1
 
 - Adds an in-editor link picker for choosing internal pages with language-aware insertions. 

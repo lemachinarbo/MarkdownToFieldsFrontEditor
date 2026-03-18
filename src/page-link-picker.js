@@ -1,4 +1,5 @@
 import { getHostConfig } from "./host-env.js";
+import { createEventRegistry } from "./event-registry.js";
 
 function parseAnchorHtml(markup) {
   const container = document.createElement("div");
@@ -54,6 +55,8 @@ export function openPageLinkPicker({ currentHref = "", language = "" } = {}) {
   }
 
   return new Promise((resolve) => {
+    const eventRegistry = createEventRegistry();
+    const eventScope = eventRegistry.createScope("page-link-picker");
     const overlay = document.createElement("div");
     overlay.className = "mfe-link-picker";
 
@@ -92,6 +95,7 @@ export function openPageLinkPicker({ currentHref = "", language = "" } = {}) {
     insertButton.textContent = "Insert";
 
     function cleanup(result) {
+      eventScope.disposeAll();
       overlay.remove();
       resolve(result);
     }
@@ -118,19 +122,19 @@ export function openPageLinkPicker({ currentHref = "", language = "" } = {}) {
       };
     }
 
-    cancelButton.addEventListener("click", () => cleanup(null));
-    insertButton.addEventListener("click", () => cleanup(readResult()));
-    overlay.addEventListener("click", (event) => {
+    eventScope.register(cancelButton, "click", () => cleanup(null));
+    eventScope.register(insertButton, "click", () => cleanup(readResult()));
+    eventScope.register(overlay, "click", (event) => {
       if (event.target === overlay) {
         cleanup(null);
       }
     });
 
-    iframe.addEventListener("load", () => {
+    eventScope.register(iframe, "load", () => {
       const iframeDocument = iframe.contentWindow?.document;
       const urlInput = iframeDocument?.querySelector("#link_page_url_input");
       if (!urlInput) return;
-      urlInput.addEventListener("keydown", (event) => {
+      eventScope.register(urlInput, "keydown", (event) => {
         if (event.key !== "Enter") return;
         const value = String(urlInput.value || "").trim();
         if (!value) return;

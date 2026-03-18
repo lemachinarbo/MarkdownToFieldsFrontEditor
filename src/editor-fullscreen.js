@@ -239,7 +239,6 @@ import {
   buildSessionScopeLens as buildSessionScopeLensHelper,
   getLensNode as getLensNodeHelper,
   syncSessionScopeLens as syncSessionScopeLensHelper,
-  resolveHierarchyFromSessionScopeLens as resolveHierarchyFromSessionScopeLensHelper,
   resolveLensNodeForBreadcrumb as resolveLensNodeForBreadcrumbHelper,
   resolveMarkerBearingCanonicalMarkdownForLens as resolveMarkerBearingCanonicalMarkdownForLensHelper,
   resolveCanonicalMarkdownForLensNode as resolveCanonicalMarkdownForLensNodeHelper,
@@ -247,7 +246,6 @@ import {
   resolveMarkerBearingMarkdownForLensNode as resolveMarkerBearingMarkdownForLensNodeHelper,
   applyActiveOriginKeyToVirtualTarget as applyActiveOriginKeyToVirtualTargetHelper,
   buildVirtualTargetFromLensNode as buildVirtualTargetFromLensNodeHelper,
-  updateBreadcrumbAnchorFromPayload as updateBreadcrumbAnchorFromPayloadHelper,
   buildBreadcrumbParts as buildBreadcrumbPartsHelper,
   buildBreadcrumbItems as buildBreadcrumbItemsHelper,
   getBreadcrumbsCurrentTarget as getBreadcrumbsCurrentTargetHelper,
@@ -255,6 +253,10 @@ import {
   resolveBreadcrumbNavigationTarget as resolveBreadcrumbNavigationTargetHelper,
   handleBreadcrumbClick as handleBreadcrumbClickHelper,
 } from "./fullscreen-breadcrumb-navigation.js";
+import {
+  resolveAnchorContentIdFromOriginKey as resolveAnchorContentIdFromOriginKeyHelper,
+  resolveContentIdForScopeMeta as resolveContentIdForScopeMetaHelper,
+} from "./fullscreen-scope-lens.js";
 
 let activeEditor = null;
 let primaryEditor = null;
@@ -6129,15 +6131,117 @@ function syncSessionScopeLens(payload, identityKey) {
 }
 
 /**
+ * Derive hierarchy metadata from the active payload.
+ * Does not inspect editor instances or mutate session state.
+ */
+function deriveHierarchyFromPayload(payload) {
+  const scope = payload?.fieldScope || "field";
+  const type = payload?.fieldType || "tag";
+  const isContainer = type === "container";
+  const name = payload?.fieldName || "";
+  let section = payload?.fieldSection || "";
+  let subsection = payload?.fieldSubsection || "";
+
+  if (scope === "section") {
+    section = name;
+    subsection = "";
+  } else if (scope === "subsection") {
+    subsection = name;
+    if (!section && subsection) {
+      section = findSectionNameForSubsection(subsection) || "";
+    }
+  } else if (!section && subsection) {
+    section = findSectionNameForSubsection(subsection) || "";
+  }
+
+  if (scope === "document" && !section && !subsection) {
+    const originScopeMeta = parseOriginScopeMeta(
+      payload?.originFieldKey || payload?.originKey || payload?.fieldId || "",
+    );
+    if (originScopeMeta) {
+      section = originScopeMeta.section || "";
+      subsection = originScopeMeta.subsection || "";
+    }
+  }
+
+  const resolvedName =
+    scope === "document" && name === "document"
+      ? parseOriginScopeMeta(
+          payload?.originFieldKey ||
+            payload?.originKey ||
+            payload?.fieldId ||
+            "",
+        )?.name || name
+      : name;
+
+  return {
+    scope,
+    name: resolvedName,
+    section,
+    subsection,
+    type,
+    isContainer,
+  };
+}
+
+/**
+ * Resolve the anchor content id for the current payload.
+ * Does not rebuild the scope lens.
+ */
+function resolveSessionScopeAnchorContentId(payload) {
+  const originKey = String(
+    payload?.originFieldKey || payload?.originKey || payload?.fieldId || "",
+  );
+  const originResolved = resolveAnchorContentIdFromOriginKeyHelper(originKey);
+  if (originResolved && originResolved !== "document:root") {
+    return originResolved;
+  }
+  const hierarchy = deriveHierarchyFromPayload(payload || {});
+  return (
+    resolveContentIdForScopeMetaHelper({
+      scope: hierarchy.scope || "field",
+      type: hierarchy.type || "tag",
+      section: hierarchy.section || "",
+      subsection: hierarchy.subsection || "",
+      name: hierarchy.name || "",
+    }) || "document:root"
+  );
+}
+
+/**
+ * Resolve the active content id for the current payload.
+ * Does not rebuild the scope lens.
+ */
+function resolveSessionScopeActiveContentId(payload) {
+  const hierarchy = deriveHierarchyFromPayload(payload || {});
+  return (
+    resolveContentIdForScopeMetaHelper({
+      scope: hierarchy.scope || "field",
+      type: hierarchy.type || "tag",
+      section: hierarchy.section || "",
+      subsection: hierarchy.subsection || "",
+      name: hierarchy.name || "",
+    }) || "document:root"
+  );
+}
+
+/**
  * Resolve hierarchy from the active session scope lens globals.
  * Does not fall back to DOM-derived active target state.
  */
 function resolveHierarchyFromSessionScopeLens() {
-  return resolveHierarchyFromSessionScopeLensHelper({
-    sessionScopeLens,
-    sessionScopeActiveContentId,
-    sessionScopeAnchorContentId,
-  });
+  const activeNode = getLensNode(sessionScopeActiveContentId);
+  const anchorNode = getLensNode(sessionScopeAnchorContentId);
+  const fallbackNode = getLensNode("document:root");
+  const node = anchorNode || activeNode || fallbackNode;
+  if (!node) return null;
+  const scope = node.scope || "field";
+  const name = node.name || "";
+  const section = node.section || "";
+  const subsection = node.subsection || "";
+  const type = node.type || (node.isContainer ? "container" : "tag");
+  const isContainer = type === "container";
+  return { scope, name, section, subsection, type, isContainer };
 }
 
 /**
@@ -6222,6 +6326,7 @@ function applyActiveOriginKeyToVirtualTarget(virtual) {
  * Does not open the editor or mutate session state.
  */
 function buildVirtualTargetFromLensNode(node) {
+  const markdownB64 = encodeMarkdownBase64(resolveMarkerBearingMarkdownForLensNode(node));
   return buildVirtualTargetFromLensNodeHelper(node, {
     activeTarget,
     activeOriginFieldKey,
@@ -6235,6 +6340,7 @@ function buildVirtualTargetFromLensNode(node) {
     activeDocumentState,
     getDocumentConfigMarkdownRaw,
     debugWarn,
+    markdownB64,
   });
 }
 
@@ -6243,25 +6349,19 @@ function buildVirtualTargetFromLensNode(node) {
  * Does not open editors or mutate canonical markdown.
  */
 function updateBreadcrumbAnchorFromPayload(payload) {
-  const nextState = updateBreadcrumbAnchorFromPayloadHelper({
-    payload,
-    breadcrumbAnchorIdentityKey,
-    sessionScopeLens,
-    sessionScopeIdentityKey,
-    sessionScopeAnchorContentId,
-    sessionScopeActiveContentId,
-    sectionsIndex: getConfiguredSectionsIndex(),
-    fieldsIndex: getFieldsIndex(),
-    contentIndexTargets: buildContentIndex()?.targets || [],
-  });
-  sessionScopeLens = nextState.sessionScopeLens;
-  sessionScopeIdentityKey = nextState.sessionScopeIdentityKey;
-  sessionScopeAnchorContentId = nextState.sessionScopeAnchorContentId;
-  sessionScopeActiveContentId = nextState.sessionScopeActiveContentId;
-  if (nextState.breadcrumbAnchor !== null) {
-    breadcrumbAnchor = nextState.breadcrumbAnchor;
-    breadcrumbAnchorIdentityKey = nextState.breadcrumbAnchorIdentityKey;
+  const pageId = String(payload?.pageId || "0");
+  const originKey = String(
+    payload?.originFieldKey || payload?.originKey || payload?.fieldId || "",
+  );
+  const nextIdentityKey = `${pageId}|${originKey}`;
+  syncSessionScopeLens(payload, nextIdentityKey);
+  sessionScopeAnchorContentId = resolveSessionScopeAnchorContentId(payload);
+  sessionScopeActiveContentId = resolveSessionScopeActiveContentId(payload);
+  if (breadcrumbAnchor && breadcrumbAnchorIdentityKey === nextIdentityKey) {
+    return;
   }
+  breadcrumbAnchor = deriveHierarchyFromPayload(payload);
+  breadcrumbAnchorIdentityKey = nextIdentityKey;
 }
 
 /**
@@ -7487,11 +7587,42 @@ async function flushToCanonical() {
  * Does not open editors or mutate session ownership.
  */
 function createBreadcrumbVirtualTarget(params) {
-  return createBreadcrumbVirtualTargetHelper({
-    ...(params || {}),
-    activeOriginFieldKey,
-    activeOriginKey,
+  const {
+    scope,
+    name,
+    pageId,
+    fieldType,
+    section,
+    subsection,
+    markdownB64,
+  } = params || {};
+  const virtual = document.createElement("div");
+  virtual.className = "fe-editable md-edit mfe-virtual";
+  virtual.setAttribute("data-page", pageId || "0");
+  virtual.setAttribute("data-mfe-scope", scope || "field");
+  virtual.setAttribute("data-mfe-name", name || "");
+  if (fieldType) {
+    virtual.setAttribute("data-field-type", fieldType);
+  }
+  virtual.setAttribute("data-mfe-markdown-kind", "scoped");
+  if (section) {
+    virtual.setAttribute("data-mfe-section", section);
+  }
+  if (subsection) {
+    virtual.setAttribute("data-mfe-subsection", subsection);
+  }
+  const scopeKey = buildScopeKeyFromMeta({
+    scopeKind: scope || "field",
+    section: section || "",
+    subsection: subsection || "",
+    name: name || "document",
   });
+  if (scopeKey) {
+    virtual.setAttribute("data-mfe-key", scopeKey);
+  }
+  virtual.setAttribute("data-markdown-b64", markdownB64 || "");
+  applyActiveOriginKeyToVirtualTarget(virtual);
+  return virtual;
 }
 
 /**
@@ -7499,6 +7630,48 @@ function createBreadcrumbVirtualTarget(params) {
  * Does not perform the open/replace lifecycle itself.
  */
 function resolveBreadcrumbNavigationTarget(params) {
+  const {
+    type,
+    id,
+    sectionName,
+    subsectionName,
+    fieldName,
+    index,
+  } = params || {};
+  if (!activeTarget) return null;
+
+  const lensNode = resolveLensNodeForBreadcrumb({
+    type,
+    contentId: id,
+    section: sectionName,
+    subsection: subsectionName,
+    name: fieldName,
+  });
+  if (lensNode) {
+    return buildVirtualTargetFromLensNode(lensNode);
+  }
+
+  const indexed = id ? index.byId.get(id) : null;
+  if (indexed?.element) {
+    return indexed.element;
+  }
+
+  const indexedScope = String(indexed?.scope || "");
+  const indexedScopeMismatch =
+    Boolean(indexed?.markdownB64) && indexedScope === "document";
+  if (indexed?.markdownB64 && !indexedScopeMismatch) {
+    const virtualScope = type === "container" ? "field" : type;
+    return createBreadcrumbVirtualTarget({
+      scope: virtualScope,
+      name: indexed.name || fieldName,
+      pageId: activeTarget.getAttribute("data-page") || "0",
+      fieldType: virtualScope === "section" ? "container" : "",
+      section: indexed.section || "",
+      subsection: indexed.subsection || "",
+      markdownB64: indexed.markdownB64,
+    });
+  }
+
   return resolveBreadcrumbNavigationTargetHelper({
     ...(params || {}),
     activeTarget,
@@ -7514,24 +7687,64 @@ function resolveBreadcrumbNavigationTarget(params) {
  * Does not own fullscreen open lifecycle beyond delegating to the existing opener.
  */
 async function handleBreadcrumbClick(e) {
-  return handleBreadcrumbClickHelper({
-    event: e,
-    activeTarget,
-    activeFieldScope,
-    activeFieldName,
-    activeFieldSection,
-    activeFieldSubsection,
-    activeFieldType,
-    editorViewMode,
-    getActiveScopedHtmlKey,
-    debugWarn,
-    openDocumentFromBreadcrumbPath,
-    resolveHierarchyFromSessionScopeLens,
-    breadcrumbAnchor,
-    getActiveHierarchy,
-    resolveBreadcrumbNavigationTarget,
-    openFullscreenEditorForElement,
+  const target = e.target?.closest(".mfe-breadcrumb-link");
+
+  if (!target) {
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+
+  const type = target.getAttribute("data-breadcrumb-target");
+  if (!type || !activeTarget) {
+    return;
+  }
+
+  debugWarn("[mfe:scope] breadcrumb:click", {
+    clickedTarget: type,
+    scope: activeFieldScope || "",
+    name: activeFieldName || "",
+    section: activeFieldSection || "",
+    subsection: activeFieldSubsection || "",
+    type: activeFieldType || "",
+    viewMode: editorViewMode,
+    activeScopedKey: getActiveScopedHtmlKey(),
   });
+
+  if (type === "document") {
+    openDocumentFromBreadcrumbPath();
+    return;
+  }
+
+  const index = buildContentIndex();
+  const hierarchy =
+    resolveHierarchyFromSessionScopeLens() ||
+    breadcrumbAnchor ||
+    getActiveHierarchy();
+  const sectionName =
+    target.getAttribute("data-breadcrumb-section") || hierarchy.section || "";
+  const subsectionName =
+    target.getAttribute("data-breadcrumb-subsection") ||
+    hierarchy.subsection ||
+    "";
+  const fieldName =
+    target.getAttribute("data-breadcrumb-name") || hierarchy.name || "";
+  let id = target.getAttribute("data-breadcrumb-id") || "";
+  if (!id) {
+    id = getBreadcrumbContentId(type, sectionName, subsectionName, fieldName);
+  }
+
+  const resolvedTarget = resolveBreadcrumbNavigationTarget({
+    type,
+    id,
+    sectionName,
+    subsectionName,
+    fieldName,
+    index,
+  });
+  if (resolvedTarget) {
+    openFullscreenEditorForElement(resolvedTarget);
+  }
 }
 
 function openFullscreenEditorFromPayload(payload) {
