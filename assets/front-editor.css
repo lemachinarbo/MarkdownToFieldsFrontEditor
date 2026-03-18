@@ -16,10 +16,8 @@ body[data-mfe-build] [data-mfe]:not(.fe-editable) * {
   outline-offset: 4px;
 }
 
-/* Prevent link navigation while editing so dblclick can open editor */
-body[data-mfe-build] .fe-editable a {
-  pointer-events: none;
-}
+/* Links remain clickable for admins; inline JS delays single-click navigation
+   briefly so a double click can still open the editor. */
 
 .fe-editable[data-mfe-scope="section"],
 .fe-editable[data-mfe-scope="subsection"],

@@ -3,6 +3,7 @@
 ## v0.8.1
 
 - Adds an in-editor link picker for choosing internal pages with language-aware insertions. 
+- Make links in editable zones, clickable.
 
 ## v0.8
 
