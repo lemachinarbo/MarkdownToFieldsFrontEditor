@@ -2882,6 +2882,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 'baseLabel' => (string)$base['label'],
                 'targetLabel' => $targetLabel,
                 'diff' => $this->buildUnifiedDiff((string)$base['content'], $targetContent, (string)$base['label'], $targetLabel),
+                'baseMarkdownB64' => base64_encode((string)$base['content']),
+                'targetMarkdownB64' => base64_encode($targetContent),
                 'isCorrupted' => false,
             ];
         });

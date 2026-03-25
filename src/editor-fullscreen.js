@@ -43,6 +43,7 @@ import {
   MarkerAwareBulletList,
   MarkerAwareTaskList,
   createMfeLinkExtension,
+  createSnapshotCompareExtension,
 } from "./editor-tiptap-extensions.js";
 import { createDocumentBoundaryExtension } from "./document-boundary-extension.js";
 import {
@@ -299,6 +300,7 @@ let snapshotHistoryItems = [];
 let snapshotSelectedId = "";
 let snapshotCompareMode = "current";
 let snapshotPreviewEl = null;
+let snapshotCompareEditor = null;
 let primaryPaneEl = null;
 let saveStatusEl = null;
 let refreshToolbarState = null;
@@ -1471,30 +1473,125 @@ function renderSnapshotList() {
   }
 }
 
-function updateSnapshotPrimaryPreview(content = "", selected = null) {
+function destroySnapshotCompareEditor() {
+  if (snapshotCompareEditor) {
+    snapshotCompareEditor.destroy();
+    snapshotCompareEditor = null;
+  }
+}
+
+function createSnapshotCompareEditorInstance(element, snapshotMarkdown, baseMarkdown) {
+  const lowlight = createLowlight(common);
+  const compareState = {
+    baseDoc: null,
+  };
+  const editor = new Editor({
+    element,
+    extensions: [
+      StarterKit.configure({
+        bold: false,
+        codeBlock: false,
+        italic: false,
+        link: false,
+        underline: false,
+        bulletList: false,
+      }),
+      MarkerAwareBold,
+      MarkerAwareItalic,
+      MarkerAwareBulletList,
+      MarkerAwareTaskList,
+      TaskItem.configure({ nested: true }),
+      Table.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
+      UnderlineMark,
+      SuperscriptMark,
+      SubscriptMark,
+      Marker,
+      GapSentinel,
+      CodeBlockLowlight.configure({
+        lowlight,
+      }),
+      createMfeLinkExtension(),
+      createMfeImageExtension(getImageBaseUrl),
+      InlineHtmlLabelExtension,
+      HeadingSingleLineExtension,
+      createSnapshotCompareExtension(() => compareState),
+    ],
+    content: "",
+    editable: false,
+    editorProps: {
+      attributes: {
+        class: "prose prose-sm focus:outline-none mfe-editor mfe-snapshot-compare-editor",
+        spellcheck: "false",
+      },
+    },
+  });
+
+  const scope = activeFieldScope || "field";
+  const snapshotSource = splitLeadingFrontmatter(String(snapshotMarkdown || "")).body;
+  const baseSource = splitLeadingFrontmatter(String(baseMarkdown || "")).body;
+  const snapshotBody = sanitizeEditorMarkdownForScope(
+    enforceBodyOnlyEditorInput(snapshotSource, {
+      source: "snapshot:preview",
+      lang: getSnapshotLanguageCode(),
+      scope,
+    }),
+    scope,
+  );
+  const baseBody = sanitizeEditorMarkdownForScope(
+    enforceBodyOnlyEditorInput(baseSource, {
+      source: "snapshot:compareBase",
+      lang: getSnapshotLanguageCode(),
+      scope,
+    }),
+    scope,
+  );
+  const snapshotDoc = parseMarkdownToDoc(snapshotBody || "", editor.schema);
+  compareState.baseDoc = parseMarkdownToDoc(baseBody || "", editor.schema);
+  editor.commands.setContent(snapshotDoc.toJSON(), false);
+  editor.setEditable(false);
+  editor.view.dispatch(
+    editor.state.tr.setMeta("mfe-snapshot-compare-refresh", Date.now()),
+  );
+  return editor;
+}
+
+function updateSnapshotPrimaryPreview({
+  selected = null,
+  snapshotMarkdown = "",
+  baseMarkdown = "",
+  note = "",
+} = {}) {
   if (!snapshotPreviewEl || !primaryPaneEl) return;
   const hasHistoryPreview = snapshotHistoryOpen && Boolean(selected);
   snapshotPreviewEl.hidden = !hasHistoryPreview;
   primaryPaneEl.classList.toggle("mfe-editor-pane--snapshot-preview", hasHistoryPreview);
-  const liveEditorEl = primaryPaneEl.querySelector(".mfe-editor");
+  const liveEditorEl = primaryPaneEl.querySelector(
+    ".mfe-editor:not(.mfe-snapshot-compare-editor)",
+  );
   if (liveEditorEl) {
     liveEditorEl.style.display = hasHistoryPreview ? "none" : "";
   }
   if (!hasHistoryPreview) {
+    destroySnapshotCompareEditor();
     snapshotPreviewEl.innerHTML = "";
     return;
   }
-  const title = getSnapshotDisplayTitle(selected, buildSnapshotVersionMap());
-  const timestamp = selected?.createdAt
-    ? new Date(selected.createdAt).toLocaleString()
-    : "";
   snapshotPreviewEl.innerHTML = `
-    <div class="mfe-snapshot-preview-header">
-      <h2>${escapeHtml(title)}</h2>
-      <p>${escapeHtml(timestamp)}</p>
-    </div>
-    <pre class="mfe-snapshot-preview-body">${escapeHtml(String(content || ""))}</pre>
+    ${note ? `<p class="mfe-snapshot-preview-note">${escapeHtml(note)}</p>` : ""}
+    <div class="mfe-snapshot-preview-body"></div>
   `;
+  destroySnapshotCompareEditor();
+  const bodyEl = snapshotPreviewEl.querySelector(".mfe-snapshot-preview-body");
+  if (bodyEl) {
+    snapshotCompareEditor = createSnapshotCompareEditorInstance(
+      bodyEl,
+      snapshotMarkdown,
+      baseMarkdown,
+    );
+  }
 }
 
 function updateSnapshotPanelState() {
@@ -1567,7 +1664,7 @@ async function refreshSnapshotDiff() {
     if (snapshotDiffEl) {
       snapshotDiffEl.textContent = "Select a snapshot to inspect changes.";
     }
-    updateSnapshotPrimaryPreview("", null);
+    updateSnapshotPrimaryPreview();
     updateSnapshotPanelState();
     return;
   }
@@ -1576,10 +1673,12 @@ async function refreshSnapshotDiff() {
       snapshotDiffEl.textContent =
         selected.corruptionReason || "This snapshot is corrupted and cannot be diffed.";
     }
-    updateSnapshotPrimaryPreview(
-      selected.corruptionReason || "This snapshot is corrupted and cannot be previewed.",
+    updateSnapshotPrimaryPreview({
       selected,
-    );
+      note:
+        selected.corruptionReason ||
+        "This snapshot is corrupted and cannot be previewed.",
+    });
     updateSnapshotPanelState();
     return;
   }
@@ -1587,7 +1686,10 @@ async function refreshSnapshotDiff() {
   if (snapshotDiffEl) {
     snapshotDiffEl.textContent = "Loading diff...";
   }
-  updateSnapshotPrimaryPreview("Loading snapshot preview...", selected);
+  updateSnapshotPrimaryPreview({
+    selected,
+    note: "Loading snapshot preview...",
+  });
   updateSnapshotPanelState();
   try {
     const result = await getSnapshotDiffRequest({
@@ -1597,16 +1699,21 @@ async function refreshSnapshotDiff() {
       compare: snapshotCompareMode,
     });
     const previewText = buildSnapshotPreviewText(String(result.diff || ""), selected);
-    if (snapshotDiffEl) {
-      snapshotDiffEl.textContent = previewText;
-    }
-    updateSnapshotPrimaryPreview(previewText, selected);
+    const note = extractMeaningfulDiffLines(String(result.diff || "")).length === 0
+      ? "No content changes compared to the current version."
+      : "";
+    updateSnapshotPrimaryPreview({
+      selected,
+      snapshotMarkdown: decodeMaybeB64(String(result.targetMarkdownB64 || "")),
+      baseMarkdown: decodeMaybeB64(String(result.baseMarkdownB64 || "")),
+      note,
+    });
   } catch (error) {
     const message = String(error?.message || "Failed to load diff.");
-    if (snapshotDiffEl) {
-      snapshotDiffEl.textContent = message;
-    }
-    updateSnapshotPrimaryPreview(message, selected);
+    updateSnapshotPrimaryPreview({
+      selected,
+      note: message,
+    });
   } finally {
     updateSnapshotPanelState();
   }
@@ -2000,7 +2107,7 @@ function closeSnapshotHistoryPane() {
   snapshotRestoreBtnEl = null;
   snapshotRefreshBtnEl = null;
   snapshotCompareSelectEl = null;
-  updateSnapshotPrimaryPreview("", null);
+  updateSnapshotPrimaryPreview();
   updateSnapshotPanelState();
 }
 
@@ -6711,6 +6818,7 @@ function cleanupEditorOnly() {
   snapshotRefreshBtnEl = null;
   snapshotCompareSelectEl = null;
   snapshotPreviewEl = null;
+  destroySnapshotCompareEditor();
   primaryPaneEl = null;
 
   if (fullscreenSessionEventScope) {
