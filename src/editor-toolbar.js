@@ -9,6 +9,8 @@ export function createToolbarButtons({
   getCurrentLanguage,
   markUserIntentToken,
   onSave,
+  onToggleHistory,
+  isHistoryActive,
   onToggleSplit,
   isSplitActive,
   onOpenDocumentView,
@@ -245,6 +247,25 @@ export function createToolbarButtons({
       ),
       isActive: () => false,
       title: "Clear formatting",
+    },
+    {
+      key: "history",
+      label: `
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" data-slot="icon">
+          <path fill-rule="evenodd" d="M12 2.25A9.75 9.75 0 1 0 21.75 12 .75.75 0 0 0 20.25 12a8.25 8.25 0 1 1-2.54-5.93.75.75 0 1 0 1.02-1.096A9.72 9.72 0 0 0 12 2.25Zm.75 5.25a.75.75 0 0 0-1.5 0V12c0 .199.079.39.22.53l2.25 2.25a.75.75 0 1 0 1.06-1.06l-2.03-2.03V7.5Z" clip-rule="evenodd"></path>
+        </svg>
+      `,
+      action: () => {
+        if (typeof onToggleHistory === "function") {
+          onToggleHistory();
+        }
+      },
+      isActive: () =>
+        typeof isHistoryActive === "function"
+          ? Boolean(isHistoryActive())
+          : false,
+      title: "Open snapshot history",
+      alt: "View history",
     },
     {
       key: "split",

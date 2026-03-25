@@ -431,6 +431,24 @@ function createVirtualTarget({
   return el;
 }
 
+function resolveInlinePageIdForDblclick(event, hit) {
+  const candidates = [
+    hit?.getAttribute?.("data-page"),
+    hit?.closest?.("[data-page]")?.getAttribute?.("data-page"),
+    event?.target?.closest?.("[data-page]")?.getAttribute?.("data-page"),
+    activeTarget?.getAttribute?.("data-page"),
+    document.querySelector('.fe-editable[data-page]:not([data-page="0"])')
+      ?.getAttribute?.("data-page"),
+    window.MarkdownFrontEditorConfig?.pageId,
+  ];
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim();
+    if (!value || value === "0") continue;
+    return value;
+  }
+  return "";
+}
+
 function getEditLabel(scope, name, section, subsection = "") {
   if (!debugLabels) return "Double click to edit";
   if (scope === "subsection") {
@@ -1674,9 +1692,7 @@ function initInlineEditor() {
         findSectionFromText: () => null,
         decodeMarkdownBase64,
         createVirtualTarget,
-        pageId:
-          document.querySelector(".fe-editable")?.getAttribute("data-page") ||
-          "0",
+        pageId: resolveInlinePageIdForDblclick(e, hit) || "0",
       });
 
       if (!action || action.action === "none") {

@@ -141,6 +141,14 @@ import {
 } from "./editor-image-annotations.js";
 import { afterNextPaint } from "./async-queue.js";
 import { request, assertOk, getDataOrThrow } from "./network.js";
+import {
+  listSnapshots as listSnapshotsRequest,
+  createSnapshot as createSnapshotRequest,
+  getSnapshotDiff as getSnapshotDiffRequest,
+  checkExternalChange as checkExternalChangeRequest,
+  restoreSnapshot as restoreSnapshotRequest,
+  deleteSnapshot as deleteSnapshotRequest,
+} from "./snapshot-service.js";
 import { createEventRegistry } from "./event-registry.js";
 import { createTransactionGuardExtension } from "./transaction-guard-extension.js";
 import {
@@ -276,6 +284,22 @@ let splitRegion = null;
 let splitHandle = null;
 let splitResizeCleanup = null;
 let splitSecondarySizePercent = 46;
+let snapshotPanelEl = null;
+let snapshotListEl = null;
+let snapshotDiffEl = null;
+let snapshotEmptyEl = null;
+let snapshotExternalNoticeEl = null;
+let snapshotCreateBtnEl = null;
+let snapshotRestoreBtnEl = null;
+let snapshotRefreshBtnEl = null;
+let snapshotCompareSelectEl = null;
+let snapshotHistoryOpen = false;
+let snapshotHistoryLoading = false;
+let snapshotHistoryItems = [];
+let snapshotSelectedId = "";
+let snapshotCompareMode = "current";
+let snapshotPreviewEl = null;
+let primaryPaneEl = null;
 let saveStatusEl = null;
 let refreshToolbarState = null;
 let pendingSavePromise = null;
@@ -1192,6 +1216,792 @@ function syncDirtyStatusForActiveField() {
       lastPrimaryDirtyFieldId = null;
     },
   });
+}
+
+async function computeSha256Hex(input) {
+  const text = String(input || "");
+  if (
+    typeof crypto === "undefined" ||
+    !crypto?.subtle ||
+    typeof TextEncoder !== "function"
+  ) {
+    throw new Error("crypto.subtle unavailable");
+  }
+  const bytes = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const view = new Uint8Array(digest);
+  return Array.from(view, (value) => value.toString(16).padStart(2, "0")).join(
+    "",
+  );
+}
+
+function getSnapshotPageId() {
+  const currentLang = getSnapshotLanguageCode();
+  const state =
+    activeDocumentState ||
+    (currentLang
+      ? getDocumentStateForActiveField(currentLang, {
+          reason: "snapshot:getPageId",
+          trigger: "scope-navigation",
+        })
+      : null);
+  const candidates = [
+    state?.payloadMeta?.pageId,
+    activeTarget?.getAttribute("data-page"),
+    activeSession?.scope?.pageId,
+    activeDocumentState?.payloadMeta?.pageId,
+  ];
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim();
+    if (!value || value === "0") continue;
+    return value;
+  }
+  return "";
+}
+
+function getSnapshotLanguageCode() {
+  return normalizeLangValue(
+    String(activeDocumentState?.lang || getLanguagesConfig().current || ""),
+  );
+}
+
+function getCurrentDraftSnapshotMarkdown() {
+  return String(getCanonicalMarkdownState()?.markdown || "");
+}
+
+function getSnapshotDebugContext() {
+  const activeTargetPageId = String(activeTarget?.getAttribute("data-page") || "");
+  const activeStatePageId = String(activeDocumentState?.payloadMeta?.pageId || "");
+  const activeSessionPageId = String(activeSession?.scope?.pageId || "");
+  const lang = normalizeLangValue(
+    String(activeDocumentState?.lang || getLanguagesConfig().current || ""),
+  );
+  return {
+    resolvedPageId: getSnapshotPageId(),
+    lang,
+    activeTargetPageId,
+    activeStatePageId,
+    activeSessionPageId,
+    activeScope: String(activeFieldScope || ""),
+    activeFieldName: String(activeFieldName || ""),
+    activeFieldId: String(activeFieldId || ""),
+    hasActiveTarget: Boolean(activeTarget),
+    hasActiveDocumentState: Boolean(activeDocumentState),
+    activeStateId: String(activeDocumentState?.id || ""),
+    activeTargetScope: String(getMetaAttr(activeTarget, "scope") || ""),
+  };
+}
+
+function emitSnapshotDebug(event, { toast = false, details = null } = {}) {
+  const context = {
+    ...(getSnapshotDebugContext() || {}),
+    ...(details && typeof details === "object" ? details : {}),
+  };
+  emitRuntimeShapeLog("MFE_SNAPSHOT_DEBUG", {
+    event: String(event || ""),
+    ...context,
+  });
+  if (
+    typeof console !== "undefined" &&
+    typeof console.info === "function" &&
+    (isStateTraceEnabled() || isDevMode())
+  ) {
+    console.info("MFE_SNAPSHOT_DEBUG", JSON.stringify({
+      event: String(event || ""),
+      ...context,
+    }));
+  }
+  if (toast) {
+    const pageLabel = context.resolvedPageId || "none";
+    const langLabel = context.lang || "none";
+    showWindowToast(`Snapshot debug: ${event} (page=${pageLabel}, lang=${langLabel})`, "info");
+  }
+}
+
+function buildSnapshotUnavailableMessage() {
+  const context = getSnapshotDebugContext();
+  return [
+    "Snapshot history is unavailable for this document.",
+    `resolved=${context.resolvedPageId || "none"}`,
+    `state=${context.activeStatePageId || "none"}`,
+    `target=${context.activeTargetPageId || "none"}`,
+    `session=${context.activeSessionPageId || "none"}`,
+    `lang=${context.lang || "none"}`,
+    `scope=${context.activeScope || "none"}`,
+  ].join(" ");
+}
+
+async function getCurrentPersistedSnapshotHash() {
+  return computeSha256Hex(getDocumentConfigMarkdownRaw());
+}
+
+function escapeHtml(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function padSnapshotVersion(value) {
+  return String(Math.max(1, Number(value || 1))).padStart(2, "0");
+}
+
+function buildSnapshotVersionMap() {
+  const ordered = [...snapshotHistoryItems].reverse();
+  const versionMap = new Map();
+  ordered.forEach((item, index) => {
+    versionMap.set(String(item.snapshotId || ""), index + 1);
+  });
+  return versionMap;
+}
+
+function getSnapshotDisplayTitle(item, versionMap) {
+  if (!item || typeof item !== "object") return "Snapshot";
+  const currentVersion = padSnapshotVersion(
+    versionMap.get(String(item.snapshotId || "")) || 1,
+  );
+  if (item.eventType === "restore") {
+    const restoredTarget = snapshotHistoryItems.find(
+      (entry) =>
+        String(entry?.snapshotId || "") === String(item.restoresSnapshotId || ""),
+    );
+    if (restoredTarget) {
+      const restoredTitle = getSnapshotDisplayTitle(restoredTarget, versionMap);
+      return `Reverted to ${restoredTitle}`;
+    }
+    const restoredVersion = padSnapshotVersion(
+      versionMap.get(String(item.restoresSnapshotId || "")) || currentVersion,
+    );
+    return `Reverted to Version ${restoredVersion}`;
+  }
+  const manualLabel = String(item.label || "").trim();
+  if (manualLabel) return manualLabel;
+  if (item.eventType === "pre_restore_backup") {
+    return "Backup before restore";
+  }
+  return `Version ${currentVersion}`;
+}
+
+function extractMeaningfulDiffLines(diffText) {
+  const lines = String(diffText || "").split("\n");
+  return lines.filter((line) => {
+    if (!line) return false;
+    if (line.startsWith("--- ") || line.startsWith("+++ ") || line.startsWith("@@")) {
+      return false;
+    }
+    return line.startsWith("+") || line.startsWith("-");
+  });
+}
+
+function buildSnapshotPreviewText(diffText, selected) {
+  const text = String(diffText || "");
+  const changedLines = extractMeaningfulDiffLines(text);
+  if (changedLines.length === 0) {
+    const title = getSnapshotDisplayTitle(selected, buildSnapshotVersionMap());
+    return `${title}\n\nNo content changes compared to the current version.`;
+  }
+  return text;
+}
+
+function renderSnapshotList() {
+  if (!snapshotListEl) return;
+  snapshotListEl.innerHTML = "";
+  const versionMap = buildSnapshotVersionMap();
+  snapshotHistoryItems.forEach((item) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "mfe-snapshot-row";
+    if (item.snapshotId === snapshotSelectedId) {
+      row.classList.add("is-selected");
+    }
+    if (item.isCorrupted) {
+      row.classList.add("is-corrupted");
+    }
+
+    const title = document.createElement("div");
+    title.className = "mfe-snapshot-row-title";
+    title.textContent = getSnapshotDisplayTitle(item, versionMap);
+
+    const meta = document.createElement("div");
+    meta.className = "mfe-snapshot-row-meta";
+    meta.textContent = item.createdAt
+      ? new Date(item.createdAt).toLocaleString()
+      : "";
+
+    const top = document.createElement("div");
+    top.className = "mfe-snapshot-row-top";
+    top.appendChild(title);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "mfe-snapshot-row-delete";
+    deleteBtn.setAttribute("aria-label", "Delete snapshot");
+    deleteBtn.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 3.75A2.25 2.25 0 0 0 6.75 6v.75H4.5a.75.75 0 0 0 0 1.5h.568l.813 10.557A2.25 2.25 0 0 0 8.124 21h7.752a2.25 2.25 0 0 0 2.243-2.193l.813-10.557h.568a.75.75 0 0 0 0-1.5h-2.25V6A2.25 2.25 0 0 0 15 3.75H9Zm6.75 3V6A.75.75 0 0 0 15 5.25H9A.75.75 0 0 0 8.25 6v.75h7.5ZM9.75 10.5a.75.75 0 0 1 .75.75v5.25a.75.75 0 0 1-1.5 0v-5.25a.75.75 0 0 1 .75-.75Zm4.5 0a.75.75 0 0 1 .75.75v5.25a.75.75 0 0 1-1.5 0v-5.25a.75.75 0 0 1 .75-.75Z"/></svg>';
+    deleteBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void deleteSnapshotFromFullscreen(item);
+    });
+    top.appendChild(deleteBtn);
+
+    row.appendChild(top);
+    row.appendChild(meta);
+    if (item.isCorrupted) {
+      const warning = document.createElement("div");
+      warning.className = "mfe-snapshot-row-warning";
+      warning.textContent = item.corruptionReason || "Corrupted snapshot";
+      row.appendChild(warning);
+    }
+
+    row.addEventListener("click", () => {
+      snapshotSelectedId = item.snapshotId || "";
+      renderSnapshotList();
+      void refreshSnapshotDiff();
+    });
+    snapshotListEl.appendChild(row);
+  });
+
+  if (!snapshotHistoryItems.length && snapshotEmptyEl) {
+    snapshotEmptyEl.hidden = false;
+  } else if (snapshotEmptyEl) {
+    snapshotEmptyEl.hidden = true;
+  }
+}
+
+function updateSnapshotPrimaryPreview(content = "", selected = null) {
+  if (!snapshotPreviewEl || !primaryPaneEl) return;
+  const hasHistoryPreview = snapshotHistoryOpen && Boolean(selected);
+  snapshotPreviewEl.hidden = !hasHistoryPreview;
+  primaryPaneEl.classList.toggle("mfe-editor-pane--snapshot-preview", hasHistoryPreview);
+  const liveEditorEl = primaryPaneEl.querySelector(".mfe-editor");
+  if (liveEditorEl) {
+    liveEditorEl.style.display = hasHistoryPreview ? "none" : "";
+  }
+  if (!hasHistoryPreview) {
+    snapshotPreviewEl.innerHTML = "";
+    return;
+  }
+  const title = getSnapshotDisplayTitle(selected, buildSnapshotVersionMap());
+  const timestamp = selected?.createdAt
+    ? new Date(selected.createdAt).toLocaleString()
+    : "";
+  snapshotPreviewEl.innerHTML = `
+    <div class="mfe-snapshot-preview-header">
+      <h2>${escapeHtml(title)}</h2>
+      <p>${escapeHtml(timestamp)}</p>
+    </div>
+    <pre class="mfe-snapshot-preview-body">${escapeHtml(String(content || ""))}</pre>
+  `;
+}
+
+function updateSnapshotPanelState() {
+  if (snapshotPanelEl) {
+    snapshotPanelEl.hidden = !snapshotHistoryOpen;
+  }
+  if (editorShell) {
+    editorShell.classList.toggle(
+      "mfe-editor-shell--history-open",
+      snapshotHistoryOpen,
+    );
+  }
+  if (snapshotRestoreBtnEl) {
+    const selected = snapshotHistoryItems.find(
+      (item) => item.snapshotId === snapshotSelectedId,
+    );
+    snapshotRestoreBtnEl.disabled = !selected || selected.isCorrupted;
+  }
+  if (snapshotCreateBtnEl) {
+    snapshotCreateBtnEl.disabled = snapshotHistoryLoading;
+  }
+  if (snapshotRefreshBtnEl) {
+    snapshotRefreshBtnEl.disabled = snapshotHistoryLoading;
+  }
+  if (snapshotCompareSelectEl) {
+    snapshotCompareSelectEl.disabled = snapshotHistoryLoading;
+    snapshotCompareSelectEl.value = snapshotCompareMode;
+  }
+  if (typeof refreshToolbarState === "function") {
+    refreshToolbarState();
+  }
+}
+
+async function refreshSnapshotExternalNotice() {
+  if (!snapshotExternalNoticeEl) return;
+  try {
+    const pageId = getSnapshotPageId();
+    const lang = getSnapshotLanguageCode();
+    if (!pageId || !lang) {
+      snapshotExternalNoticeEl.hidden = true;
+      return;
+    }
+    const knownHash = await getCurrentPersistedSnapshotHash();
+    const result = await checkExternalChangeRequest({
+      pageId,
+      lang,
+      knownHash,
+    });
+    const latestPersistedHash = String(
+      snapshotHistoryItems.find((item) => !item.isCorrupted)?.contentHash || "",
+    );
+    if (!result.changed || (latestPersistedHash && latestPersistedHash === String(result.currentHash || ""))) {
+      snapshotExternalNoticeEl.hidden = true;
+      snapshotExternalNoticeEl.textContent = "";
+      return;
+    }
+    snapshotExternalNoticeEl.hidden = false;
+    snapshotExternalNoticeEl.textContent =
+      "The markdown file changed outside the editor. Reload the page to reconcile.";
+  } catch (_error) {
+    snapshotExternalNoticeEl.hidden = true;
+  }
+}
+
+async function refreshSnapshotDiff() {
+  const selected = snapshotHistoryItems.find(
+    (item) => item.snapshotId === snapshotSelectedId,
+  );
+  if (!selected) {
+    if (snapshotDiffEl) {
+      snapshotDiffEl.textContent = "Select a snapshot to inspect changes.";
+    }
+    updateSnapshotPrimaryPreview("", null);
+    updateSnapshotPanelState();
+    return;
+  }
+  if (selected.isCorrupted) {
+    if (snapshotDiffEl) {
+      snapshotDiffEl.textContent =
+        selected.corruptionReason || "This snapshot is corrupted and cannot be diffed.";
+    }
+    updateSnapshotPrimaryPreview(
+      selected.corruptionReason || "This snapshot is corrupted and cannot be previewed.",
+      selected,
+    );
+    updateSnapshotPanelState();
+    return;
+  }
+
+  if (snapshotDiffEl) {
+    snapshotDiffEl.textContent = "Loading diff...";
+  }
+  updateSnapshotPrimaryPreview("Loading snapshot preview...", selected);
+  updateSnapshotPanelState();
+  try {
+    const result = await getSnapshotDiffRequest({
+      pageId: getSnapshotPageId(),
+      lang: getSnapshotLanguageCode(),
+      snapshotId: snapshotSelectedId,
+      compare: snapshotCompareMode,
+    });
+    const previewText = buildSnapshotPreviewText(String(result.diff || ""), selected);
+    if (snapshotDiffEl) {
+      snapshotDiffEl.textContent = previewText;
+    }
+    updateSnapshotPrimaryPreview(previewText, selected);
+  } catch (error) {
+    const message = String(error?.message || "Failed to load diff.");
+    if (snapshotDiffEl) {
+      snapshotDiffEl.textContent = message;
+    }
+    updateSnapshotPrimaryPreview(message, selected);
+  } finally {
+    updateSnapshotPanelState();
+  }
+}
+
+async function refreshSnapshotHistory({ preserveSelection = true } = {}) {
+  if (!snapshotPanelEl) return;
+  const pageId = getSnapshotPageId();
+  const lang = getSnapshotLanguageCode();
+  if (!pageId || !lang) {
+    emitSnapshotDebug("history-unavailable", {
+      toast: true,
+      details: {
+        preserveSelection: Boolean(preserveSelection),
+      },
+    });
+    snapshotHistoryItems = [];
+    snapshotSelectedId = "";
+    renderSnapshotList();
+    if (snapshotDiffEl) {
+      snapshotDiffEl.textContent = "Snapshot history is unavailable for this document.";
+    }
+    if (snapshotExternalNoticeEl) {
+      snapshotExternalNoticeEl.hidden = true;
+      snapshotExternalNoticeEl.textContent = "";
+    }
+    snapshotHistoryLoading = false;
+    updateSnapshotPanelState();
+    return;
+  }
+  snapshotHistoryLoading = true;
+  updateSnapshotPanelState();
+  try {
+    emitSnapshotDebug("history-refresh-start", {
+      toast: true,
+      details: {
+        pageId,
+        lang,
+        preserveSelection: Boolean(preserveSelection),
+      },
+    });
+    const result = await listSnapshotsRequest({
+      pageId,
+      lang,
+    });
+    snapshotHistoryItems = Array.isArray(result.snapshots)
+      ? result.snapshots.filter(
+          (item) => String(item?.eventType || "") !== "pre_restore_backup",
+        )
+      : [];
+    if (
+      !preserveSelection ||
+      !snapshotHistoryItems.some((item) => item.snapshotId === snapshotSelectedId)
+    ) {
+      snapshotSelectedId = String(snapshotHistoryItems[0]?.snapshotId || "");
+    }
+    renderSnapshotList();
+    await refreshSnapshotExternalNotice();
+    await refreshSnapshotDiff();
+  } catch (error) {
+    emitSnapshotDebug("history-refresh-error", {
+      toast: true,
+      details: {
+        pageId,
+        lang,
+        error: String(error?.message || "unknown"),
+      },
+    });
+    snapshotHistoryItems = [];
+    snapshotSelectedId = "";
+    renderSnapshotList();
+    if (snapshotDiffEl) {
+      snapshotDiffEl.textContent = String(
+        error?.message || "Failed to load snapshots.",
+      );
+    }
+  } finally {
+    snapshotHistoryLoading = false;
+    updateSnapshotPanelState();
+  }
+}
+
+async function createManualSnapshotFromFullscreen() {
+  const pageId = getSnapshotPageId();
+  const lang = getSnapshotLanguageCode();
+  if (!pageId || !lang) return;
+  const label = window.prompt("Snapshot name (optional)", "") || "";
+  const dirty = hasPendingUnsavedChanges();
+  const payload = {
+    pageId,
+    lang,
+    eventType: "manual",
+    snapshotState: dirty ? "draft" : "persisted",
+    label,
+    ...(dirty ? { content: getCurrentDraftSnapshotMarkdown() } : {}),
+  };
+
+  snapshotHistoryLoading = true;
+  updateSnapshotPanelState();
+  try {
+    const result = await createSnapshotRequest(payload);
+    if (result.suppressed) {
+      showWindowToast("No snapshot created. Content matches latest history.", "info");
+    } else {
+      showWindowToast("Snapshot created", "success");
+    }
+    await refreshSnapshotHistory({ preserveSelection: false });
+  } catch (error) {
+    showWindowToast(
+      String(error?.message || "Failed to create snapshot"),
+      "alert",
+      { persistent: true },
+    );
+  } finally {
+    snapshotHistoryLoading = false;
+    updateSnapshotPanelState();
+  }
+}
+
+async function deleteSnapshotFromFullscreen(item) {
+  const snapshotId = String(item?.snapshotId || "");
+  if (!snapshotId) return;
+  const confirmed = window.confirm("Delete this snapshot?");
+  if (!confirmed) return;
+  snapshotHistoryLoading = true;
+  updateSnapshotPanelState();
+  try {
+    await deleteSnapshotRequest({
+      pageId: getSnapshotPageId(),
+      lang: getSnapshotLanguageCode(),
+      snapshotId,
+    });
+    if (snapshotSelectedId === snapshotId) {
+      snapshotSelectedId = "";
+    }
+    showWindowToast("Snapshot deleted", "success");
+    await refreshSnapshotHistory({ preserveSelection: false });
+  } catch (error) {
+    showWindowToast(
+      String(error?.message || "Failed to delete snapshot"),
+      "alert",
+      { persistent: true },
+    );
+  } finally {
+    snapshotHistoryLoading = false;
+    updateSnapshotPanelState();
+  }
+}
+
+function applyRestoredDocumentMarkdown(markdownB64) {
+  const restoredMarkdown = decodeMaybeB64(markdownB64);
+  if (!restoredMarkdown) return;
+  const restoredB64 = encodeMarkdownBase64(restoredMarkdown);
+  const currentLang = getSnapshotLanguageCode();
+  const state = getStateForLanguage(currentLang) || activeDocumentState;
+  if (state) {
+    ingestDocumentStateMarkdown(state, restoredMarkdown, {
+      lang: currentLang,
+      source: "snapshot-restore",
+      trigger: "system-rehydrate",
+    });
+  }
+  draftMarkdownByScopedKey.clear();
+  primaryDraftsByFieldId.clear();
+  documentDraftMarkdown = "";
+  writeDocumentMarkdownCache({
+    markdownB64: restoredB64,
+    source: "snapshot-restore",
+  });
+  if (activeTarget) {
+    activeTarget.setAttribute("data-markdown-b64", restoredB64);
+    const payloadMeta = getPayloadFromElement(activeTarget);
+    if (payloadMeta) {
+      replaceActiveEditor({
+        ...payloadMeta,
+        markdownContent: restoredMarkdown,
+        canonicalHydrated: true,
+      });
+    }
+  }
+  syncDirtyStatusForActiveField();
+  statusManager.clearAllDirty();
+  statusManager.setSaved();
+}
+
+async function restoreSnapshotFromFullscreen() {
+  const selected = snapshotHistoryItems.find(
+    (item) => item.snapshotId === snapshotSelectedId,
+  );
+  if (!selected || selected.isCorrupted) return;
+
+  try {
+    const currentIdentity = await checkExternalChangeRequest({
+      pageId: getSnapshotPageId(),
+      lang: getSnapshotLanguageCode(),
+      knownHash: String(selected.contentHash || ""),
+    });
+    if (String(currentIdentity.currentHash || "") === String(selected.contentHash || "")) {
+      const versionMap = buildSnapshotVersionMap();
+      const title = getSnapshotDisplayTitle(selected, versionMap);
+      showWindowToast(`Already at ${title}. No restore needed.`, "info");
+      return;
+    }
+
+    if (hasPendingUnsavedChanges()) {
+      const confirmed = window.confirm(
+        "Unsaved changes will be preserved as a draft snapshot before restore. Continue?",
+      );
+      if (!confirmed) return;
+      await createSnapshotRequest({
+        pageId: getSnapshotPageId(),
+        lang: getSnapshotLanguageCode(),
+        eventType: "manual",
+        snapshotState: "draft",
+        label: "Draft before restore",
+        content: getCurrentDraftSnapshotMarkdown(),
+      });
+    } else {
+      const confirmed = window.confirm("Restore this snapshot?");
+      if (!confirmed) return;
+    }
+
+    snapshotHistoryLoading = true;
+    updateSnapshotPanelState();
+    const result = await restoreSnapshotRequest({
+      pageId: getSnapshotPageId(),
+      lang: getSnapshotLanguageCode(),
+      snapshotId: snapshotSelectedId,
+    });
+    applyRestoredDocumentMarkdown(String(result.documentMarkdownB64 || ""));
+    showWindowToast("Snapshot restored", "success");
+    await refreshSnapshotHistory({ preserveSelection: false });
+  } catch (error) {
+    showWindowToast(
+      String(error?.message || "Failed to restore snapshot"),
+      "alert",
+      { persistent: true },
+    );
+  } finally {
+    snapshotHistoryLoading = false;
+    updateSnapshotPanelState();
+  }
+}
+
+function toggleSnapshotHistoryPanel(forceOpen = null) {
+  const nextOpen =
+    typeof forceOpen === "boolean" ? forceOpen : !snapshotHistoryOpen;
+  if (nextOpen) {
+    const pageId = getSnapshotPageId();
+    const lang = getSnapshotLanguageCode();
+    if (!pageId || !lang) {
+      emitSnapshotDebug("history-open-blocked", {
+        toast: true,
+        details: {
+          requestedOpen: true,
+        },
+      });
+      showWindowToast(buildSnapshotUnavailableMessage(), "info", {
+        persistent: true,
+      });
+      snapshotHistoryOpen = false;
+      updateSnapshotPanelState();
+      return;
+    }
+    emitSnapshotDebug("history-open", {
+      toast: true,
+      details: {
+        pageId,
+        lang,
+      },
+    });
+    if (secondaryEditor || splitRegion) {
+      splitEnabledByUser = false;
+      closeSplit();
+    }
+    openSnapshotHistoryPane();
+  } else {
+    closeSnapshotHistoryPane();
+  }
+}
+
+function createSnapshotPanel() {
+  const panel = document.createElement("section");
+  panel.className = "mfe-snapshot-panel";
+  panel.innerHTML = `
+    <div class="mfe-snapshot-panel-header">
+      <div>
+        <h3>Snapshots</h3>
+        <p>Current language history, diff, and restore</p>
+      </div>
+    </div>
+    <div class="mfe-snapshot-panel-actions">
+      <button type="button" class="mfe-snapshot-action" data-action="create">Create snapshot</button>
+      <button type="button" class="mfe-snapshot-action" data-action="refresh">Refresh</button>
+      <select class="mfe-snapshot-compare">
+        <option value="current">Compare to current</option>
+        <option value="previous">Compare to previous</option>
+      </select>
+    </div>
+    <div class="mfe-snapshot-external" hidden></div>
+    <div class="mfe-snapshot-list"></div>
+    <div class="mfe-snapshot-empty" hidden>No snapshots yet.</div>
+    <div class="mfe-snapshot-panel-footer">
+      <button type="button" class="mfe-snapshot-restore">Restore selected</button>
+    </div>
+  `;
+
+  snapshotPanelEl = panel;
+  snapshotListEl = panel.querySelector(".mfe-snapshot-list");
+  snapshotDiffEl = null;
+  snapshotEmptyEl = panel.querySelector(".mfe-snapshot-empty");
+  snapshotExternalNoticeEl = panel.querySelector(".mfe-snapshot-external");
+  snapshotCreateBtnEl = panel.querySelector('[data-action="create"]');
+  snapshotRefreshBtnEl = panel.querySelector('[data-action="refresh"]');
+  snapshotRestoreBtnEl = panel.querySelector(".mfe-snapshot-restore");
+  snapshotCompareSelectEl = panel.querySelector(".mfe-snapshot-compare");
+
+  snapshotCreateBtnEl?.addEventListener("click", () => {
+    void createManualSnapshotFromFullscreen();
+  });
+  snapshotRefreshBtnEl?.addEventListener("click", () => {
+    void refreshSnapshotHistory({ preserveSelection: true });
+  });
+  snapshotRestoreBtnEl?.addEventListener("click", () => {
+    void restoreSnapshotFromFullscreen();
+  });
+  snapshotCompareSelectEl?.addEventListener("change", (event) => {
+    snapshotCompareMode = String(event?.target?.value || "current");
+    void refreshSnapshotDiff();
+  });
+  return panel;
+}
+
+function openSnapshotHistoryPane() {
+  if (!editorShell || snapshotHistoryOpen) return;
+  editorShell.classList.add("mfe-editor-shell--split");
+  applySplitSecondarySize(splitSecondarySizePercent);
+
+  const region = document.createElement("div");
+  region.className = "mfe-editor-split-region";
+
+  const handle = document.createElement("button");
+  handle.type = "button";
+  handle.className = "mfe-editor-split-handle";
+  handle.setAttribute("aria-label", "Resize history pane");
+  handle.innerHTML =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M8 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M8 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M8 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /></svg>';
+
+  const pane = document.createElement("div");
+  pane.className = "mfe-editor-pane mfe-editor-pane--secondary mfe-editor-pane--history";
+  const panel = createSnapshotPanel();
+  pane.appendChild(panel);
+
+  region.appendChild(handle);
+  region.appendChild(pane);
+  editorShell.appendChild(region);
+
+  splitRegion = region;
+  splitHandle = handle;
+  splitPane = pane;
+  snapshotPanelEl = panel;
+  snapshotHistoryOpen = true;
+
+  setupSplitResizeHandle();
+  updateSnapshotPanelState();
+  void refreshSnapshotHistory();
+}
+
+function closeSnapshotHistoryPane() {
+  snapshotHistoryOpen = false;
+  if (splitRegion && !secondaryEditor) {
+    closeSplit();
+  } else {
+    if (snapshotPanelEl) {
+      snapshotPanelEl.remove();
+    }
+    if (splitRegion) {
+      splitRegion.remove();
+    }
+    splitRegion = null;
+    splitPane = null;
+    splitHandle = null;
+    editorShell?.classList?.remove("mfe-editor-shell--split");
+  }
+  snapshotPanelEl = null;
+  snapshotListEl = null;
+  snapshotDiffEl = null;
+  snapshotEmptyEl = null;
+  snapshotExternalNoticeEl = null;
+  snapshotCreateBtnEl = null;
+  snapshotRestoreBtnEl = null;
+  snapshotRefreshBtnEl = null;
+  snapshotCompareSelectEl = null;
+  updateSnapshotPrimaryPreview("", null);
+  updateSnapshotPanelState();
 }
 
 function emitRuntimeBoundaryWriteTrace(payload = {}) {
@@ -4501,7 +5311,7 @@ function saveAllEditors() {
     }
     return results;
   })()
-    .then((results) => {
+    .then(async (results) => {
       const { failed, savedStateIds, hasFragments } =
         summarizeSaveResults(results);
       if (isFullscreenOpen() && failed.length === 0) {
@@ -4552,6 +5362,28 @@ function saveAllEditors() {
           showWindowToast("Save failed", "alert", { persistent: true });
         }
         return false;
+      }
+      const pageId = getSnapshotPageId();
+      if (pageId) {
+        await Promise.all(
+          results
+            .filter((entry) => entry?.ok && entry?.state?.lang)
+            .map(async (entry) => {
+              try {
+                await createSnapshotRequest({
+                  pageId,
+                  lang: String(entry.state.lang || ""),
+                  eventType: "save",
+                  snapshotState: "persisted",
+                });
+              } catch (_error) {
+                // Snapshot history must not block the save pipeline.
+              }
+            }),
+        );
+        if (snapshotHistoryOpen) {
+          await refreshSnapshotHistory({ preserveSelection: false });
+        }
       }
       return true;
     })
@@ -4882,6 +5714,9 @@ function setSecondaryLanguage(lang) {
  * Does not bind the secondary editor to canonical state authority.
  */
 function toggleSplit() {
+  if (!secondaryEditor && snapshotHistoryOpen) {
+    closeSnapshotHistoryPane();
+  }
   return toggleSplitHelper({
     secondaryEditor,
     setSplitEnabledByUser: (value) => {
@@ -5583,10 +6418,15 @@ function initEditor(markdownContent, fieldType = "tag") {
 
   const primaryPane = document.createElement("div");
   primaryPane.className = "mfe-editor-pane mfe-editor-pane--primary";
+  primaryPaneEl = primaryPane;
   const primaryHeader = document.createElement("div");
   primaryHeader.className =
     "mfe-editor-pane-header mfe-editor-pane-header--spacer";
   primaryPane.appendChild(primaryHeader);
+  snapshotPreviewEl = document.createElement("section");
+  snapshotPreviewEl.className = "mfe-snapshot-preview";
+  snapshotPreviewEl.hidden = true;
+  primaryPane.appendChild(snapshotPreviewEl);
   editorShell.appendChild(primaryPane);
 
   // Create primary editor
@@ -5856,6 +6696,22 @@ function cleanupEditorOnly() {
   }
   activeEditor = null;
   refreshToolbarState = null;
+  snapshotHistoryOpen = false;
+  snapshotHistoryLoading = false;
+  snapshotHistoryItems = [];
+  snapshotSelectedId = "";
+  snapshotCompareMode = "current";
+  snapshotPanelEl = null;
+  snapshotListEl = null;
+  snapshotDiffEl = null;
+  snapshotEmptyEl = null;
+  snapshotExternalNoticeEl = null;
+  snapshotCreateBtnEl = null;
+  snapshotRestoreBtnEl = null;
+  snapshotRefreshBtnEl = null;
+  snapshotCompareSelectEl = null;
+  snapshotPreviewEl = null;
+  primaryPaneEl = null;
 
   if (fullscreenSessionEventScope) {
     fullscreenSessionEventScope.disposeAll();
@@ -5965,6 +6821,10 @@ function createToolbar() {
       String(activeDocumentState?.lang || getLanguagesConfig().current || ""),
     markUserIntentToken,
     saveAllEditors,
+    toggleHistory: () => {
+      toggleSnapshotHistoryPanel();
+    },
+    isHistoryOpen: () => snapshotHistoryOpen,
     toggleSplit,
     isSplitEnabled: () => splitEnabledByUser,
     openDocumentOutlineView,

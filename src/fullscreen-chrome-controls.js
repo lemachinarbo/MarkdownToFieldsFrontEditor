@@ -528,6 +528,8 @@ export function createToolbar({
   getCurrentLanguage,
   markUserIntentToken,
   saveAllEditors,
+  toggleHistory,
+  isHistoryOpen,
   toggleSplit,
   isSplitEnabled,
   openDocumentOutlineView,
@@ -550,6 +552,8 @@ export function createToolbar({
     getCurrentLanguage,
     markUserIntentToken,
     onSave: saveAllEditors,
+    onToggleHistory: toggleHistory,
+    isHistoryActive: () => Boolean(isHistoryOpen()),
     onToggleSplit: toggleSplit,
     isSplitActive: () => Boolean(isSplitEnabled()),
     onOpenDocumentView: openDocumentOutlineView,
@@ -576,6 +580,9 @@ export function createToolbar({
   }
   if (!normalizedConfigButtons.includes("outline")) {
     normalizedConfigButtons.push("outline");
+  }
+  if (!normalizedConfigButtons.includes("history")) {
+    normalizedConfigButtons.push("history");
   }
   const configButtons = normalizedConfigButtons.join(",");
   const { statusEl, refreshButtons } = renderToolbarButtons({

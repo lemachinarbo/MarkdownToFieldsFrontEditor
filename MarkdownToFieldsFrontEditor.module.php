@@ -10,6 +10,11 @@ namespace ProcessWire;
 
 class MarkdownToFieldsFrontEditor extends WireData implements Module, ConfigurableModule {
 
+    protected const SNAPSHOT_SCHEMA_VERSION = 1;
+    protected const SNAPSHOT_ALLOWED_FRONTEND_EVENT_TYPES = ['manual', 'save', 'external'];
+    protected const SNAPSHOT_INTERNAL_EVENT_TYPES = ['pre_restore_backup', 'restore'];
+    protected const SNAPSHOT_ALLOWED_COMPARE_MODES = ['current', 'previous'];
+
     public static function getModuleInfo() {
         return [
             'title' => 'MarkdownToFieldsFrontEditor',
@@ -1504,6 +1509,76 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         if(!$input->get->markdownFrontEditorSave) return;
 
+        $snapshotAction = trim((string)($input->post->text('action') ?: $input->get->text('action')));
+        if ($snapshotAction !== '') {
+            if (in_array($snapshotAction, ['snapshotList', 'snapshotDiff', 'checkExternalChange'], true)) {
+                try {
+                    $this->assertSnapshotEndpointAccess(false);
+                    $page = $this->resolveSnapshotRequestPage((int)$input->get->pageId);
+                    $languageCode = $this->resolveSnapshotRequestLanguageCode($page, $input->get->text('lang'));
+
+                    if ($snapshotAction === 'snapshotList') {
+                        $this->sendJsonResponse($this->handleSnapshotListAction($page, $languageCode));
+                    }
+                    if ($snapshotAction === 'snapshotDiff') {
+                        $compareMode = trim((string)$input->get->text('compare'));
+                        $snapshotId = trim((string)$input->get->text('snapshotId'));
+                        $this->sendJsonResponse(
+                            $this->handleSnapshotDiffAction($page, $languageCode, $snapshotId, $compareMode)
+                        );
+                    }
+                    if ($snapshotAction === 'checkExternalChange') {
+                        $knownHash = trim((string)$input->get->text('knownHash'));
+                        $knownMtimeRaw = trim((string)$input->get->text('knownMtime'));
+                        $knownMtime = $knownMtimeRaw !== '' ? (int)$knownMtimeRaw : null;
+                        $this->sendJsonResponse(
+                            $this->handleCheckExternalChangeAction($page, $languageCode, $knownHash, $knownMtime)
+                        );
+                    }
+                } catch (\Throwable $e) {
+                    $status = (int)$e->getCode();
+                    if ($status < 400 || $status > 599) {
+                        $status = 500;
+                    }
+                    $this->sendJsonError($e->getMessage(), $status);
+                }
+            }
+
+            if (in_array($snapshotAction, ['createSnapshot', 'restoreSnapshot', 'deleteSnapshot'], true)) {
+                try {
+                    if(!$this->wire()->input->requestMethod('POST')) {
+                        $this->sendJsonError('Invalid method', 405);
+                    }
+                    $this->assertSnapshotEndpointAccess(true);
+                    $page = $this->resolveSnapshotRequestPage((int)$input->post->pageId);
+                    $languageCode = $this->resolveSnapshotRequestLanguageCode($page, $input->post->text('lang'));
+
+                    if ($snapshotAction === 'createSnapshot') {
+                        $this->sendJsonResponse($this->handleCreateSnapshotAction($page, $languageCode));
+                    }
+                    if ($snapshotAction === 'restoreSnapshot') {
+                        $snapshotId = trim((string)$input->post->text('snapshotId'));
+                        $label = trim((string)$input->post('label', 'string'));
+                        $this->sendJsonResponse(
+                            $this->handleRestoreSnapshotAction($page, $languageCode, $snapshotId, $label)
+                        );
+                    }
+                    if ($snapshotAction === 'deleteSnapshot') {
+                        $snapshotId = trim((string)$input->post->text('snapshotId'));
+                        $this->sendJsonResponse(
+                            $this->handleDeleteSnapshotAction($page, $languageCode, $snapshotId)
+                        );
+                    }
+                } catch (\Throwable $e) {
+                    $status = (int)$e->getCode();
+                    if ($status < 400 || $status > 599) {
+                        $status = 500;
+                    }
+                    $this->sendJsonError($e->getMessage(), $status);
+                }
+            }
+        }
+
         // Must be POST
         if(!$this->wire()->input->requestMethod('POST')) {
             $this->sendJsonError('Invalid method', 405);
@@ -2114,6 +2189,860 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         if ((string)$persisted !== $markdown) {
             throw new \ProcessWire\WireException("Persisted markdown differs from requested markdown after exact write");
         }
+    }
+
+    protected function assertSnapshotEndpointAccess(bool $requireCsrf): void {
+        $user = $this->wire()->user;
+        if(!$user->isLoggedIn() || !$user->hasPermission('page-edit-front')) {
+            $this->sendJsonError('Forbidden', 403);
+        }
+        if ($requireCsrf) {
+            try {
+                $this->wire()->session->CSRF->validate();
+            } catch (\Exception $e) {
+                $this->sendJsonError('Failed CSRF check', 403);
+            }
+        }
+    }
+
+    protected function resolveSnapshotRequestPage(int $pageId): \ProcessWire\Page {
+        if ($pageId < 1) {
+            $this->sendJsonError('Missing pageId', 400);
+        }
+
+        $page = $this->wire()->pages->get($pageId);
+        if(!$page->id) {
+            $this->sendJsonError('Page not found', 404);
+        }
+        if(!$page->editable()) {
+            $this->sendJsonError('Page not editable', 403);
+        }
+        if(!\ProcessWire\MarkdownConfig::supportsPage($page)) {
+            $this->sendJsonError('MarkdownToFields not configured for this page', 400);
+        }
+
+        return $page;
+    }
+
+    protected function resolveSnapshotRequestLanguageCode(\ProcessWire\Page $page, string $langCode): string {
+        if ($langCode !== '') {
+            $resolvedLang = $this->resolveLanguagePageByRequestCode(null, $langCode);
+            if (!$resolvedLang) {
+                $this->sendJsonError('Invalid language', 400);
+            }
+        }
+
+        return $this->resolveRequestLanguageCode($page, $langCode);
+    }
+
+    protected function resolveSnapshotHistoryRoot(): string {
+        $root = rtrim((string)$this->wire()->config->paths->assets, '/\\') . '/mfe-history/';
+        if (is_dir($root)) {
+            return $root;
+        }
+        if (!@mkdir($root, 0775, true) && !is_dir($root)) {
+            throw new \ProcessWire\WireException("Failed to create snapshot history root: {$root}");
+        }
+        return $root;
+    }
+
+    protected function resolveSnapshotDocumentContext(\ProcessWire\Page $page, string $languageCode): array {
+        $contentSource = (string)\ProcessWire\MarkdownFileIO::contentSource($page);
+        $resolvedPath = (string)\ProcessWire\MarkdownFileIO::getMarkdownFilePath($page, $languageCode, $contentSource);
+        $relativePath = ltrim(str_replace('\\', '/', $contentSource), '/');
+        $syncMap = method_exists($page, 'getMarkdownSyncMap') ? (array)$page->getMarkdownSyncMap() : [];
+        $sourceRoot = '';
+        if (isset($syncMap['source']['path']) && is_string($syncMap['source']['path'])) {
+            $sourceRoot = rtrim(str_replace('\\', '/', $syncMap['source']['path']), '/') . '/';
+        }
+        $resolvedPathNormalized = str_replace('\\', '/', $resolvedPath);
+        if ($sourceRoot !== '' && strpos($resolvedPathNormalized, $sourceRoot) === 0) {
+            $relativePath = ltrim(substr($resolvedPathNormalized, strlen($sourceRoot)), '/');
+        }
+
+        $documentId = sprintf('%d:%s:%s', (int)$page->id, $languageCode, $contentSource);
+        $historyKey = substr(hash('sha1', $documentId), 0, 24);
+        $historyDir = $this->resolveSnapshotHistoryRoot() . $historyKey . '/';
+        $blobDir = $historyDir . 'blobs/';
+        $indexPath = $historyDir . 'index.jsonl';
+        $lockPath = $historyDir . '.lock';
+
+        return [
+            'documentId' => $documentId,
+            'pageId' => (string)(int)$page->id,
+            'languageCode' => $languageCode,
+            'contentSource' => $contentSource,
+            'resolvedPath' => $resolvedPath,
+            'relativePath' => $relativePath,
+            'historyKey' => $historyKey,
+            'historyDir' => $historyDir,
+            'blobDir' => $blobDir,
+            'indexPath' => $indexPath,
+            'lockPath' => $lockPath,
+            'appVersion' => (string)(self::getModuleInfo()['version'] ?? ''),
+        ];
+    }
+
+    protected function ensureSnapshotDocumentDirectories(array $context): void {
+        foreach ([$context['historyDir'] ?? '', $context['blobDir'] ?? ''] as $dir) {
+            if (!is_string($dir) || $dir === '') {
+                continue;
+            }
+            if (is_dir($dir)) {
+                continue;
+            }
+            if (!@mkdir($dir, 0775, true) && !is_dir($dir)) {
+                throw new \ProcessWire\WireException("Failed to create snapshot directory: {$dir}");
+            }
+        }
+    }
+
+    protected function withSnapshotDocumentLock(array $context, callable $callback) {
+        $this->ensureSnapshotDocumentDirectories($context);
+        $lockPath = (string)($context['lockPath'] ?? '');
+        if ($lockPath === '') {
+            throw new \ProcessWire\WireException('Missing snapshot lock path', 500);
+        }
+        $handle = @fopen($lockPath, 'c+');
+        if (!$handle) {
+            throw new \ProcessWire\WireException("Failed to open snapshot lock: {$lockPath}", 500);
+        }
+
+        try {
+            if (!@flock($handle, LOCK_EX)) {
+                throw new \ProcessWire\WireException("Failed to acquire snapshot lock: {$lockPath}", 500);
+            }
+            return $callback();
+        } finally {
+            @flock($handle, LOCK_UN);
+            @fclose($handle);
+        }
+    }
+
+    protected function computeSnapshotContentHash(string $content): string {
+        return hash('sha256', $content);
+    }
+
+    protected function buildSnapshotBlobPath(array $context, string $snapshotId): string {
+        return (string)$context['blobDir'] . $snapshotId . '.md';
+    }
+
+    protected function buildSnapshotSummarySkeleton(array $context, int $lineNumber = 0): array {
+        return [
+            'snapshotId' => $lineNumber > 0 ? 'corrupt-line-' . $lineNumber : '',
+            'documentId' => (string)($context['documentId'] ?? ''),
+            'pageId' => (string)($context['pageId'] ?? ''),
+            'languageCode' => (string)($context['languageCode'] ?? ''),
+            'contentSource' => (string)($context['contentSource'] ?? ''),
+            'resolvedPath' => (string)($context['resolvedPath'] ?? ''),
+            'relativePath' => (string)($context['relativePath'] ?? ''),
+            'createdAt' => '',
+            'createdByUserId' => '',
+            'createdByName' => '',
+            'eventType' => '',
+            'snapshotState' => '',
+            'label' => '',
+            'parentSnapshotId' => '',
+            'restoresSnapshotId' => '',
+            'contentHash' => '',
+            'contentBytes' => 0,
+            'appVersion' => (string)($context['appVersion'] ?? ''),
+            'schemaVersion' => self::SNAPSHOT_SCHEMA_VERSION,
+            'isCorrupted' => false,
+            'corruptionReason' => '',
+        ];
+    }
+
+    protected function buildSnapshotMetadataRecord(
+        array $context,
+        string $snapshotId,
+        string $eventType,
+        string $snapshotState,
+        string $content,
+        array $options,
+        ?array $latestValid
+    ): array {
+        $user = $this->wire()->user;
+        $contentHash = $this->computeSnapshotContentHash($content);
+        $contentBytes = strlen($content);
+        $createdAt = gmdate('c');
+        $label = trim((string)($options['label'] ?? ''));
+        $parentSnapshotId = trim((string)($options['parentSnapshotId'] ?? ''));
+        if ($parentSnapshotId === '' && is_array($latestValid)) {
+            $parentSnapshotId = (string)($latestValid['snapshotId'] ?? '');
+        }
+
+        return [
+            'snapshot_id' => $snapshotId,
+            'document_id' => (string)$context['documentId'],
+            'page_id' => (string)$context['pageId'],
+            'language_code' => (string)$context['languageCode'],
+            'content_source' => (string)$context['contentSource'],
+            'resolved_path' => (string)$context['resolvedPath'],
+            'relative_path' => (string)$context['relativePath'],
+            'created_at' => $createdAt,
+            'created_by_user_id' => (string)(int)($user->id ?? 0),
+            'created_by_name' => trim((string)($user->name ?? '')),
+            'event_type' => $eventType,
+            'snapshot_state' => $snapshotState,
+            'label' => $label,
+            'parent_snapshot_id' => $parentSnapshotId,
+            'restores_snapshot_id' => trim((string)($options['restoresSnapshotId'] ?? '')),
+            'content_hash' => $contentHash,
+            'content_bytes' => $contentBytes,
+            'app_version' => (string)$context['appVersion'],
+            'schema_version' => self::SNAPSHOT_SCHEMA_VERSION,
+        ];
+    }
+
+    protected function validateSnapshotMetadataRecord(array $record): array {
+        $required = [
+            'snapshot_id',
+            'document_id',
+            'page_id',
+            'language_code',
+            'content_source',
+            'resolved_path',
+            'relative_path',
+            'created_at',
+            'created_by_user_id',
+            'created_by_name',
+            'event_type',
+            'snapshot_state',
+            'label',
+            'parent_snapshot_id',
+            'restores_snapshot_id',
+            'content_hash',
+            'content_bytes',
+            'app_version',
+            'schema_version',
+        ];
+        foreach ($required as $key) {
+            if (!array_key_exists($key, $record)) {
+                return [false, 'missing_field:' . $key];
+            }
+        }
+
+        $eventType = (string)$record['event_type'];
+        $snapshotState = (string)$record['snapshot_state'];
+        $allowedEventTypes = array_merge(self::SNAPSHOT_ALLOWED_FRONTEND_EVENT_TYPES, self::SNAPSHOT_INTERNAL_EVENT_TYPES);
+        if (!in_array($eventType, $allowedEventTypes, true)) {
+            return [false, 'invalid_event_type'];
+        }
+        if (!in_array($snapshotState, ['persisted', 'draft'], true)) {
+            return [false, 'invalid_snapshot_state'];
+        }
+        if ($snapshotState === 'draft' && $eventType !== 'manual') {
+            return [false, 'invalid_draft_event_type'];
+        }
+        if (!is_numeric($record['content_bytes'])) {
+            return [false, 'invalid_content_bytes'];
+        }
+        if (!is_numeric($record['schema_version'])) {
+            return [false, 'invalid_schema_version'];
+        }
+
+        return [true, ''];
+    }
+
+    protected function writeSnapshotBlob(array $context, string $snapshotId, string $content, string $expectedHash): string {
+        $this->ensureSnapshotDocumentDirectories($context);
+        $blobPath = $this->buildSnapshotBlobPath($context, $snapshotId);
+        $bytes = @file_put_contents($blobPath, $content, LOCK_EX);
+        if ($bytes === false || (int)$bytes !== strlen($content)) {
+            throw new \ProcessWire\WireException("Failed to write snapshot blob: {$blobPath}");
+        }
+        $persisted = @file_get_contents($blobPath);
+        if ($persisted === false) {
+            throw new \ProcessWire\WireException("Failed to verify snapshot blob: {$blobPath}");
+        }
+        if ($this->computeSnapshotContentHash((string)$persisted) !== $expectedHash) {
+            throw new \ProcessWire\WireException("Snapshot blob hash mismatch: {$blobPath}");
+        }
+        return $blobPath;
+    }
+
+    protected function appendSnapshotIndexRecord(array $context, array $record): void {
+        $this->ensureSnapshotDocumentDirectories($context);
+        $encoded = json_encode($record, JSON_UNESCAPED_SLASHES);
+        if ($encoded === false) {
+            throw new \ProcessWire\WireException('Failed to encode snapshot metadata');
+        }
+        $bytes = @file_put_contents((string)$context['indexPath'], $encoded . "\n", FILE_APPEND | LOCK_EX);
+        if ($bytes === false) {
+            throw new \ProcessWire\WireException("Failed to append snapshot index: {$context['indexPath']}");
+        }
+    }
+
+    protected function summarizeSnapshotRecord(
+        array $context,
+        array $record,
+        bool $isCorrupted = false,
+        string $corruptionReason = ''
+    ): array {
+        $summary = $this->buildSnapshotSummarySkeleton($context);
+        $summary['snapshotId'] = (string)($record['snapshot_id'] ?? $summary['snapshotId']);
+        $summary['documentId'] = (string)($record['document_id'] ?? $summary['documentId']);
+        $summary['pageId'] = (string)($record['page_id'] ?? $summary['pageId']);
+        $summary['languageCode'] = (string)($record['language_code'] ?? $summary['languageCode']);
+        $summary['contentSource'] = (string)($record['content_source'] ?? $summary['contentSource']);
+        $summary['resolvedPath'] = (string)($record['resolved_path'] ?? $summary['resolvedPath']);
+        $summary['relativePath'] = (string)($record['relative_path'] ?? $summary['relativePath']);
+        $summary['createdAt'] = (string)($record['created_at'] ?? '');
+        $summary['createdByUserId'] = (string)($record['created_by_user_id'] ?? '');
+        $summary['createdByName'] = (string)($record['created_by_name'] ?? '');
+        $summary['eventType'] = (string)($record['event_type'] ?? '');
+        $summary['snapshotState'] = (string)($record['snapshot_state'] ?? '');
+        $summary['label'] = (string)($record['label'] ?? '');
+        $summary['parentSnapshotId'] = (string)($record['parent_snapshot_id'] ?? '');
+        $summary['restoresSnapshotId'] = (string)($record['restores_snapshot_id'] ?? '');
+        $summary['contentHash'] = (string)($record['content_hash'] ?? '');
+        $summary['contentBytes'] = (int)($record['content_bytes'] ?? 0);
+        $summary['appVersion'] = (string)($record['app_version'] ?? $summary['appVersion']);
+        $summary['schemaVersion'] = (int)($record['schema_version'] ?? $summary['schemaVersion']);
+        $summary['isCorrupted'] = $isCorrupted;
+        $summary['corruptionReason'] = $corruptionReason;
+        return $summary;
+    }
+
+    protected function readSnapshotEntries(array $context): array {
+        $indexPath = (string)$context['indexPath'];
+        if (!is_file($indexPath)) {
+            return [];
+        }
+
+        $lines = @file($indexPath, FILE_IGNORE_NEW_LINES);
+        if ($lines === false) {
+            throw new \ProcessWire\WireException("Failed to read snapshot index: {$indexPath}");
+        }
+
+        $entries = [];
+        foreach ($lines as $index => $line) {
+            $lineNumber = $index + 1;
+            $raw = trim((string)$line);
+            if ($raw === '') {
+                continue;
+            }
+
+            $decoded = json_decode($raw, true);
+            if (!is_array($decoded)) {
+                $summary = $this->buildSnapshotSummarySkeleton($context, $lineNumber);
+                $summary['isCorrupted'] = true;
+                $summary['corruptionReason'] = 'invalid_json';
+                $entries[] = [
+                    'summary' => $summary,
+                    'record' => null,
+                    'lineNumber' => $lineNumber,
+                    'blobPath' => '',
+                ];
+                continue;
+            }
+
+            [$valid, $reason] = $this->validateSnapshotMetadataRecord($decoded);
+            $summary = $this->summarizeSnapshotRecord($context, $decoded, !$valid, $reason);
+            $blobPath = '';
+            if ($valid) {
+                $blobPath = $this->buildSnapshotBlobPath($context, (string)$decoded['snapshot_id']);
+                if (!is_file($blobPath)) {
+                    $summary['isCorrupted'] = true;
+                    $summary['corruptionReason'] = 'missing_blob';
+                } else {
+                    $blobContent = @file_get_contents($blobPath);
+                    if ($blobContent === false) {
+                        $summary['isCorrupted'] = true;
+                        $summary['corruptionReason'] = 'blob_unreadable';
+                    } elseif ($this->computeSnapshotContentHash((string)$blobContent) !== (string)$decoded['content_hash']) {
+                        $summary['isCorrupted'] = true;
+                        $summary['corruptionReason'] = 'blob_hash_mismatch';
+                    }
+                }
+            }
+
+            $entries[] = [
+                'summary' => $summary,
+                'record' => $decoded,
+                'lineNumber' => $lineNumber,
+                'blobPath' => $blobPath,
+            ];
+        }
+
+        usort($entries, static function (array $left, array $right): int {
+            return strcmp((string)($right['summary']['createdAt'] ?? ''), (string)($left['summary']['createdAt'] ?? ''));
+        });
+
+        return $entries;
+    }
+
+    protected function getLatestValidSnapshotEntry(array $context): ?array {
+        foreach ($this->readSnapshotEntries($context) as $entry) {
+            if (!empty($entry['summary']['isCorrupted'])) {
+                continue;
+            }
+            return $entry;
+        }
+        return null;
+    }
+
+    protected function findSnapshotEntryById(array $context, string $snapshotId): ?array {
+        foreach ($this->readSnapshotEntries($context) as $entry) {
+            if ((string)($entry['summary']['snapshotId'] ?? '') === $snapshotId) {
+                return $entry;
+            }
+        }
+        return null;
+    }
+
+    protected function readSnapshotBlobContent(array $entry): string {
+        if (!empty($entry['summary']['isCorrupted'])) {
+            throw new \ProcessWire\WireException('Snapshot is corrupted');
+        }
+        $blobPath = (string)($entry['blobPath'] ?? '');
+        if ($blobPath === '' || !is_file($blobPath)) {
+            throw new \ProcessWire\WireException('Snapshot blob missing');
+        }
+        $content = @file_get_contents($blobPath);
+        if ($content === false) {
+            throw new \ProcessWire\WireException('Failed to read snapshot blob');
+        }
+        return (string)$content;
+    }
+
+    protected function shouldSuppressSnapshotCreate(string $eventType, string $contentHash, ?array $latestValid): bool {
+        if (in_array($eventType, self::SNAPSHOT_INTERNAL_EVENT_TYPES, true)) {
+            return false;
+        }
+        if (!in_array($eventType, self::SNAPSHOT_ALLOWED_FRONTEND_EVENT_TYPES, true)) {
+            return false;
+        }
+        if (!$latestValid) {
+            return false;
+        }
+        return (string)($latestValid['summary']['contentHash'] ?? '') === $contentHash;
+    }
+
+    protected function createSnapshotRecord(
+        \ProcessWire\Page $page,
+        string $languageCode,
+        string $eventType,
+        string $snapshotState,
+        array $options = []
+    ): array {
+        $context = $this->resolveSnapshotDocumentContext($page, $languageCode);
+        return $this->withSnapshotDocumentLock($context, function () use ($context, $page, $languageCode, $eventType, $snapshotState, $options) {
+            return $this->createSnapshotRecordUnlocked($context, $page, $languageCode, $eventType, $snapshotState, $options);
+        });
+    }
+
+    protected function createSnapshotRecordUnlocked(
+        array $context,
+        \ProcessWire\Page $page,
+        string $languageCode,
+        string $eventType,
+        string $snapshotState,
+        array $options = []
+    ): array {
+        $internal = !empty($options['internal']);
+        $allowedEventTypes = $internal
+            ? array_merge(self::SNAPSHOT_ALLOWED_FRONTEND_EVENT_TYPES, self::SNAPSHOT_INTERNAL_EVENT_TYPES)
+            : self::SNAPSHOT_ALLOWED_FRONTEND_EVENT_TYPES;
+        if (!in_array($eventType, $allowedEventTypes, true)) {
+            throw new \ProcessWire\WireException('Unsupported snapshot event type', 400);
+        }
+        if (!in_array($snapshotState, ['persisted', 'draft'], true)) {
+            throw new \ProcessWire\WireException('Unsupported snapshot state', 400);
+        }
+        if ($snapshotState === 'draft' && $eventType !== 'manual') {
+            throw new \ProcessWire\WireException('Draft snapshots are only allowed for manual event type', 400);
+        }
+        if ($eventType !== 'manual' && $snapshotState !== 'persisted') {
+            throw new \ProcessWire\WireException('Only manual snapshots may use draft state', 400);
+        }
+
+        $contentProvided = array_key_exists('content', $options) && $options['content'] !== null;
+        if ($snapshotState === 'persisted') {
+            $content = $contentProvided ? (string)$options['content'] : $this->loadRawMarkdownDocument($page, $languageCode);
+        } else {
+            if (!$contentProvided) {
+                throw new \ProcessWire\WireException('Draft snapshot content is required', 400);
+            }
+            $content = (string)$options['content'];
+        }
+
+        $latestValid = $this->getLatestValidSnapshotEntry($context);
+        $contentHash = $this->computeSnapshotContentHash($content);
+        if ($this->shouldSuppressSnapshotCreate($eventType, $contentHash, $latestValid)) {
+            return [
+                'created' => false,
+                'suppressed' => true,
+                'snapshot' => null,
+                'documentId' => (string)$context['documentId'],
+            ];
+        }
+
+        $snapshotId = bin2hex(random_bytes(16));
+        $metadata = $this->buildSnapshotMetadataRecord(
+            $context,
+            $snapshotId,
+            $eventType,
+            $snapshotState,
+            $content,
+            $options,
+            $latestValid ? $latestValid['summary'] : null
+        );
+        $this->writeSnapshotBlob($context, $snapshotId, $content, (string)$metadata['content_hash']);
+        $this->appendSnapshotIndexRecord($context, $metadata);
+
+        return [
+            'created' => true,
+            'suppressed' => false,
+            'snapshot' => $this->summarizeSnapshotRecord($context, $metadata),
+            'documentId' => (string)$context['documentId'],
+        ];
+    }
+
+    protected function handleSnapshotListAction(\ProcessWire\Page $page, string $languageCode): array {
+        $context = $this->resolveSnapshotDocumentContext($page, $languageCode);
+        $entries = $this->withSnapshotDocumentLock($context, function () use ($context) {
+            return $this->readSnapshotEntries($context);
+        });
+        return [
+            'status' => 1,
+            'documentId' => (string)$context['documentId'],
+            'snapshots' => array_values(array_map(static function (array $entry): array {
+                return $entry['summary'];
+            }, $entries)),
+        ];
+    }
+
+    protected function handleCreateSnapshotAction(\ProcessWire\Page $page, string $languageCode): array {
+        $input = $this->wire()->input;
+        $eventType = trim((string)$input->post->text('eventType'));
+        $snapshotState = trim((string)$input->post->text('snapshotState'));
+        $label = trim((string)$input->post('label', 'string'));
+        $content = array_key_exists('content', $_POST) ? (string)$_POST['content'] : null;
+
+        if ($eventType === '') {
+            $this->sendJsonError('Missing eventType', 400);
+        }
+        if ($snapshotState === '') {
+            $this->sendJsonError('Missing snapshotState', 400);
+        }
+        if (!in_array($eventType, self::SNAPSHOT_ALLOWED_FRONTEND_EVENT_TYPES, true)) {
+            $this->sendJsonError('Unsupported snapshot event type', 400);
+        }
+        if ($snapshotState === 'draft' && $content === null) {
+            $this->sendJsonError('Missing content for draft snapshot', 400);
+        }
+
+        $result = $this->createSnapshotRecord($page, $languageCode, $eventType, $snapshotState, [
+            'label' => $label,
+            'content' => $content,
+        ]);
+
+        return [
+            'status' => 1,
+            'created' => (bool)$result['created'],
+            'suppressed' => (bool)$result['suppressed'],
+            'documentId' => (string)$result['documentId'],
+            'snapshot' => $result['snapshot'],
+        ];
+    }
+
+    protected function buildUnifiedDiff(string $before, string $after, string $beforeLabel, string $afterLabel): string {
+        $beforeLines = preg_split("/\r\n|\n|\r/", $before);
+        $afterLines = preg_split("/\r\n|\n|\r/", $after);
+        if ($beforeLines === false) {
+            $beforeLines = [$before];
+        }
+        if ($afterLines === false) {
+            $afterLines = [$after];
+        }
+
+        $beforeCount = count($beforeLines);
+        $afterCount = count($afterLines);
+        $dp = array_fill(0, $beforeCount + 1, array_fill(0, $afterCount + 1, 0));
+        for ($i = $beforeCount - 1; $i >= 0; $i--) {
+            for ($j = $afterCount - 1; $j >= 0; $j--) {
+                if ($beforeLines[$i] === $afterLines[$j]) {
+                    $dp[$i][$j] = $dp[$i + 1][$j + 1] + 1;
+                } else {
+                    $dp[$i][$j] = max($dp[$i + 1][$j], $dp[$i][$j + 1]);
+                }
+            }
+        }
+
+        $ops = [];
+        $i = 0;
+        $j = 0;
+        while ($i < $beforeCount && $j < $afterCount) {
+            if ($beforeLines[$i] === $afterLines[$j]) {
+                $ops[] = [' ', $beforeLines[$i]];
+                $i++;
+                $j++;
+                continue;
+            }
+            if ($dp[$i + 1][$j] >= $dp[$i][$j + 1]) {
+                $ops[] = ['-', $beforeLines[$i]];
+                $i++;
+                continue;
+            }
+            $ops[] = ['+', $afterLines[$j]];
+            $j++;
+        }
+        while ($i < $beforeCount) {
+            $ops[] = ['-', $beforeLines[$i]];
+            $i++;
+        }
+        while ($j < $afterCount) {
+            $ops[] = ['+', $afterLines[$j]];
+            $j++;
+        }
+
+        $output = [
+            '--- ' . $beforeLabel,
+            '+++ ' . $afterLabel,
+            sprintf('@@ -1,%d +1,%d @@', $beforeCount, $afterCount),
+        ];
+        foreach ($ops as [$prefix, $line]) {
+            $output[] = $prefix . $line;
+        }
+        return implode("\n", $output);
+    }
+
+    protected function resolveSnapshotDiffBaseEntry(array $context, array $entries, array $targetEntry, string $compareMode): array {
+        if ($compareMode === 'current') {
+            return [
+                'content' => @file_get_contents((string)$context['resolvedPath']) ?: '',
+                'label' => 'current',
+            ];
+        }
+
+        $targetId = (string)($targetEntry['summary']['snapshotId'] ?? '');
+        $found = false;
+        foreach ($entries as $entry) {
+            if (!$found) {
+                if ((string)($entry['summary']['snapshotId'] ?? '') === $targetId) {
+                    $found = true;
+                }
+                continue;
+            }
+            if (!empty($entry['summary']['isCorrupted'])) {
+                continue;
+            }
+            return [
+                'content' => $this->readSnapshotBlobContent($entry),
+                'label' => (string)($entry['summary']['label'] ?: $entry['summary']['snapshotId']),
+            ];
+        }
+
+        return [
+            'content' => '',
+            'label' => 'empty',
+        ];
+    }
+
+    protected function handleSnapshotDiffAction(
+        \ProcessWire\Page $page,
+        string $languageCode,
+        string $snapshotId,
+        string $compareMode
+    ): array {
+        if ($snapshotId === '') {
+            $this->sendJsonError('Missing snapshotId', 400);
+        }
+        if (!in_array($compareMode, self::SNAPSHOT_ALLOWED_COMPARE_MODES, true)) {
+            $this->sendJsonError('Invalid compare mode', 400);
+        }
+
+        $context = $this->resolveSnapshotDocumentContext($page, $languageCode);
+        return $this->withSnapshotDocumentLock($context, function () use ($context, $snapshotId, $compareMode) {
+            $entries = $this->readSnapshotEntries($context);
+            $targetEntry = null;
+            foreach ($entries as $entry) {
+                if ((string)($entry['summary']['snapshotId'] ?? '') === $snapshotId) {
+                    $targetEntry = $entry;
+                    break;
+                }
+            }
+            if (!$targetEntry) {
+                $this->sendJsonError('Snapshot not found', 404);
+            }
+            if (!empty($targetEntry['summary']['isCorrupted'])) {
+                $this->sendJsonError('Snapshot is corrupted', 409);
+            }
+
+            $targetContent = $this->readSnapshotBlobContent($targetEntry);
+            $base = $this->resolveSnapshotDiffBaseEntry($context, $entries, $targetEntry, $compareMode);
+            $targetLabel = (string)($targetEntry['summary']['label'] ?: $targetEntry['summary']['snapshotId']);
+
+            return [
+                'status' => 1,
+                'snapshotId' => $snapshotId,
+                'compareMode' => $compareMode,
+                'baseLabel' => (string)$base['label'],
+                'targetLabel' => $targetLabel,
+                'diff' => $this->buildUnifiedDiff((string)$base['content'], $targetContent, (string)$base['label'], $targetLabel),
+                'isCorrupted' => false,
+            ];
+        });
+    }
+
+    protected function computeCurrentSnapshotFileIdentity(\ProcessWire\Page $page, string $languageCode): array {
+        $context = $this->resolveSnapshotDocumentContext($page, $languageCode);
+        $resolvedPath = (string)$context['resolvedPath'];
+        if (!is_file($resolvedPath)) {
+            return [
+                'documentId' => (string)$context['documentId'],
+                'currentHash' => '',
+                'currentMtime' => 0,
+                'resolvedPath' => $resolvedPath,
+                'exists' => false,
+            ];
+        }
+
+        $content = @file_get_contents($resolvedPath);
+        if ($content === false) {
+            throw new \ProcessWire\WireException("Failed to read markdown file: {$resolvedPath}");
+        }
+
+        return [
+            'documentId' => (string)$context['documentId'],
+            'currentHash' => $this->computeSnapshotContentHash((string)$content),
+            'currentMtime' => (int)(@filemtime($resolvedPath) ?: 0),
+            'resolvedPath' => $resolvedPath,
+            'exists' => true,
+        ];
+    }
+
+    protected function handleCheckExternalChangeAction(
+        \ProcessWire\Page $page,
+        string $languageCode,
+        string $knownHash,
+        ?int $knownMtime
+    ): array {
+        if ($knownHash === '') {
+            $this->sendJsonError('Missing knownHash', 400);
+        }
+
+        $identity = $this->computeCurrentSnapshotFileIdentity($page, $languageCode);
+        return [
+            'status' => 1,
+            'changed' => (string)$identity['currentHash'] !== $knownHash,
+            'documentId' => (string)$identity['documentId'],
+            'currentHash' => (string)$identity['currentHash'],
+            'currentMtime' => (int)$identity['currentMtime'],
+            'resolvedPath' => (string)$identity['resolvedPath'],
+            'knownMtime' => $knownMtime,
+            'exists' => (bool)$identity['exists'],
+        ];
+    }
+
+    protected function handleRestoreSnapshotAction(
+        \ProcessWire\Page $page,
+        string $languageCode,
+        string $snapshotId,
+        string $label = ''
+    ): array {
+        if ($snapshotId === '') {
+            $this->sendJsonError('Missing snapshotId', 400);
+        }
+
+        $context = $this->resolveSnapshotDocumentContext($page, $languageCode);
+        $result = $this->withSnapshotDocumentLock($context, function () use ($context, $page, $languageCode, $snapshotId, $label) {
+            $targetEntry = $this->findSnapshotEntryById($context, $snapshotId);
+            if (!$targetEntry) {
+                throw new \ProcessWire\WireException('Snapshot not found', 404);
+            }
+            if (!empty($targetEntry['summary']['isCorrupted'])) {
+                throw new \ProcessWire\WireException('Snapshot is corrupted', 409);
+            }
+
+            $targetContent = $this->readSnapshotBlobContent($targetEntry);
+            $currentContent = $this->loadRawMarkdownDocument($page, $languageCode);
+            $preRestore = $this->createSnapshotRecordUnlocked($context, $page, $languageCode, 'pre_restore_backup', 'persisted', [
+                'internal' => true,
+                'content' => $currentContent,
+                'label' => 'Backup before restore',
+            ]);
+            $this->saveRawMarkdownDocumentExact($page, $languageCode, $targetContent);
+            $persisted = $this->loadRawMarkdownDocument($page, $languageCode);
+            $restore = $this->createSnapshotRecordUnlocked($context, $page, $languageCode, 'restore', 'persisted', [
+                'internal' => true,
+                'content' => $persisted,
+                'label' => $label !== '' ? $label : 'Restored snapshot',
+                'restoresSnapshotId' => $snapshotId,
+            ]);
+
+            return [
+                'preRestoreBackupSnapshot' => $preRestore['snapshot'],
+                'restoreSnapshot' => $restore['snapshot'],
+                'documentMarkdownB64' => base64_encode($persisted),
+            ];
+        });
+
+        return [
+            'status' => 1,
+            'restored' => true,
+            'preRestoreBackupSnapshot' => $result['preRestoreBackupSnapshot'],
+            'restoreSnapshot' => $result['restoreSnapshot'],
+            'documentMarkdownB64' => $result['documentMarkdownB64'],
+        ];
+    }
+
+    protected function handleDeleteSnapshotAction(
+        \ProcessWire\Page $page,
+        string $languageCode,
+        string $snapshotId
+    ): array {
+        if ($snapshotId === '') {
+            $this->sendJsonError('Missing snapshotId', 400);
+        }
+
+        $context = $this->resolveSnapshotDocumentContext($page, $languageCode);
+        $result = $this->withSnapshotDocumentLock($context, function () use ($context, $snapshotId) {
+            $indexPath = (string)$context['indexPath'];
+            $entry = $this->findSnapshotEntryById($context, $snapshotId);
+            if (!$entry) {
+                throw new \ProcessWire\WireException('Snapshot not found', 404);
+            }
+
+            $lines = is_file($indexPath) ? @file($indexPath, FILE_IGNORE_NEW_LINES) : [];
+            if ($lines === false) {
+                throw new \ProcessWire\WireException("Failed to read snapshot index: {$indexPath}");
+            }
+
+            $lineNumber = (int)($entry['lineNumber'] ?? 0);
+            if ($lineNumber < 1 || $lineNumber > count($lines)) {
+                throw new \ProcessWire\WireException('Snapshot index entry missing', 404);
+            }
+
+            unset($lines[$lineNumber - 1]);
+            $rewritten = implode("\n", array_values($lines));
+            if ($rewritten !== '') {
+                $rewritten .= "\n";
+            }
+            if (@file_put_contents($indexPath, $rewritten, LOCK_EX) === false) {
+                throw new \ProcessWire\WireException("Failed to rewrite snapshot index: {$indexPath}");
+            }
+
+            $blobPath = (string)($entry['blobPath'] ?? '');
+            if ($blobPath !== '' && is_file($blobPath)) {
+                @unlink($blobPath);
+            }
+
+            return [
+                'deleted' => true,
+                'snapshotId' => $snapshotId,
+                'documentId' => (string)$context['documentId'],
+            ];
+        });
+
+        return [
+            'status' => 1,
+            'deleted' => true,
+            'snapshotId' => (string)$result['snapshotId'],
+            'documentId' => (string)$result['documentId'],
+        ];
     }
 
     protected function parseRawMarkdownDocument(string $markdown) {
@@ -3739,6 +4668,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         if($code) http_response_code($code);
         header('Content-Type: application/json');
         echo json_encode(['status' => 0, 'error' => $msg]);
+        exit;
+    }
+
+    protected function sendJsonResponse(array $payload, int $code = 200) {
+        if($code) http_response_code($code);
+        header('Content-Type: application/json');
+        echo json_encode($payload);
         exit;
     }
 
