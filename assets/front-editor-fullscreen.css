@@ -468,6 +468,36 @@ body.mfe-split-resizing {
   opacity: 0.9;
 }
 
+.mfe-state-fullscreen-open .mfe-snapshot-compare-inline-note {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.mfe-state-fullscreen-open .mfe-snapshot-compare-inline-note--edited {
+  background: rgba(245, 158, 11, 0.14);
+  color: #92400e;
+}
+
+.mfe-state-fullscreen-open .mfe-snapshot-compare-inline-note--added {
+  background: rgba(34, 197, 94, 0.14);
+  color: #166534;
+}
+
+.mfe-state-fullscreen-open .mfe-snapshot-compare-replacement {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-left: 6px;
+  vertical-align: baseline;
+}
+
 .mfe-state-fullscreen-open .mfe-snapshot-compare-removed-block {
   display: block;
   margin: 8px 0;
@@ -505,26 +535,6 @@ body.mfe-split-resizing {
 .mfe-state-fullscreen-open .mfe-snapshot-compare-node-badge--edited {
   background: rgba(245, 158, 11, 0.14);
   color: #92400e;
-}
-
-.mfe-state-fullscreen-open .mfe-snapshot-compare-image--added .mfe-tiptap-image-container,
-.mfe-state-fullscreen-open .mfe-snapshot-compare-image--edited .mfe-tiptap-image-container,
-.mfe-state-fullscreen-open .mfe-tiptap-image-container.mfe-snapshot-compare-image--added,
-.mfe-state-fullscreen-open .mfe-tiptap-image-container.mfe-snapshot-compare-image--edited {
-  display: inline-block;
-  border-radius: 10px;
-  outline: 3px solid transparent;
-  outline-offset: 4px;
-}
-
-.mfe-state-fullscreen-open .mfe-snapshot-compare-image--added .mfe-tiptap-image-container,
-.mfe-state-fullscreen-open .mfe-tiptap-image-container.mfe-snapshot-compare-image--added {
-  outline-color: rgba(34, 197, 94, 0.45);
-}
-
-.mfe-state-fullscreen-open .mfe-snapshot-compare-image--edited .mfe-tiptap-image-container,
-.mfe-state-fullscreen-open .mfe-tiptap-image-container.mfe-snapshot-compare-image--edited {
-  outline-color: rgba(245, 158, 11, 0.45);
 }
 
 .mfe-state-fullscreen-open .mfe-snapshot-compare-image-removed img {

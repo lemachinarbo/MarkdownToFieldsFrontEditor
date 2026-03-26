@@ -15,7 +15,12 @@ import {
   getDefaultUnorderedListMarker,
 } from "./markdown-style-preferences.js";
 
-function updateNearestNodeAttrsForSelection(selection, tr, nodeTypeName, attrs) {
+function updateNearestNodeAttrsForSelection(
+  selection,
+  tr,
+  nodeTypeName,
+  attrs,
+) {
   if (!selection || !tr) return false;
   let target = null;
 
@@ -133,21 +138,14 @@ function createRemovedWidget(text, block = false) {
   };
 }
 
-function createCompareBadgeWidget(label, tone = "edited") {
-  return () => {
-    const el = document.createElement("span");
-    el.className = `mfe-snapshot-compare-node-badge mfe-snapshot-compare-node-badge--${tone}`;
-    el.textContent = String(label || "");
-    return el;
-  };
-}
-
 function createRemovedImageWidget(node) {
   return () => {
     const wrap = document.createElement("div");
-    wrap.className = "mfe-snapshot-compare-removed-block mfe-snapshot-compare-image-removed";
+    wrap.className =
+      "mfe-snapshot-compare-removed-block mfe-snapshot-compare-image-removed";
     const badge = document.createElement("span");
-    badge.className = "mfe-snapshot-compare-node-badge mfe-snapshot-compare-node-badge--removed";
+    badge.className =
+      "mfe-snapshot-compare-node-badge mfe-snapshot-compare-node-badge--removed";
     badge.textContent = "Removed image";
     wrap.appendChild(badge);
     const src = String(node?.attrs?.src || "");
@@ -170,7 +168,10 @@ function getImageComparableAttrs(node) {
 }
 
 function imageAttrsEqual(snapshotNode, baseNode) {
-  return JSON.stringify(getImageComparableAttrs(snapshotNode)) === JSON.stringify(getImageComparableAttrs(baseNode));
+  return (
+    JSON.stringify(getImageComparableAttrs(snapshotNode)) ===
+    JSON.stringify(getImageComparableAttrs(baseNode))
+  );
 }
 
 function collectNonTextChildEntries(node, parentPos) {
@@ -188,6 +189,93 @@ function collectNonTextChildEntries(node, parentPos) {
     offset += child.nodeSize;
   }
   return entries;
+}
+
+function collectLinkMarkEntries(node, textblockPos) {
+  const entries = [];
+  if (!node?.descendants) return entries;
+  node.descendants((child, pos) => {
+    if (!child?.isText) return;
+    const linkMark = child.marks?.find((mark) => mark?.type?.name === "link");
+    if (!linkMark) return;
+    const text = String(child.text || "");
+    if (!text) return;
+    const from = textblockPos + 1 + pos;
+    const to = from + text.length;
+    const href = String(linkMark.attrs?.href || "");
+    const last = entries[entries.length - 1] || null;
+    if (last && last.href === href && last.to === from) {
+      last.to = to;
+      last.text += text;
+      return;
+    }
+    entries.push({
+      from,
+      to,
+      text,
+      href,
+    });
+  });
+  return entries;
+}
+
+function buildLinkEntryKey(entry, textblockPos) {
+  if (!entry) return "";
+  const from = Math.max(0, Number(entry.from || 0) - Number(textblockPos || 0));
+  const to = Math.max(0, Number(entry.to || 0) - Number(textblockPos || 0));
+  return `${from}:${to}:${String(entry.text || "")}`;
+}
+
+function createInlineNoteWidget(text, tone = "edited") {
+  return () => {
+    const el = document.createElement("span");
+    el.className = `mfe-snapshot-compare-inline-note mfe-snapshot-compare-inline-note--${tone}`;
+    el.textContent = String(text || "");
+    return el;
+  };
+}
+
+function formatLinkTargetForCompare(href) {
+  const value = String(href || "").trim();
+  if (!value) return "empty";
+  if (value.length <= 48) return value;
+  return `${value.slice(0, 45)}...`;
+}
+
+function formatLinkEntityForCompare(text, href) {
+  const label = String(text || "").trim();
+  const target = String(href || "").trim();
+  if (label && target) {
+    return `${label} ${formatLinkTargetForCompare(target)}`;
+  }
+  if (label) return label;
+  if (target) return formatLinkTargetForCompare(target);
+  return "";
+}
+
+function createReplacementWidget(beforeText, afterText) {
+  return () => {
+    const wrap = document.createElement("span");
+    wrap.className = "mfe-snapshot-compare-replacement";
+    const beforeValue = String(beforeText || "");
+    const afterValue = String(afterText || "");
+    if (beforeValue) {
+      const before = document.createElement("span");
+      before.className = "mfe-snapshot-compare-inline-removed";
+      before.textContent = beforeValue;
+      wrap.appendChild(before);
+    }
+    if (beforeValue && afterValue) {
+      wrap.appendChild(document.createTextNode(" "));
+    }
+    if (afterValue) {
+      const after = document.createElement("span");
+      after.className = "mfe-snapshot-compare-inline-added";
+      after.textContent = afterValue;
+      wrap.appendChild(after);
+    }
+    return wrap;
+  };
 }
 
 export const MarkerAwareBold = Bold.extend({
@@ -270,7 +358,11 @@ export const MarkerAwareBulletList = BulletList.extend({
         () =>
         ({ chain }) =>
           chain()
-            .toggleList(this.name, this.options.itemTypeName, this.options.keepMarks)
+            .toggleList(
+              this.name,
+              this.options.itemTypeName,
+              this.options.keepMarks,
+            )
             .command(({ tr }) => {
               return updateNearestNodeAttrsForSelection(
                 tr.selection,
@@ -379,20 +471,30 @@ export function createSnapshotCompareExtension(getCompareData) {
                 );
               };
 
-              const decorateTextblockDiff = (snapshotNode, baseNode, snapshotPos) => {
+              const decorateTextblockDiff = (
+                snapshotNode,
+                baseNode,
+                snapshotPos,
+              ) => {
                 const snapshotText = String(snapshotNode?.textContent || "");
                 const currentText = String(baseNode?.textContent || "");
                 if (snapshotText === currentText) {
                   return;
                 }
-                const changedRanges = computeChangedRanges(currentText, snapshotText);
+                const changedRanges = computeChangedRanges(
+                  currentText,
+                  snapshotText,
+                );
                 changedRanges.forEach((range) => {
                   const start = Number(range?.start || 0);
                   const afterBytes = Number(range?.afterBytes || 0);
                   const beforeBytes = Number(range?.beforeBytes || 0);
                   const inlineAnchor = snapshotPos + 1 + start;
                   if (beforeBytes > 0) {
-                    const deletedText = currentText.slice(start, start + beforeBytes);
+                    const deletedText = currentText.slice(
+                      start,
+                      start + beforeBytes,
+                    );
                     if (deletedText) {
                       decorations.push(
                         Decoration.widget(
@@ -410,18 +512,168 @@ export function createSnapshotCompareExtension(getCompareData) {
                 });
               };
 
+              const decorateLinkDiffsInTextblock = (
+                snapshotNode,
+                baseNode,
+                snapshotPos,
+              ) => {
+                const snapshotLinks = collectLinkMarkEntries(
+                  snapshotNode,
+                  snapshotPos,
+                );
+                const baseLinks = collectLinkMarkEntries(baseNode, snapshotPos);
+                if (!snapshotLinks.length && !baseLinks.length) {
+                  return;
+                }
+                const baseByKey = new Map();
+                baseLinks.forEach((entry) => {
+                  baseByKey.set(buildLinkEntryKey(entry, snapshotPos), entry);
+                });
+                const seenBaseKeys = new Set();
+                const unmatchedSnapshotLinks = [];
+                const unmatchedBaseLinks = [];
+                const snapshotText = String(snapshotNode?.textContent || "");
+                const baseText = String(baseNode?.textContent || "");
+
+                snapshotLinks.forEach((snapshotLink) => {
+                  const key = buildLinkEntryKey(snapshotLink, snapshotPos);
+                  const baseLink = baseByKey.get(key) || null;
+                  if (!baseLink) {
+                    unmatchedSnapshotLinks.push(snapshotLink);
+                    return;
+                  }
+                  seenBaseKeys.add(key);
+                  if (snapshotLink.href === baseLink.href) return;
+                  decorations.push(
+                    Decoration.inline(snapshotLink.from, snapshotLink.to, {
+                      class: "mfe-snapshot-compare-inline-added",
+                    }),
+                  );
+                  decorations.push(
+                    Decoration.widget(
+                      snapshotLink.from,
+                      createReplacementWidget(
+                        formatLinkEntityForCompare(baseLink.text, baseLink.href),
+                        "",
+                      ),
+                      { side: -1 },
+                    ),
+                  );
+                });
+
+                baseLinks.forEach((baseLink) => {
+                  const key = buildLinkEntryKey(baseLink, snapshotPos);
+                  if (seenBaseKeys.has(key)) return;
+                  unmatchedBaseLinks.push(baseLink);
+                });
+
+                const pairCount = Math.min(
+                  unmatchedSnapshotLinks.length,
+                  unmatchedBaseLinks.length,
+                );
+                for (let index = 0; index < pairCount; index += 1) {
+                  const snapshotLink = unmatchedSnapshotLinks[index];
+                  const baseLink = unmatchedBaseLinks[index];
+                  if (!snapshotLink || !baseLink) continue;
+                  decorations.push(
+                    Decoration.inline(snapshotLink.from, snapshotLink.to, {
+                      class: "mfe-snapshot-compare-inline-added",
+                    }),
+                  );
+                  decorations.push(
+                    Decoration.widget(
+                      snapshotLink.from,
+                      createReplacementWidget(
+                        formatLinkEntityForCompare(baseLink.text, baseLink.href),
+                        "",
+                      ),
+                      { side: -1 },
+                    ),
+                  );
+                }
+
+                unmatchedSnapshotLinks.slice(pairCount).forEach((snapshotLink) => {
+                  const start = Math.max(
+                    0,
+                    Number(snapshotLink.from || 0) - (snapshotPos + 1),
+                  );
+                  const end = Math.max(
+                    start,
+                    Number(snapshotLink.to || 0) - (snapshotPos + 1),
+                  );
+                  const previousText = baseText.slice(start, end);
+                  decorations.push(
+                    Decoration.inline(snapshotLink.from, snapshotLink.to, {
+                      class: "mfe-snapshot-compare-inline-added",
+                    }),
+                  );
+                  decorations.push(
+                    Decoration.widget(
+                      snapshotLink.from,
+                      createReplacementWidget(
+                        previousText,
+                        "",
+                      ),
+                      { side: -1 },
+                    ),
+                  );
+                });
+
+                unmatchedBaseLinks.slice(pairCount).forEach((baseLink) => {
+                  const start = Math.max(
+                    0,
+                    Number(baseLink.from || 0) - (snapshotPos + 1),
+                  );
+                  const end = Math.max(
+                    start,
+                    Number(baseLink.to || 0) - (snapshotPos + 1),
+                  );
+                  const nextFrom = snapshotPos + 1 + start;
+                  const nextTo = snapshotPos + 1 + end;
+                  if (nextTo > nextFrom) {
+                    decorations.push(
+                      Decoration.inline(nextFrom, nextTo, {
+                        class: "mfe-snapshot-compare-inline-added",
+                      }),
+                    );
+                  }
+                  const anchor = Math.min(
+                    snapshotPos + 1 + snapshotText.length,
+                    Math.max(snapshotPos + 1, nextFrom),
+                  );
+                  decorations.push(
+                    Decoration.widget(
+                      anchor,
+                      createReplacementWidget(
+                        formatLinkEntityForCompare(baseLink.text, baseLink.href),
+                        "",
+                      ),
+                      { side: -1 },
+                    ),
+                  );
+                });
+              };
+
               const decorateAddedSubtree = (snapshotNode, nodePos) => {
                 if (!snapshotNode) return;
                 const nodeType = String(snapshotNode.type?.name || "");
                 if (nodeType === "image") {
                   decorations.push(
-                    Decoration.widget(nodePos, createCompareBadgeWidget("Added image", "added"), {
-                      side: -1,
-                    }),
+                    Decoration.widget(
+                      nodePos + snapshotNode.nodeSize,
+                      createInlineNoteWidget(
+                        formatLinkTargetForCompare(snapshotNode?.attrs?.src || ""),
+                        "added",
+                      ),
+                      {
+                        side: 1,
+                      },
+                    ),
                   );
                   decorations.push(
                     Decoration.node(nodePos, nodePos + snapshotNode.nodeSize, {
-                      class: "mfe-snapshot-compare-image mfe-snapshot-compare-image--added",
+                      class:
+                        "mfe-snapshot-compare-image mfe-snapshot-compare-image--added",
                     }),
                   );
                   return;
@@ -429,20 +681,28 @@ export function createSnapshotCompareExtension(getCompareData) {
                 if (nodeType === "taskItem") {
                   decorations.push(
                     Decoration.node(nodePos, nodePos + snapshotNode.nodeSize, {
-                      class: "mfe-snapshot-compare-task-item mfe-snapshot-compare-task-item--added mfe-snapshot-compare-task-toggle--added",
+                      class:
+                        "mfe-snapshot-compare-task-item mfe-snapshot-compare-task-item--added mfe-snapshot-compare-task-toggle--added",
                     }),
                   );
                 }
                 if (snapshotNode.isTextblock) {
                   const text = String(snapshotNode.textContent || "");
                   if (text) {
-                    decorateInlineAddedRange(nodePos + 1, nodePos + 1 + text.length);
+                    decorateInlineAddedRange(
+                      nodePos + 1,
+                      nodePos + 1 + text.length,
+                    );
                   }
                   return;
                 }
                 if (snapshotNode.childCount > 0) {
                   let childOffset = 0;
-                  for (let index = 0; index < snapshotNode.childCount; index += 1) {
+                  for (
+                    let index = 0;
+                    index < snapshotNode.childCount;
+                    index += 1
+                  ) {
                     const child = snapshotNode.child(index);
                     decorateAddedSubtree(child, nodePos + 1 + childOffset);
                     childOffset += child.nodeSize;
@@ -451,7 +711,8 @@ export function createSnapshotCompareExtension(getCompareData) {
                 }
                 decorations.push(
                   Decoration.node(nodePos, nodePos + snapshotNode.nodeSize, {
-                    class: "mfe-snapshot-compare-block mfe-snapshot-compare-block--snapshot-only",
+                    class:
+                      "mfe-snapshot-compare-block mfe-snapshot-compare-block--snapshot-only",
                   }),
                 );
               };
@@ -461,18 +722,26 @@ export function createSnapshotCompareExtension(getCompareData) {
                 const nodeType = String(baseNode.type?.name || "");
                 if (nodeType === "image") {
                   decorations.push(
-                    Decoration.widget(anchorPos, createRemovedImageWidget(baseNode), {
-                      side: -1,
-                    }),
+                    Decoration.widget(
+                      anchorPos,
+                      createRemovedImageWidget(baseNode),
+                      {
+                        side: -1,
+                      },
+                    ),
                   );
                   return;
                 }
                 const removedText = String(baseNode?.textContent || "").trim();
                 if (removedText) {
                   decorations.push(
-                    Decoration.widget(anchorPos, createRemovedWidget(removedText, true), {
-                      side: -1,
-                    }),
+                    Decoration.widget(
+                      anchorPos,
+                      createRemovedWidget(removedText, true),
+                      {
+                        side: -1,
+                      },
+                    ),
                   );
                 }
               };
@@ -482,18 +751,30 @@ export function createSnapshotCompareExtension(getCompareData) {
                   return;
                 }
                 decorations.push(
-                  Decoration.widget(nodePos, createCompareBadgeWidget("Image changed", "edited"), {
-                    side: -1,
-                  }),
+                  Decoration.widget(
+                    nodePos + snapshotNode.nodeSize,
+                    createReplacementWidget(
+                      formatLinkTargetForCompare(baseNode?.attrs?.src || ""),
+                      formatLinkTargetForCompare(snapshotNode?.attrs?.src || ""),
+                    ),
+                    {
+                      side: 1,
+                    },
+                  ),
                 );
                 decorations.push(
                   Decoration.node(nodePos, nodePos + snapshotNode.nodeSize, {
-                    class: "mfe-snapshot-compare-image mfe-snapshot-compare-image--edited",
+                    class:
+                      "mfe-snapshot-compare-image mfe-snapshot-compare-image--edited",
                   }),
                 );
               };
 
-              const decorateTaskItemDiff = (snapshotNode, baseNode, nodePos) => {
+              const decorateTaskItemDiff = (
+                snapshotNode,
+                baseNode,
+                nodePos,
+              ) => {
                 const snapshotChecked = Boolean(snapshotNode?.attrs?.checked);
                 const baseChecked = Boolean(baseNode?.attrs?.checked);
                 if (snapshotChecked !== baseChecked) {
@@ -510,8 +791,14 @@ export function createSnapshotCompareExtension(getCompareData) {
                 baseNode,
                 snapshotPos,
               ) => {
-                const snapshotEntries = collectNonTextChildEntries(snapshotNode, snapshotPos + 1);
-                const baseEntries = collectNonTextChildEntries(baseNode, snapshotPos + 1);
+                const snapshotEntries = collectNonTextChildEntries(
+                  snapshotNode,
+                  snapshotPos + 1,
+                );
+                const baseEntries = collectNonTextChildEntries(
+                  baseNode,
+                  snapshotPos + 1,
+                );
                 if (!snapshotEntries.length && !baseEntries.length) {
                   return;
                 }
@@ -524,7 +811,8 @@ export function createSnapshotCompareExtension(getCompareData) {
                   if (op.type === "add") {
                     const entry = snapshotEntries[op.snapshotIndex];
                     decorateAddedSubtree(entry?.node, entry?.pos);
-                    cursor = (entry?.pos || cursor) + (entry?.node?.nodeSize || 0);
+                    cursor =
+                      (entry?.pos || cursor) + (entry?.node?.nodeSize || 0);
                     return;
                   }
                   if (op.type === "remove") {
@@ -540,11 +828,17 @@ export function createSnapshotCompareExtension(getCompareData) {
                   cursor = childPos + (childNode?.nodeSize || 0);
                   if (!childNode || !baseChildNode) return;
                   const nodeType = String(childNode.type?.name || "");
-                  if (nodeType === "image" && baseChildNode.type?.name === "image") {
+                  if (
+                    nodeType === "image" &&
+                    baseChildNode.type?.name === "image"
+                  ) {
                     decorateImageDiff(childNode, baseChildNode, childPos);
                     return;
                   }
-                  if (nodeType === "taskItem" && baseChildNode.type?.name === "taskItem") {
+                  if (
+                    nodeType === "taskItem" &&
+                    baseChildNode.type?.name === "taskItem"
+                  ) {
                     decorateTaskItemDiff(childNode, baseChildNode, childPos);
                   }
                 });
@@ -554,7 +848,11 @@ export function createSnapshotCompareExtension(getCompareData) {
                 const snapshotChildren = [];
                 const snapshotPositions = [];
                 let offset = 0;
-                for (let index = 0; index < snapshotParent.childCount; index += 1) {
+                for (
+                  let index = 0;
+                  index < snapshotParent.childCount;
+                  index += 1
+                ) {
                   const child = snapshotParent.child(index);
                   snapshotChildren.push(child);
                   snapshotPositions.push(snapshotParentPos + offset);
@@ -594,22 +892,40 @@ export function createSnapshotCompareExtension(getCompareData) {
                     return;
                   }
 
-                  if (nodeType === "taskItem" && baseNode.type?.name === "taskItem") {
+                  if (
+                    nodeType === "taskItem" &&
+                    baseNode.type?.name === "taskItem"
+                  ) {
                     decorateTaskItemDiff(snapshotNode, baseNode, nodePos);
                   }
 
                   if (snapshotNode.isTextblock && baseNode.isTextblock) {
                     decorateTextblockDiff(snapshotNode, baseNode, nodePos);
-                    compareNonTextChildrenInTextblock(snapshotNode, baseNode, nodePos);
+                    decorateLinkDiffsInTextblock(
+                      snapshotNode,
+                      baseNode,
+                      nodePos,
+                    );
+                    compareNonTextChildrenInTextblock(
+                      snapshotNode,
+                      baseNode,
+                      nodePos,
+                    );
                     return;
                   }
 
-                  const sameType = snapshotNode.type?.name === baseNode.type?.name;
+                  const sameType =
+                    snapshotNode.type?.name === baseNode.type?.name;
                   if (!sameType) {
                     decorations.push(
-                      Decoration.node(nodePos, nodePos + snapshotNode.nodeSize, {
-                        class: "mfe-snapshot-compare-block mfe-snapshot-compare-block--changed",
-                      }),
+                      Decoration.node(
+                        nodePos,
+                        nodePos + snapshotNode.nodeSize,
+                        {
+                          class:
+                            "mfe-snapshot-compare-block mfe-snapshot-compare-block--changed",
+                        },
+                      ),
                     );
                     return;
                   }
@@ -730,14 +1046,16 @@ export function createMfeImageExtension(resolveImageBaseUrl) {
               if (token) classNames.add(token);
             });
           }
-          (Array.isArray(decorationSet) ? decorationSet : []).forEach((decoration) => {
-            const attrs = decoration?.type?.attrs || decoration?.attrs || {};
-            const className = String(attrs?.class || "").trim();
-            if (!className) return;
-            className.split(/\s+/).forEach((token) => {
-              if (token) classNames.add(token);
-            });
-          });
+          (Array.isArray(decorationSet) ? decorationSet : []).forEach(
+            (decoration) => {
+              const attrs = decoration?.type?.attrs || decoration?.attrs || {};
+              const className = String(attrs?.class || "").trim();
+              if (!className) return;
+              className.split(/\s+/).forEach((token) => {
+                if (token) classNames.add(token);
+              });
+            },
+          );
           classNames.forEach((className) => target.classList.add(className));
         };
 
