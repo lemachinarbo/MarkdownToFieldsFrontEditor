@@ -236,6 +236,8 @@ import {
   applySplitSecondarySize as applySplitSecondarySizeHelper,
   hydrateTranslationsForActiveScope as hydrateTranslationsForActiveScopeHelper,
   setupSplitResizeHandle as setupSplitResizeHandleHelper,
+  openSecondaryPane as openSecondaryPaneHelper,
+  closeSecondaryPane as closeSecondaryPaneHelper,
   openSplit as openSplitHelper,
   closeSplit as closeSplitHelper,
   toggleSplit as toggleSplitHelper,
@@ -304,6 +306,7 @@ let snapshotCompareEditor = null;
 let primaryPaneEl = null;
 let saveStatusEl = null;
 let refreshToolbarState = null;
+let fullscreenPaneMode = "edit";
 let pendingSavePromise = null;
 let activeTarget = null;
 let activeFieldName = null;
@@ -1294,43 +1297,8 @@ function getSnapshotDebugContext() {
   };
 }
 
-function emitSnapshotDebug(event, { toast = false, details = null } = {}) {
-  const context = {
-    ...(getSnapshotDebugContext() || {}),
-    ...(details && typeof details === "object" ? details : {}),
-  };
-  emitRuntimeShapeLog("MFE_SNAPSHOT_DEBUG", {
-    event: String(event || ""),
-    ...context,
-  });
-  if (
-    typeof console !== "undefined" &&
-    typeof console.info === "function" &&
-    (isStateTraceEnabled() || isDevMode())
-  ) {
-    console.info("MFE_SNAPSHOT_DEBUG", JSON.stringify({
-      event: String(event || ""),
-      ...context,
-    }));
-  }
-  if (toast) {
-    const pageLabel = context.resolvedPageId || "none";
-    const langLabel = context.lang || "none";
-    showWindowToast(`Snapshot debug: ${event} (page=${pageLabel}, lang=${langLabel})`, "info");
-  }
-}
-
 function buildSnapshotUnavailableMessage() {
-  const context = getSnapshotDebugContext();
-  return [
-    "Snapshot history is unavailable for this document.",
-    `resolved=${context.resolvedPageId || "none"}`,
-    `state=${context.activeStatePageId || "none"}`,
-    `target=${context.activeTargetPageId || "none"}`,
-    `session=${context.activeSessionPageId || "none"}`,
-    `lang=${context.lang || "none"}`,
-    `scope=${context.activeScope || "none"}`,
-  ].join(" ");
+  return "Snapshot history is unavailable for this document.";
 }
 
 async function getCurrentPersistedSnapshotHash() {
@@ -1724,12 +1692,6 @@ async function refreshSnapshotHistory({ preserveSelection = true } = {}) {
   const pageId = getSnapshotPageId();
   const lang = getSnapshotLanguageCode();
   if (!pageId || !lang) {
-    emitSnapshotDebug("history-unavailable", {
-      toast: true,
-      details: {
-        preserveSelection: Boolean(preserveSelection),
-      },
-    });
     snapshotHistoryItems = [];
     snapshotSelectedId = "";
     renderSnapshotList();
@@ -1747,14 +1709,6 @@ async function refreshSnapshotHistory({ preserveSelection = true } = {}) {
   snapshotHistoryLoading = true;
   updateSnapshotPanelState();
   try {
-    emitSnapshotDebug("history-refresh-start", {
-      toast: true,
-      details: {
-        pageId,
-        lang,
-        preserveSelection: Boolean(preserveSelection),
-      },
-    });
     const result = await listSnapshotsRequest({
       pageId,
       lang,
@@ -1774,14 +1728,6 @@ async function refreshSnapshotHistory({ preserveSelection = true } = {}) {
     await refreshSnapshotExternalNotice();
     await refreshSnapshotDiff();
   } catch (error) {
-    emitSnapshotDebug("history-refresh-error", {
-      toast: true,
-      details: {
-        pageId,
-        lang,
-        error: String(error?.message || "unknown"),
-      },
-    });
     snapshotHistoryItems = [];
     snapshotSelectedId = "";
     renderSnapshotList();
@@ -1965,12 +1911,6 @@ function toggleSnapshotHistoryPanel(forceOpen = null) {
     const pageId = getSnapshotPageId();
     const lang = getSnapshotLanguageCode();
     if (!pageId || !lang) {
-      emitSnapshotDebug("history-open-blocked", {
-        toast: true,
-        details: {
-          requestedOpen: true,
-        },
-      });
       showWindowToast(buildSnapshotUnavailableMessage(), "info", {
         persistent: true,
       });
@@ -1978,13 +1918,6 @@ function toggleSnapshotHistoryPanel(forceOpen = null) {
       updateSnapshotPanelState();
       return;
     }
-    emitSnapshotDebug("history-open", {
-      toast: true,
-      details: {
-        pageId,
-        lang,
-      },
-    });
     if (secondaryEditor || splitRegion) {
       splitEnabledByUser = false;
       closeSplit();
@@ -2049,43 +1982,53 @@ function createSnapshotPanel() {
 
 function openSnapshotHistoryPane() {
   if (!editorShell || snapshotHistoryOpen) return;
-  editorShell.classList.add("mfe-editor-shell--split");
-  applySplitSecondarySize(splitSecondarySizePercent);
-
-  const region = document.createElement("div");
-  region.className = "mfe-editor-split-region";
-
-  const handle = document.createElement("button");
-  handle.type = "button";
-  handle.className = "mfe-editor-split-handle";
-  handle.setAttribute("aria-label", "Resize history pane");
-  handle.innerHTML =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M8 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M8 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M8 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /></svg>';
-
-  const pane = document.createElement("div");
-  pane.className = "mfe-editor-pane mfe-editor-pane--secondary mfe-editor-pane--history";
+  const { splitRegion: region, splitHandle: handle, splitPane: pane } =
+    openSecondaryPaneHelper({
+      editorShell,
+      splitSecondarySizePercent,
+      applySplitSecondarySize,
+      setupSplitResizeHandle,
+      setSplitRegion: (value) => {
+        splitRegion = value;
+      },
+      setSplitHandle: (value) => {
+        splitHandle = value;
+      },
+      setSplitPane: (value) => {
+        splitPane = value;
+      },
+      handleAriaLabel: "Resize history pane",
+      paneClassName:
+        "mfe-editor-pane mfe-editor-pane--secondary mfe-editor-pane--history",
+    });
   const panel = createSnapshotPanel();
   pane.appendChild(panel);
-
-  region.appendChild(handle);
-  region.appendChild(pane);
-  editorShell.appendChild(region);
-
-  splitRegion = region;
-  splitHandle = handle;
-  splitPane = pane;
   snapshotPanelEl = panel;
   snapshotHistoryOpen = true;
-
-  setupSplitResizeHandle();
+  fullscreenPaneMode = "history";
   updateSnapshotPanelState();
+  syncFullscreenPaneMode();
   void refreshSnapshotHistory();
 }
 
 function closeSnapshotHistoryPane() {
   snapshotHistoryOpen = false;
   if (splitRegion && !secondaryEditor) {
-    closeSplit();
+    closeSecondaryPaneHelper({
+      splitResizeCleanup,
+      splitRegion,
+      editorShell,
+      refreshToolbarState,
+      setSplitRegion: (value) => {
+        splitRegion = value;
+      },
+      setSplitPane: (value) => {
+        splitPane = value;
+      },
+      setSplitHandle: (value) => {
+        splitHandle = value;
+      },
+    });
   } else {
     if (snapshotPanelEl) {
       snapshotPanelEl.remove();
@@ -2109,6 +2052,7 @@ function closeSnapshotHistoryPane() {
   snapshotCompareSelectEl = null;
   updateSnapshotPrimaryPreview();
   updateSnapshotPanelState();
+  syncFullscreenPaneMode();
 }
 
 function emitRuntimeBoundaryWriteTrace(payload = {}) {
@@ -5603,7 +5547,7 @@ function setupSplitResizeHandle() {
  * Does not own secondary language mutation authority.
  */
 function openSplit() {
-  return openSplitHelper({
+  const result = openSplitHelper({
     editorShell,
     secondaryEditor,
     getLanguagesConfig,
@@ -5635,6 +5579,8 @@ function openSplit() {
     },
     getSecondaryEditor: () => secondaryEditor,
   });
+  syncFullscreenPaneMode();
+  return result;
 }
 
 /**
@@ -5642,7 +5588,7 @@ function openSplit() {
  * Does not clear translation document state ownership.
  */
 function closeSplit() {
-  return closeSplitHelper({
+  const result = closeSplitHelper({
     splitResizeCleanup,
     secondaryEditor,
     splitRegion,
@@ -5665,6 +5611,27 @@ function closeSplit() {
       activeEditor = value;
     },
   });
+  syncFullscreenPaneMode();
+  return result;
+}
+
+function syncFullscreenPaneMode() {
+  if (snapshotHistoryOpen) {
+    fullscreenPaneMode = "history";
+  } else if (secondaryEditor) {
+    fullscreenPaneMode = "split";
+  } else {
+    fullscreenPaneMode = "edit";
+  }
+  overlayEl?.classList?.toggle(
+    "mfe-window--history-locked",
+    fullscreenPaneMode === "history",
+  );
+  editorShell?.classList?.toggle(
+    "mfe-editor-shell--history-locked",
+    fullscreenPaneMode === "history",
+  );
+  refreshToolbarState?.();
 }
 
 function setSecondaryLanguage(lang) {
@@ -5824,7 +5791,7 @@ function toggleSplit() {
   if (!secondaryEditor && snapshotHistoryOpen) {
     closeSnapshotHistoryPane();
   }
-  return toggleSplitHelper({
+  const result = toggleSplitHelper({
     secondaryEditor,
     setSplitEnabledByUser: (value) => {
       splitEnabledByUser = value;
@@ -5832,6 +5799,8 @@ function toggleSplit() {
     openSplit,
     closeSplit,
   });
+  syncFullscreenPaneMode();
+  return result;
 }
 
 function toggleOutlineView() {
@@ -6790,6 +6759,12 @@ function cleanupEditorOnly() {
   runtimeStateIdsToClear.forEach((stateId) => {
     clearStateRuntimeTracking(stateId, "cleanupEditorOnly:clearStateRuntimeTracking");
   });
+  if (snapshotPanelEl) {
+    snapshotPanelEl.remove();
+  }
+  if (splitRegion) {
+    splitRegion.remove();
+  }
   if (typeof splitResizeCleanup === "function") {
     splitResizeCleanup();
   }
@@ -6803,6 +6778,8 @@ function cleanupEditorOnly() {
   }
   activeEditor = null;
   refreshToolbarState = null;
+  fullscreenPaneMode = "edit";
+  splitEnabledByUser = false;
   snapshotHistoryOpen = false;
   snapshotHistoryLoading = false;
   snapshotHistoryItems = [];
@@ -6820,6 +6797,10 @@ function cleanupEditorOnly() {
   snapshotPreviewEl = null;
   destroySnapshotCompareEditor();
   primaryPaneEl = null;
+  splitPane = null;
+  splitRegion = null;
+  splitHandle = null;
+  splitResizeCleanup = null;
 
   if (fullscreenSessionEventScope) {
     fullscreenSessionEventScope.disposeAll();
@@ -6941,6 +6922,10 @@ function createToolbar() {
     isDocumentScopeActive,
     isOutlineViewActive,
     toggleOutlineView,
+    isButtonDisabled: (key) => {
+      if (fullscreenPaneMode !== "history") return false;
+      return String(key || "") !== "history";
+    },
     setRefreshToolbarState: (value) => {
       refreshToolbarState = value;
     },
@@ -8655,6 +8640,11 @@ function resolveBreadcrumbNavigationTarget(params) {
  * Does not own fullscreen open lifecycle beyond delegating to the existing opener.
  */
 async function handleBreadcrumbClick(e) {
+  if (fullscreenPaneMode === "history") {
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
   const target = e.target?.closest(".mfe-breadcrumb-link");
 
   if (!target) {

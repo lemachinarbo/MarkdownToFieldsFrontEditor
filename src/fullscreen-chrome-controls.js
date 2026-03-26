@@ -215,21 +215,17 @@ export function openSplit({
 
   if (otherLangs.length === 0) return;
 
-  editorShell.classList.add("mfe-editor-shell--split");
-  applySplitSecondarySize(splitSecondarySizePercent);
-
-  const splitRegion = document.createElement("div");
-  splitRegion.className = "mfe-editor-split-region";
-
-  const splitHandle = document.createElement("button");
-  splitHandle.type = "button";
-  splitHandle.className = "mfe-editor-split-handle";
-  splitHandle.setAttribute("aria-label", "Resize language split panes");
-  splitHandle.innerHTML =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M8 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M8 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M8 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /></svg>';
-
-  const splitPane = document.createElement("div");
-  splitPane.className = "mfe-editor-pane mfe-editor-pane--secondary";
+  const { splitRegion, splitHandle, splitPane } = openSecondaryPane({
+    editorShell,
+    splitSecondarySizePercent,
+    applySplitSecondarySize,
+    setupSplitResizeHandle,
+    setSplitRegion,
+    setSplitHandle,
+    setSplitPane,
+    handleAriaLabel: "Resize language split panes",
+    paneClassName: "mfe-editor-pane mfe-editor-pane--secondary",
+  });
 
   const header = document.createElement("div");
   header.className = "mfe-editor-pane-header";
@@ -325,6 +321,71 @@ export function closeSplit({
   setSplitHandle(null);
   editorShell?.classList?.remove("mfe-editor-shell--split");
   setActiveEditor(primaryEditor);
+  if (typeof refreshToolbarState === "function") {
+    refreshToolbarState();
+  }
+}
+
+export function openSecondaryPane({
+  editorShell,
+  splitSecondarySizePercent,
+  applySplitSecondarySize,
+  setupSplitResizeHandle,
+  setSplitRegion,
+  setSplitHandle,
+  setSplitPane,
+  handleAriaLabel = "Resize pane",
+  paneClassName = "mfe-editor-pane mfe-editor-pane--secondary",
+}) {
+  if (!editorShell) return { splitRegion: null, splitHandle: null, splitPane: null };
+
+  editorShell.classList.add("mfe-editor-shell--split");
+  applySplitSecondarySize(splitSecondarySizePercent);
+
+  const splitRegion = document.createElement("div");
+  splitRegion.className = "mfe-editor-split-region";
+
+  const splitHandle = document.createElement("button");
+  splitHandle.type = "button";
+  splitHandle.className = "mfe-editor-split-handle";
+  splitHandle.setAttribute("aria-label", handleAriaLabel);
+  splitHandle.innerHTML =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M8 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M8 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M8 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M14 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /></svg>';
+
+  const splitPane = document.createElement("div");
+  splitPane.className = paneClassName;
+
+  splitRegion.appendChild(splitHandle);
+  splitRegion.appendChild(splitPane);
+  editorShell.appendChild(splitRegion);
+
+  setSplitRegion(splitRegion);
+  setSplitHandle(splitHandle);
+  setSplitPane(splitPane);
+  setupSplitResizeHandle();
+
+  return { splitRegion, splitHandle, splitPane };
+}
+
+export function closeSecondaryPane({
+  splitResizeCleanup,
+  splitRegion,
+  editorShell,
+  refreshToolbarState,
+  setSplitRegion,
+  setSplitPane,
+  setSplitHandle,
+}) {
+  if (typeof splitResizeCleanup === "function") {
+    splitResizeCleanup();
+  }
+  if (splitRegion) {
+    splitRegion.remove();
+    setSplitRegion(null);
+  }
+  setSplitPane(null);
+  setSplitHandle(null);
+  editorShell?.classList?.remove("mfe-editor-shell--split");
   if (typeof refreshToolbarState === "function") {
     refreshToolbarState();
   }
@@ -538,6 +599,7 @@ export function createToolbar({
   isDocumentScopeActive,
   isOutlineViewActive,
   toggleOutlineView,
+  isButtonDisabled,
   setRefreshToolbarState,
   setSaveStatusEl,
   statusManager,
@@ -590,6 +652,7 @@ export function createToolbar({
     buttons,
     configButtons,
     getEditor: getActiveEditor,
+    isButtonDisabled,
   });
   setRefreshToolbarState(refreshButtons);
   setSaveStatusEl(statusEl);

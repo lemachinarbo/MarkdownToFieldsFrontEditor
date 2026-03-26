@@ -5,6 +5,7 @@ export function renderToolbarButtons({
   buttons,
   configButtons,
   getEditor,
+  isButtonDisabled,
 }) {
   const resolveEditor = () =>
     typeof getEditor === "function" ? getEditor() : null;
@@ -86,6 +87,22 @@ export function renderToolbarButtons({
     btn.className = `editor-toolbar-btn${btnDef.className ? ` ${btnDef.className}` : ""}`;
 
     const updateStyle = () => {
+      const disabled =
+        typeof isButtonDisabled === "function"
+          ? Boolean(isButtonDisabled(btnDef.key, btnDef))
+          : false;
+      btn.disabled = disabled;
+      btn.setAttribute("aria-disabled", disabled ? "true" : "false");
+      if (disabled) {
+        btn.style.background = "transparent";
+        btn.style.color = "#cbd5e1";
+        btn.style.boxShadow = "none";
+        btn.style.cursor = "not-allowed";
+        btn.style.opacity = "0.72";
+        return;
+      }
+      btn.style.cursor = "";
+      btn.style.opacity = "";
       if (btnDef.isActive()) {
         btn.style.background = "#eef2ff";
         btn.style.color = "#3730a3";
@@ -99,12 +116,14 @@ export function renderToolbarButtons({
 
     btn.onmousedown = (e) => {
       e.preventDefault();
+      if (btn.disabled) return;
       emitUserIntent(`toolbar:${btnDef.key}:mousedown`);
       btnDef.action();
       defer(refreshButton);
     };
 
     btn.onmouseenter = () => {
+      if (btn.disabled) return;
       if (!btnDef.isActive()) {
         btn.style.background = "#f3f4f6";
         btn.style.color = "#374151";
@@ -148,6 +167,22 @@ export function renderToolbarButtons({
     btn.className = `editor-toolbar-btn${saveBtn.className ? ` ${saveBtn.className}` : ""}`;
 
     const updateStyle = () => {
+      const disabled =
+        typeof isButtonDisabled === "function"
+          ? Boolean(isButtonDisabled(saveBtn.key, saveBtn))
+          : false;
+      btn.disabled = disabled;
+      btn.setAttribute("aria-disabled", disabled ? "true" : "false");
+      if (disabled) {
+        btn.style.background = "transparent";
+        btn.style.color = "#cbd5e1";
+        btn.style.boxShadow = "none";
+        btn.style.cursor = "not-allowed";
+        btn.style.opacity = "0.72";
+        return;
+      }
+      btn.style.cursor = "";
+      btn.style.opacity = "";
       if (saveBtn.isActive()) {
         btn.style.background = "#eef2ff";
         btn.style.color = "#3730a3";
@@ -161,12 +196,14 @@ export function renderToolbarButtons({
 
     btn.onmousedown = (e) => {
       e.preventDefault();
+      if (btn.disabled) return;
       emitUserIntent(`toolbar:save:mousedown`);
       saveBtn.action();
       defer(refreshButton);
     };
 
     btn.onmouseenter = () => {
+      if (btn.disabled) return;
       if (!saveBtn.isActive()) {
         btn.style.background = "#f3f4f6";
         btn.style.color = "#374151";

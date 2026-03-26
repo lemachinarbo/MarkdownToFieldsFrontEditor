@@ -293,7 +293,7 @@ body.mfe-split-resizing {
   text-align: left;
   padding: 10px 12px;
   border-radius: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid #fff;
   background: #fff;
   cursor: pointer;
 }
@@ -595,6 +595,31 @@ body.mfe-split-resizing {
 
 .mfe-state-fullscreen-open .mfe-window-breadcrumbs .mfe-window-inner {
   /* padding-left: var(--mfe-doc-segment-gutter); */
+}
+
+.mfe-window--history-locked .mfe-window-breadcrumbs {
+  position: relative;
+  opacity: 0.5;
+  pointer-events: none;
+  filter: grayscale(50%);
+}
+
+.mfe-window--history-locked .mfe-window-breadcrumbs::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.3);
+  pointer-events: none;
+}
+
+.mfe-window--history-locked
+  .mfe-window-breadcrumbs
+  .mfe-breadcrumb-link {
+  pointer-events: none;
+  color: #cbd5e1;
+  cursor: default;
+  text-decoration: none;
+  opacity: 0.9;
 }
 
 .mfe-state-fullscreen-open:not(.mfe-state-document-mode) .mfe-marker {
