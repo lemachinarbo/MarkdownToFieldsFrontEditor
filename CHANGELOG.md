@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.4](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.8.3...v0.8.4) (2026-04-27)
+
+
+### Bug Fixes
+
+* resolve broken canonical state assignment and event registry tests ([0dbc74e](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/0dbc74ec8358533e6085a324f53baa9ac4f3dea8))
+
 ## [0.8.3](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.8.2...v0.8.3) (2026-04-27)
 
 
