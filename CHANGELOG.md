@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.8.3](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.8.2...v0.8.3) (2026-04-27)
+
+
+### Bug Fixes
+
+* correct release please tag scoping and config ([d95aa39](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/d95aa399bc2f59a76d37d8504a6b45c777c7a035))
+* enhance snapshot management and external reconciliation in fullscreen editor ([db1570d](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/db1570d8c00be19365961201840ddc85ce550891))
+* update GitHub token usage in release workflow ([edcbf35](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/edcbf3526df12ef9bd813cdfa234b009f8cb13b5))
+
+
+### Miscellaneous Chores
+
+* add processwire development contract and debugging agents ([b8c19c8](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/b8c19c8f42eb5d3bc37e27578c5ffa278719b11e))
+* automate release management with google release please ([e5a981d](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/e5a981d437ae093d87a36050856f35bbeaaa7605))
+* update release configuration and version to 0.8.2 ([1150157](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/1150157328817fb5684823df59b65e9562e39cfa))
+
 ## v0.8.2
 
 - Tightens fullscreen breadcrumb navigation so scope changes stay tied to the right session and target when moving up and down the content tree.
