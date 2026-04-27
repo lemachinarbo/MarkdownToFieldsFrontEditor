@@ -1,0 +1,14 @@
+{
+  "target-branch": "main",
+  "packages": {
+    ".": {
+      "release-type": "node",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "MarkdownToFieldsFrontEditor.module.php"
+        }
+      ]
+    }
+  }
+}
