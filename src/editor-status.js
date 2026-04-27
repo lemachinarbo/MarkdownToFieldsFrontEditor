@@ -9,6 +9,7 @@ function createManager() {
   let dirtyFields = new Set();
   let lastExplicit = null;
   let hideTimer = null;
+  let processing = false;
 
   function clearStatusTimer() {
     if (hideTimer) {
@@ -65,6 +66,8 @@ function createManager() {
 
   function updateFromState() {
     if (!statusEl) return;
+    // While a save is in progress, never revert to "Draft".
+    if (processing) return;
     if (dirtyFields.size > 0) {
       showDraft();
       return;
@@ -104,6 +107,7 @@ function createManager() {
   }
 
   function setSaved() {
+    processing = false;
     hideToast();
     dirtyFields.clear();
     lastExplicit = { message: "Saved", className: "is-saved" };
@@ -111,6 +115,7 @@ function createManager() {
   }
 
   function setNoChanges() {
+    processing = false;
     hideToast();
     dirtyFields.clear();
     lastExplicit = { message: "No changes", className: "is-unchanged" };
@@ -118,6 +123,7 @@ function createManager() {
   }
 
   function setProcessing(message = "Saving...") {
+    processing = true;
     hideToast();
     lastExplicit = {
       message: String(message || "Saving..."),
@@ -130,6 +136,7 @@ function createManager() {
   }
 
   function setError(message = "Save failed", options = {}) {
+    processing = false;
     lastExplicit = {
       message: "Error",
       className: "is-error",
@@ -142,6 +149,7 @@ function createManager() {
   }
 
   function reset() {
+    processing = false;
     clearStatusTimer();
     hideToast();
     dirtyFields.clear();
