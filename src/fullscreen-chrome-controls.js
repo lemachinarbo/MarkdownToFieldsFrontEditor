@@ -258,14 +258,6 @@ export function openSplit({
 
   splitPane.appendChild(header);
   splitPane.appendChild(body);
-  splitRegion.appendChild(splitHandle);
-  splitRegion.appendChild(splitPane);
-  editorShell.appendChild(splitRegion);
-
-  setSplitRegion(splitRegion);
-  setSplitHandle(splitHandle);
-  setSplitPane(splitPane);
-  setupSplitResizeHandle();
 
   const nextSecondaryEditor = createEditorInstance(
     body,
@@ -672,6 +664,7 @@ export function setupKeyboardShortcuts({
   setFullscreenSessionEventScope,
   fullscreenEventRegistry,
   getActiveEditor,
+  isEditingShortcutEnabled,
   getCurrentLanguage,
   saveAllEditors,
 }) {
@@ -682,6 +675,12 @@ export function setupKeyboardShortcuts({
   }
 
   const onFullscreenKeydown = (event) => {
+    if (
+      typeof isEditingShortcutEnabled === "function" &&
+      !isEditingShortcutEnabled()
+    ) {
+      return;
+    }
     const activeEditor = getActiveEditor();
     if (!activeEditor) return;
 

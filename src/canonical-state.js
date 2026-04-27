@@ -326,7 +326,7 @@ export function resolveMarkdownForScopeFromCanonical({
 
   const markers = parseMarkdownMarkersWithRanges(text);
   if (!markers.length) {
-    throw new Error("[mfe] canonical: no markers found in canonical markdown");
+    return "";
   }
 
   let currentSection = "";
@@ -440,9 +440,7 @@ export function resolveMarkdownForScopeFromCanonical({
     }
   }
 
-  throw new Error(
-    `[mfe] canonical: scope segment not found for ${wantedScope}:${wantedSection}:${wantedSubsection}:${wantedName}`,
-  );
+  return "";
 }
 
 export function assertCanonicalMarkerTopology(markdown) {
@@ -520,11 +518,37 @@ export function computeCanonicalMarkdownStateFromInputs({
     });
 
   const winnerByTargetKey = new Map();
+  let needsRebuild = false;
+  selectedOverlays.forEach((overlay) => {
+    if (!baseGraph.nodesByKey.has(overlay.key)) {
+      const meta = parseScopeKey(overlay.key);
+      let toAppend = "";
+      if (meta.section && !baseGraph.nodesByKey.has(`section:${meta.section}`)) {
+        toAppend += `\n\n<!-- section:${meta.section} -->\n`;
+        baseGraph.nodesByKey.set(`section:${meta.section}`, true);
+      }
+      if (meta.subsection && !baseGraph.nodesByKey.has(`subsection:${meta.section}:${meta.subsection}`)) {
+        toAppend += `\n<!-- subsection:${meta.subsection} -->\n`;
+        baseGraph.nodesByKey.set(`subsection:${meta.section}:${meta.subsection}`, true);
+      }
+      if (meta.kind === "field" && !baseGraph.nodesByKey.has(overlay.key)) {
+        toAppend += `\n<!-- ${meta.name} -->\n`;
+        baseGraph.nodesByKey.set(overlay.key, true);
+      }
+      documentBaseMarkdown += toAppend;
+      needsRebuild = true;
+    }
+  });
+
+  if (needsRebuild) {
+    baseGraph = buildCanonicalIdentityGraph(documentBaseMarkdown);
+  }
+
   const replacements = selectedOverlays.map((overlay) => {
     const baseNode = baseGraph.nodesByKey.get(overlay.key);
     if (!baseNode) {
       throw new Error(
-        `[mfe] canonical: overlay key \"${overlay.key}\" not found in document graph`,
+        `[mfe] canonical: overlay key "${overlay.key}" not found in document graph`,
       );
     }
     const existing = winnerByTargetKey.get(baseNode.key);

@@ -298,6 +298,7 @@ let snapshotRefreshBtnEl = null;
 let snapshotCompareSelectEl = null;
 let snapshotHistoryOpen = false;
 let snapshotHistoryLoading = false;
+let snapshotExternalReconcileInFlight = false;
 let snapshotHistoryItems = [];
 let snapshotSelectedId = "";
 let snapshotCompareMode = "current";
@@ -1302,6 +1303,17 @@ function buildSnapshotUnavailableMessage() {
 }
 
 async function getCurrentPersistedSnapshotHash() {
+  if (
+    activeDocumentState &&
+    typeof activeDocumentState.getPersistedMarkdown === "function"
+  ) {
+    const persistedBody = String(activeDocumentState.getPersistedMarkdown() || "");
+    const persistedMarkdown =
+      typeof activeDocumentState.recomposeMarkdownForSave === "function"
+        ? String(activeDocumentState.recomposeMarkdownForSave(persistedBody) || "")
+        : persistedBody;
+    return computeSha256Hex(persistedMarkdown);
+  }
   return computeSha256Hex(getDocumentConfigMarkdownRaw());
 }
 
@@ -1327,18 +1339,38 @@ function buildSnapshotVersionMap() {
   return versionMap;
 }
 
+function resolveSnapshotDisplayTarget(item) {
+  let current = item && typeof item === "object" ? item : null;
+  const visited = new Set();
+  while (current && String(current.eventType || "") === "restore") {
+    const restoreTargetId = String(current.restoresSnapshotId || "");
+    if (!restoreTargetId || visited.has(restoreTargetId)) {
+      break;
+    }
+    visited.add(restoreTargetId);
+    const next = snapshotHistoryItems.find(
+      (entry) => String(entry?.snapshotId || "") === restoreTargetId,
+    );
+    if (!next) break;
+    current = next;
+  }
+  return current || item;
+}
+
 function getSnapshotDisplayTitle(item, versionMap) {
   if (!item || typeof item !== "object") return "Snapshot";
   const currentVersion = padSnapshotVersion(
     versionMap.get(String(item.snapshotId || "")) || 1,
   );
   if (item.eventType === "restore") {
-    const restoredTarget = snapshotHistoryItems.find(
-      (entry) =>
-        String(entry?.snapshotId || "") === String(item.restoresSnapshotId || ""),
-    );
+    const restoredTarget = resolveSnapshotDisplayTarget(item);
     if (restoredTarget) {
-      const restoredTitle = getSnapshotDisplayTitle(restoredTarget, versionMap);
+      const restoredTitle =
+        restoredTarget === item
+          ? `Version ${padSnapshotVersion(
+              versionMap.get(String(item.restoresSnapshotId || "")) || currentVersion,
+            )}`
+          : getSnapshotDisplayTitle(restoredTarget, versionMap);
       return `Reverted to ${restoredTitle}`;
     }
     const restoredVersion = padSnapshotVersion(
@@ -1404,18 +1436,20 @@ function renderSnapshotList() {
     top.className = "mfe-snapshot-row-top";
     top.appendChild(title);
 
-    const deleteBtn = document.createElement("button");
-    deleteBtn.type = "button";
-    deleteBtn.className = "mfe-snapshot-row-delete";
-    deleteBtn.setAttribute("aria-label", "Delete snapshot");
-    deleteBtn.innerHTML =
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 3.75A2.25 2.25 0 0 0 6.75 6v.75H4.5a.75.75 0 0 0 0 1.5h.568l.813 10.557A2.25 2.25 0 0 0 8.124 21h7.752a2.25 2.25 0 0 0 2.243-2.193l.813-10.557h.568a.75.75 0 0 0 0-1.5h-2.25V6A2.25 2.25 0 0 0 15 3.75H9Zm6.75 3V6A.75.75 0 0 0 15 5.25H9A.75.75 0 0 0 8.25 6v.75h7.5ZM9.75 10.5a.75.75 0 0 1 .75.75v5.25a.75.75 0 0 1-1.5 0v-5.25a.75.75 0 0 1 .75-.75Zm4.5 0a.75.75 0 0 1 .75.75v5.25a.75.75 0 0 1-1.5 0v-5.25a.75.75 0 0 1 .75-.75Z"/></svg>';
-    deleteBtn.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      void deleteSnapshotFromFullscreen(item);
-    });
-    top.appendChild(deleteBtn);
+    if (String(item?.eventType || "") === "manual") {
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "mfe-snapshot-row-delete";
+      deleteBtn.setAttribute("aria-label", "Delete snapshot");
+      deleteBtn.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 3.75A2.25 2.25 0 0 0 6.75 6v.75H4.5a.75.75 0 0 0 0 1.5h.568l.813 10.557A2.25 2.25 0 0 0 8.124 21h7.752a2.25 2.25 0 0 0 2.243-2.193l.813-10.557h.568a.75.75 0 0 0 0-1.5h-2.25V6A2.25 2.25 0 0 0 15 3.75H9Zm6.75 3V6A.75.75 0 0 0 15 5.25H9A.75.75 0 0 0 8.25 6v.75h7.5ZM9.75 10.5a.75.75 0 0 1 .75.75v5.25a.75.75 0 0 1-1.5 0v-5.25a.75.75 0 0 1 .75-.75Zm4.5 0a.75.75 0 0 1 .75.75v5.25a.75.75 0 0 1-1.5 0v-5.25a.75.75 0 0 1 .75-.75Z"/></svg>';
+      deleteBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void deleteSnapshotFromFullscreen(item);
+      });
+      top.appendChild(deleteBtn);
+    }
 
     row.appendChild(top);
     row.appendChild(meta);
@@ -1588,8 +1622,134 @@ function updateSnapshotPanelState() {
     snapshotCompareSelectEl.disabled = snapshotHistoryLoading;
     snapshotCompareSelectEl.value = snapshotCompareMode;
   }
+  if (snapshotExternalNoticeEl) {
+    const externalActionBtn = snapshotExternalNoticeEl.querySelector(
+      ".mfe-snapshot-external-action",
+    );
+    if (externalActionBtn) {
+      externalActionBtn.disabled = snapshotHistoryLoading;
+    }
+  }
   if (typeof refreshToolbarState === "function") {
     refreshToolbarState();
+  }
+}
+
+function shouldCreateExternalSnapshotOnReconcile({
+  payload,
+  previousPageId = "",
+  previousOriginFieldKey = "",
+  previousFieldId = "",
+}) {
+  if (!payload || payload.skipExternalSnapshot === true) {
+    return false;
+  }
+  if (!payload.canonicalHydrated) {
+    return false;
+  }
+  const incomingPageId = String(payload.pageId || "");
+  const incomingOriginFieldKey = String(
+    payload.originFieldKey ||
+      payload.originKey ||
+      payload.fieldId ||
+      buildPayloadFieldId(payload),
+  );
+  const previousOriginKey = String(previousOriginFieldKey || previousFieldId || "");
+  if (!incomingPageId || !incomingOriginFieldKey || !previousPageId || !previousOriginKey) {
+    return false;
+  }
+  return incomingPageId === previousPageId && incomingOriginFieldKey === previousOriginKey;
+}
+
+function createExternalSnapshotOnReconcile() {
+  const pageId = getSnapshotPageId();
+  const lang = getSnapshotLanguageCode();
+  if (!pageId || !lang) return;
+  Promise.resolve(
+    createSnapshotRequest({
+      pageId,
+      lang,
+      eventType: "external",
+      snapshotState: "persisted",
+    }),
+  )
+    .then((result) => {
+      if (!snapshotHistoryOpen || !result?.created) {
+        return;
+      }
+      return refreshSnapshotHistory({ preserveSelection: true });
+    })
+    .catch((error) => {
+      showWindowToast(
+        String(error?.message || "Failed to create external snapshot"),
+        "alert",
+        { persistent: true },
+      );
+    });
+}
+
+async function reconcileExternalChangeFromFullscreen(options = {}) {
+  if (snapshotExternalReconcileInFlight) return;
+  const pageId = getSnapshotPageId();
+  const lang = getSnapshotLanguageCode();
+  if (!pageId || !lang || !activeTarget) return;
+  const {
+    requireConfirm = hasPendingUnsavedChanges(),
+    showSuccessToast = true,
+  } = options && typeof options === "object" ? options : {};
+  if (requireConfirm && hasPendingUnsavedChanges()) {
+    const confirmed = window.confirm(
+      "Reload the external version and discard current unsaved changes?",
+    );
+    if (!confirmed) return;
+  } else if (requireConfirm) {
+    const confirmed = window.confirm("Reload the external version?");
+    if (!confirmed) return;
+  }
+
+  snapshotExternalReconcileInFlight = true;
+  snapshotHistoryLoading = true;
+  updateSnapshotPanelState();
+  try {
+    const persistedMarkdown = await fetchPersistedMarkdownReadback(pageId, lang);
+    if (!persistedMarkdown) {
+      throw new Error("Failed to load external markdown");
+    }
+    const persistedB64 = encodeMarkdownBase64(persistedMarkdown);
+    draftMarkdownByScopedKey.clear();
+    primaryDraftsByFieldId.clear();
+    documentDraftMarkdown = "";
+    writeDocumentMarkdownCache({
+      markdownB64: persistedB64,
+      source: "external-reconcile",
+    });
+    activeTarget.setAttribute("data-markdown-b64", persistedB64);
+    const payloadMeta = getPayloadFromElement(activeTarget);
+    if (!payloadMeta) {
+      throw new Error("Failed to resolve active document context");
+    }
+    replaceActiveEditor({
+      ...payloadMeta,
+      markdownContent: persistedMarkdown,
+      canonicalHydrated: true,
+    });
+    syncDirtyStatusForActiveField();
+    statusManager.clearAllDirty();
+    statusManager.setSaved();
+    if (showSuccessToast) {
+      showWindowToast("External version reloaded", "success");
+    }
+    await refreshSnapshotHistory({ preserveSelection: false });
+  } catch (error) {
+    showWindowToast(
+      String(error?.message || "Failed to reload external version"),
+      "alert",
+      { persistent: true },
+    );
+  } finally {
+    snapshotExternalReconcileInFlight = false;
+    snapshotHistoryLoading = false;
+    updateSnapshotPanelState();
   }
 }
 
@@ -1600,6 +1760,7 @@ async function refreshSnapshotExternalNotice() {
     const lang = getSnapshotLanguageCode();
     if (!pageId || !lang) {
       snapshotExternalNoticeEl.hidden = true;
+      snapshotExternalNoticeEl.innerHTML = "";
       return;
     }
     const knownHash = await getCurrentPersistedSnapshotHash();
@@ -1609,18 +1770,43 @@ async function refreshSnapshotExternalNotice() {
       knownHash,
     });
     const latestPersistedHash = String(
-      snapshotHistoryItems.find((item) => !item.isCorrupted)?.contentHash || "",
+      snapshotHistoryItems.find(
+        (item) =>
+          !item.isCorrupted && String(item?.snapshotState || "") === "persisted",
+      )?.contentHash || "",
     );
     if (!result.changed || (latestPersistedHash && latestPersistedHash === String(result.currentHash || ""))) {
       snapshotExternalNoticeEl.hidden = true;
-      snapshotExternalNoticeEl.textContent = "";
+      snapshotExternalNoticeEl.innerHTML = "";
+      return;
+    }
+    if (!hasPendingUnsavedChanges()) {
+      snapshotExternalNoticeEl.hidden = true;
+      snapshotExternalNoticeEl.innerHTML = "";
+      queueMicrotask(() => {
+        void reconcileExternalChangeFromFullscreen({
+          requireConfirm: false,
+          showSuccessToast: false,
+        });
+      });
       return;
     }
     snapshotExternalNoticeEl.hidden = false;
-    snapshotExternalNoticeEl.textContent =
-      "The markdown file changed outside the editor. Reload the page to reconcile.";
+    snapshotExternalNoticeEl.innerHTML = `
+      <span class="mfe-snapshot-external-message">External changes are available. Reload the external version to update the editor and history.</span>
+      <button type="button" class="mfe-snapshot-external-action">Reload external version</button>
+    `;
+    const actionBtn = snapshotExternalNoticeEl.querySelector(
+      ".mfe-snapshot-external-action",
+    );
+    if (actionBtn) {
+      actionBtn.addEventListener("click", () => {
+        void reconcileExternalChangeFromFullscreen();
+      });
+    }
   } catch (_error) {
     snapshotExternalNoticeEl.hidden = true;
+    snapshotExternalNoticeEl.innerHTML = "";
   }
 }
 
@@ -1700,7 +1886,7 @@ async function refreshSnapshotHistory({ preserveSelection = true } = {}) {
     }
     if (snapshotExternalNoticeEl) {
       snapshotExternalNoticeEl.hidden = true;
-      snapshotExternalNoticeEl.textContent = "";
+      snapshotExternalNoticeEl.innerHTML = "";
     }
     snapshotHistoryLoading = false;
     updateSnapshotPanelState();
@@ -1837,6 +2023,7 @@ function applyRestoredDocumentMarkdown(markdownB64) {
         ...payloadMeta,
         markdownContent: restoredMarkdown,
         canonicalHydrated: true,
+        skipExternalSnapshot: true,
       });
     }
   }
@@ -1932,25 +2119,27 @@ function createSnapshotPanel() {
   const panel = document.createElement("section");
   panel.className = "mfe-snapshot-panel";
   panel.innerHTML = `
-    <div class="mfe-snapshot-panel-header">
-      <div>
-        <h3>Snapshots</h3>
-        <p>Current language history, diff, and restore</p>
+    <div class="mfe-snapshot-panel-top">
+      <div class="mfe-snapshot-panel-header">
+        <div>
+          <h3>Snapshots</h3>
+          <p>Browse saved versions for this language. Select one to review changes, then use Restore selected to bring it back.</p>
+        </div>
       </div>
-    </div>
-    <div class="mfe-snapshot-panel-actions">
-      <button type="button" class="mfe-snapshot-action" data-action="create">Create snapshot</button>
-      <button type="button" class="mfe-snapshot-action" data-action="refresh">Refresh</button>
       <select class="mfe-snapshot-compare">
         <option value="current">Compare to current</option>
         <option value="previous">Compare to previous</option>
       </select>
+      <div class="mfe-snapshot-panel-actions">
+        <button type="button" class="mfe-snapshot-action" data-action="create">Create snapshot</button>
+        <button type="button" class="mfe-snapshot-action" data-action="refresh">Refresh</button>
+        <button type="button" class="mfe-snapshot-restore">Restore selected</button>
+      </div>
+      <div class="mfe-snapshot-external" hidden></div>
     </div>
-    <div class="mfe-snapshot-external" hidden></div>
-    <div class="mfe-snapshot-list"></div>
-    <div class="mfe-snapshot-empty" hidden>No snapshots yet.</div>
-    <div class="mfe-snapshot-panel-footer">
-      <button type="button" class="mfe-snapshot-restore">Restore selected</button>
+    <div class="mfe-snapshot-panel-body">
+      <div class="mfe-snapshot-list"></div>
+      <div class="mfe-snapshot-empty" hidden>No snapshots yet.</div>
     </div>
   `;
 
@@ -6952,6 +7141,7 @@ function setupKeyboardShortcuts() {
     },
     fullscreenEventRegistry,
     getActiveEditor: () => activeEditor,
+    isEditingShortcutEnabled: () => fullscreenPaneMode !== "history",
     getCurrentLanguage: () =>
       String(activeDocumentState?.lang || getLanguagesConfig().current || ""),
     saveAllEditors,
@@ -8849,6 +9039,7 @@ function replaceActiveEditor(payload) {
   const previousSessionStateId = activeSessionStateId;
   const previousOriginFieldKey = activeOriginFieldKey;
   const previousPageId = activeTarget?.getAttribute("data-page") || "";
+  const previousFieldId = activeFieldId;
 
   const {
     effectiveMarkdown,
@@ -8937,6 +9128,17 @@ function replaceActiveEditor(payload) {
     breadcrumbClickHandler: handleBreadcrumbClick,
   });
   applyEditorViewMode(editorViewMode);
+
+  if (
+    shouldCreateExternalSnapshotOnReconcile({
+      payload,
+      previousPageId,
+      previousOriginFieldKey,
+      previousFieldId,
+    })
+  ) {
+    createExternalSnapshotOnReconcile();
+  }
 
   afterNextPaint(() => primaryEditor?.view?.focus());
   return true;
@@ -9270,3 +9472,9 @@ window.MarkdownFrontEditor = {
 };
 
 window.MarkdownFrontEditorRecompile = recompileMountGraph;
+initEditors();
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => {
+    initEditors();
+  }, { once: true });
+}

@@ -189,13 +189,9 @@ function findFieldMarkerIndex(markers, section, subsection, name) {
 }
 
 export function resolveCanonicalScopeSlice(canonicalMarkdown, scopeMeta = {}) {
-  const canonicalDoc = normalizeCanonicalText(canonicalMarkdown);
+  let canonicalDoc = normalizeCanonicalText(canonicalMarkdown);
   const scopeKind = normalizeScopeKind(scopeMeta.scopeKind || "field");
-  const markers = parseMarkersWithOffsets(canonicalDoc);
-
-  if (scopeKind !== "document" && markers.length === 0) {
-    throw new Error("[mfe] canonical-scope-session: no markers in canonical doc");
-  }
+  let markers = parseMarkersWithOffsets(canonicalDoc);
 
   let sliceStartCu = 0;
   let sliceEndCu = canonicalDoc.length;
@@ -216,15 +212,21 @@ export function resolveCanonicalScopeSlice(canonicalMarkdown, scopeMeta = {}) {
         (marker) => String(marker?.name || "") === targetSection,
       );
       if (sectionIndex < 0) {
-        throw new Error(
-          `[mfe] canonical-scope-session: section marker not found (${targetSection})`,
+        canonicalDoc += `\n\n<!-- section:${targetSection} -->\n`;
+        markers = parseMarkersWithOffsets(canonicalDoc);
+        const sectionMarkers = parseSectionMarkersWithOffsets(canonicalDoc);
+        const newSectionIndex = sectionMarkers.findIndex(
+          (marker) => String(marker?.name || "") === targetSection,
         );
+        sliceStartCu = Number(sectionMarkers[newSectionIndex].lineStart || 0);
+        sliceEndCu = canonicalDoc.length;
+      } else {
+        sliceStartCu = Number(sectionMarkers[sectionIndex].lineStart || 0);
+        sliceEndCu =
+          sectionIndex + 1 < sectionMarkers.length
+            ? Number(sectionMarkers[sectionIndex + 1].lineStart || canonicalDoc.length)
+            : canonicalDoc.length;
       }
-      sliceStartCu = Number(sectionMarkers[sectionIndex].lineStart || 0);
-      sliceEndCu =
-        sectionIndex + 1 < sectionMarkers.length
-          ? Number(sectionMarkers[sectionIndex + 1].lineStart || canonicalDoc.length)
-          : canonicalDoc.length;
     } else {
       for (let index = 0; index < markers.length; index += 1) {
         const marker = markers[index];
@@ -243,9 +245,33 @@ export function resolveCanonicalScopeSlice(canonicalMarkdown, scopeMeta = {}) {
         targetIndex = findFieldMarkerIndex(markers, section, subsection, scopeName);
       }
       if (targetIndex < 0) {
-        throw new Error(
-          `[mfe] canonical-scope-session: scope marker not found (${scopeKind}:${section}:${subsection}:${scopeName})`,
-        );
+        let toAppend = "";
+        const sectionExists = markers.some(m => m.kind === "section" && m.name === section);
+        if (section && !sectionExists) toAppend += `\n\n<!-- section:${section} -->\n`;
+        if (scopeKind === "subsection") {
+           toAppend += `\n<!-- subsection:${targetSubsection} -->\n`;
+        } else if (scopeKind === "field") {
+           if (subsection) {
+              const subExists = markers.some(m => m.kind === "subsection" && m.section === section && m.name === subsection);
+              if (!subExists) toAppend += `\n<!-- subsection:${subsection} -->\n`;
+           }
+           toAppend += `\n<!-- ${scopeName} -->\n`;
+        }
+        canonicalDoc += toAppend;
+        markers = parseMarkersWithOffsets(canonicalDoc);
+
+        if (scopeKind === "subsection") {
+          for (let index = 0; index < markers.length; index += 1) {
+            const marker = markers[index];
+            if (marker.kind === "subsection" && marker.section === section && marker.name === targetSubsection) {
+              targetIndex = index;
+              break;
+            }
+          }
+        }
+        if (scopeKind === "field") {
+          targetIndex = findFieldMarkerIndex(markers, section, subsection, scopeName);
+        }
       }
 
       const targetMarker = markers[targetIndex];

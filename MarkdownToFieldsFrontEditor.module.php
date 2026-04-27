@@ -266,6 +266,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $this->addHook('Page::mdEdit', $this, 'hookPageMdEdit');
         $this->addHook('Page::renderEditable', $this, 'hookPageRenderEditable');
         $this->addHookBefore('ProcessWire::ready', $this, 'handleSaveRequest');
+        $this->addHookAfter('Modules::refresh', $this, 'syncExternalSnapshotState');
     }
 
     /**
@@ -1959,14 +1960,15 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 $changedKeys = array_values(array_filter($allKeys, fn($k) => is_string($k) && $k !== ''));
             } else {
 
-            if ($mdScope === 'subsection' && trim($blockMarkdown) !== '') {
+            if (trim($blockMarkdown) !== '') {
                 if ($oldFieldMarkdown === null || trim((string)$oldFieldMarkdown) === '') {
                     $insertedMarkdown = $this->insertIntoEmptyScopedMarkdownBlock(
                         $fullMarkdown,
                         $mdScope,
                         $mdName,
                         (string)($mdSection ?? ''),
-                        $blockMarkdown
+                        $blockMarkdown,
+                        (string)($mdSubsection ?? '')
                     );
                     if ($insertedMarkdown !== null) {
                         if ($insertedMarkdown !== $fullMarkdown) {
@@ -2583,6 +2585,23 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return null;
     }
 
+    protected function getLatestPersistedSnapshotEntry(array $context): ?array {
+        foreach ($this->readSnapshotEntries($context) as $entry) {
+            $summary = is_array($entry['summary'] ?? null) ? $entry['summary'] : [];
+            if (!empty($summary['isCorrupted'])) {
+                continue;
+            }
+            if ((string)($summary['snapshotState'] ?? '') !== 'persisted') {
+                continue;
+            }
+            if ((string)($summary['eventType'] ?? '') === 'pre_restore_backup') {
+                continue;
+            }
+            return $entry;
+        }
+        return null;
+    }
+
     protected function findSnapshotEntryById(array $context, string $snapshotId): ?array {
         foreach ($this->readSnapshotEntries($context) as $entry) {
             if ((string)($entry['summary']['snapshotId'] ?? '') === $snapshotId) {
@@ -2609,6 +2628,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
     protected function shouldSuppressSnapshotCreate(string $eventType, string $contentHash, ?array $latestValid): bool {
         if (in_array($eventType, self::SNAPSHOT_INTERNAL_EVENT_TYPES, true)) {
+            return false;
+        }
+        if ($eventType === 'manual') {
             return false;
         }
         if (!in_array($eventType, self::SNAPSHOT_ALLOWED_FRONTEND_EVENT_TYPES, true)) {
@@ -2669,8 +2691,12 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
 
         $latestValid = $this->getLatestValidSnapshotEntry($context);
+        $latestForSuppression = $latestValid;
+        if ($eventType === 'external' && $snapshotState === 'persisted') {
+            $latestForSuppression = $this->getLatestPersistedSnapshotEntry($context);
+        }
         $contentHash = $this->computeSnapshotContentHash($content);
-        if ($this->shouldSuppressSnapshotCreate($eventType, $contentHash, $latestValid)) {
+        if ($this->shouldSuppressSnapshotCreate($eventType, $contentHash, $latestForSuppression)) {
             return [
                 'created' => false,
                 'suppressed' => true,
@@ -2691,6 +2717,15 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         );
         $this->writeSnapshotBlob($context, $snapshotId, $content, (string)$metadata['content_hash']);
         $this->appendSnapshotIndexRecord($context, $metadata);
+        $this->wire()->log->save('markdown-front-edit', sprintf(
+            "SNAPSHOT_CREATED eventType='%s' snapshotState='%s' pageId=%d lang='%s' documentId='%s' snapshotId='%s'",
+            $eventType,
+            $snapshotState,
+            (int)$page->id,
+            $languageCode,
+            (string)$context['documentId'],
+            $snapshotId
+        ));
 
         return [
             'created' => true,
@@ -3006,6 +3041,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             $entry = $this->findSnapshotEntryById($context, $snapshotId);
             if (!$entry) {
                 throw new \ProcessWire\WireException('Snapshot not found', 404);
+            }
+            if ((string)($entry['summary']['eventType'] ?? '') !== 'manual') {
+                throw new \ProcessWire\WireException('Only manual snapshots can be deleted', 403);
             }
 
             $lines = is_file($indexPath) ? @file($indexPath, FILE_IGNORE_NEW_LINES) : [];
@@ -3959,82 +3997,42 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         string $scope,
         string $name,
         string $sectionName,
-        string $blockMarkdown
+        string $blockMarkdown,
+        string $subsectionName = ''
     ): ?string {
         $content = trim($blockMarkdown);
         if ($content === '') {
             return null;
         }
 
-        if ($scope === 'section') {
-            $sectionPattern = '/^[ \t]*<!--\s*section:' . preg_quote($name, '/') . '\s*-->[ \t]*\R?/mi';
-            if (!preg_match($sectionPattern, $document, $m, PREG_OFFSET_CAPTURE)) {
-                return null;
+        $doc = rtrim($document) . "\n";
+        
+        if ($sectionName !== '') {
+            $sectionPattern = '/^[ \t]*<!--\s*section:' . preg_quote($sectionName, '/') . '\s*-->/mi';
+            if (!preg_match($sectionPattern, $doc)) {
+                $doc .= "\n\n<!-- section:{$sectionName} -->\n";
             }
-            $sectionPos = (int)$m[0][1];
-            $sectionLen = strlen((string)$m[0][0]);
-            $start = $sectionPos + $sectionLen;
-
-            $nextSectionPos = null;
-            if (preg_match('/^[ \t]*<!--\s*section:[^>]*-->/mi', $document, $nextSection, PREG_OFFSET_CAPTURE, $start)) {
-                $nextSectionPos = (int)$nextSection[0][1];
-            }
-            $nextSubPos = null;
-            if (preg_match('/^[ \t]*<!--\s*sub:[^>]*-->/mi', $document, $nextSub, PREG_OFFSET_CAPTURE, $start)) {
-                $nextSubPos = (int)$nextSub[0][1];
-            }
-
-            $end = strlen($document);
-            if ($nextSectionPos !== null) $end = min($end, $nextSectionPos);
-            if ($nextSubPos !== null) $end = min($end, $nextSubPos);
-
-            $existing = substr($document, $start, max(0, $end - $start));
-            if (trim((string)$existing) !== '') {
-                return null;
-            }
-
-            $insertion = "\n" . $content . "\n\n";
-            return substr($document, 0, $start) . $insertion . substr($document, $start);
         }
-
-        if ($scope === 'subsection') {
-            if ($sectionName === '') return null;
-            $sectionPattern = '/^[ \t]*<!--\s*section:' . preg_quote($sectionName, '/') . '\s*-->[ \t]*\R?/mi';
-            if (!preg_match($sectionPattern, $document, $sectionMatch, PREG_OFFSET_CAPTURE)) {
-                return null;
+        
+        $actualSub = $subsectionName;
+        if ($scope === 'subsection' && $actualSub === '') $actualSub = $name;
+        
+        if ($actualSub !== '') {
+            $subPattern = '/^[ \t]*<!--\s*sub(?:section)?:' . preg_quote($actualSub, '/') . '\s*-->/mi';
+            if (!preg_match($subPattern, $doc)) {
+                $doc .= "\n<!-- subsection:{$actualSub} -->\n";
             }
-            $sectionStart = (int)$sectionMatch[0][1] + strlen((string)$sectionMatch[0][0]);
-            $sectionEnd = strlen($document);
-            if (preg_match('/^[ \t]*<!--\s*section:[^>]*-->/mi', $document, $nextSection, PREG_OFFSET_CAPTURE, $sectionStart)) {
-                $sectionEnd = (int)$nextSection[0][1];
-            }
-
-            $subPattern = '/^[ \t]*<!--\s*sub:' . preg_quote($name, '/') . '\s*-->[ \t]*\R?/mi';
-            if (!preg_match($subPattern, $document, $subMatch, PREG_OFFSET_CAPTURE, $sectionStart)) {
-                return null;
-            }
-            $subMarkerPos = (int)$subMatch[0][1];
-            if ($subMarkerPos >= $sectionEnd) return null;
-            $subStart = $subMarkerPos + strlen((string)$subMatch[0][0]);
-
-            $subEnd = $sectionEnd;
-            if (preg_match('/^[ \t]*<!--\s*sub:[^>]*-->/mi', $document, $nextSub, PREG_OFFSET_CAPTURE, $subStart)) {
-                $nextSubPos = (int)$nextSub[0][1];
-                if ($nextSubPos < $sectionEnd) {
-                    $subEnd = $nextSubPos;
-                }
-            }
-
-            $existing = substr($document, $subStart, max(0, $subEnd - $subStart));
-            if (trim((string)$existing) !== '') {
-                return null;
-            }
-
-            $insertion = "\n" . $content . "\n\n";
-            return substr($document, 0, $subStart) . $insertion . substr($document, $subStart);
         }
-
-        return null;
+        
+        if ($scope === 'field') {
+            $fieldPattern = '/^[ \t]*<!--\s*' . preg_quote($name, '/') . '\s*-->/mi';
+            if (!preg_match($fieldPattern, $doc)) {
+                $doc .= "\n<!-- {$name} -->\n";
+            }
+        }
+        
+        $doc .= "\n" . $content . "\n\n";
+        return $doc;
     }
 
     protected function mergeImageSrcOnlyChange(string $oldMarkdown, string $newMarkdown): ?string {
@@ -4695,6 +4693,87 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         if (!$enabled) return false;
         return in_array($template->name, $enabled, true);
+    }
+
+    public function syncExternalSnapshotState(\ProcessWire\HookEvent $event): void {
+        foreach ($this->getManagedMarkdownPagesForSnapshotSync() as $page) {
+            if (!$page instanceof \ProcessWire\Page || !(int)$page->id) {
+                continue;
+            }
+            foreach ($this->getManagedMarkdownLanguageCodes($page) as $languageCode) {
+                try {
+                    $this->syncExternalSnapshotForPageLanguageAfterModuleRefresh($page, $languageCode);
+                } catch (\Throwable $e) {
+                    $this->wire()->log->save('markdown-front-edit', sprintf(
+                        "SNAPSHOT_MODULE_REFRESH_ERROR pageId=%d lang='%s' message='%s'",
+                        (int)$page->id,
+                        $languageCode,
+                        str_replace(["\r", "\n"], ' ', $e->getMessage())
+                    ));
+                }
+            }
+        }
+    }
+
+    protected function getManagedMarkdownPagesForSnapshotSync(): iterable {
+        $moduleConfig = $this->wire()->modules->getConfig('MarkdownToFields');
+        $enabled = is_array($moduleConfig['templates'] ?? null) ? $moduleConfig['templates'] : [];
+        $enabled = array_values(array_filter(array_map('strval', $enabled)));
+        if (!$enabled) {
+            return [];
+        }
+
+        $selector = 'template=' . implode('|', $enabled) . ', include=all, check_access=0';
+        return $this->wire()->pages->findMany($selector);
+    }
+
+    protected function getManagedMarkdownLanguageCodes(\ProcessWire\Page $page): array {
+        $languages = $this->wire()->languages;
+        if (!$languages || (int)$languages->count() < 1) {
+            return [$this->resolveRequestLanguageCode($page, '')];
+        }
+
+        $codes = [];
+        foreach ($languages as $language) {
+            if (!$language instanceof \ProcessWire\Language || !(int)$language->id) {
+                continue;
+            }
+            $codes[] = $this->resolveLanguageStorageCode($language);
+        }
+
+        $codes = array_values(array_unique(array_filter($codes, static function ($code): bool {
+            return is_string($code) && $code !== '';
+        })));
+        return $codes ?: [$this->resolveRequestLanguageCode($page, '')];
+    }
+
+    protected function syncExternalSnapshotForPageLanguageAfterModuleRefresh(\ProcessWire\Page $page, string $languageCode): void {
+        if (!$this->isMarkdownTemplateEnabled($page) || !\ProcessWire\MarkdownConfig::supportsPage($page)) {
+            return;
+        }
+
+        $context = $this->resolveSnapshotDocumentContext($page, $languageCode);
+        if (!is_file((string)$context['resolvedPath'])) {
+            return;
+        }
+
+        $this->withSnapshotDocumentLock($context, function () use ($context, $page, $languageCode) {
+            $latestPersisted = $this->getLatestPersistedSnapshotEntry($context);
+            if (!$latestPersisted) {
+                return;
+            }
+
+            $currentContent = $this->loadRawMarkdownDocument($page, $languageCode);
+            $currentHash = $this->computeSnapshotContentHash($currentContent);
+            $latestHash = (string)($latestPersisted['summary']['contentHash'] ?? '');
+            if ($latestHash === '' || $latestHash === $currentHash) {
+                return;
+            }
+
+            $this->createSnapshotRecordUnlocked($context, $page, $languageCode, 'external', 'persisted', [
+                'content' => $currentContent,
+            ]);
+        });
     }
 
     protected function getAllFieldsHtml($content): array {
