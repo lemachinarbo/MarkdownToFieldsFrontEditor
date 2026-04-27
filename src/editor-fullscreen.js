@@ -4180,7 +4180,7 @@ function saveAllEditors() {
       Boolean(state?.isUnreplayable?.() && isStateDerivedDirty(state)),
   });
   const hadExplicitDirtyBeforeSave = saveCandidates.some((state) =>
-    Boolean(state?.isDirty?.()),
+    isStateDerivedDirty(state),
   );
 
   if (saveCandidates.length === 0) {
@@ -4479,14 +4479,51 @@ function saveAllEditors() {
         throw createSaveSafetyBlockedError();
       }
       let effectiveCanonicalMutation = null;
-      const structuralDocumentBefore = parseStructuralDocument(
-        splitBefore.body,
-      );
+      let bodyToParse = splitBefore.body;
+
+      if (saveScope === "field" || saveScope === "section" || saveScope === "subsection") {
+        let structuralDoc = parseStructuralDocument(bodyToParse);
+        let toAppend = "";
+        let hasSection = false;
+        let hasSubsection = false;
+        let hasField = false;
+
+        for (let index = 0; index < structuralDoc.markers.length; index += 1) {
+          const marker = structuralDoc.markers[index];
+          if (marker.kind === "section" && marker.name === saveScopeMeta.section) {
+            hasSection = true;
+          }
+          if (marker.kind === "subsection" && marker.section === saveScopeMeta.section && marker.name === saveScopeMeta.subsection) {
+            hasSubsection = true;
+          }
+          if (marker.kind === "field" && marker.section === saveScopeMeta.section && marker.subsection === saveScopeMeta.subsection && marker.name === saveScopeMeta.name) {
+            hasField = true;
+          }
+        }
+
+        if (saveScopeMeta.section && !hasSection) {
+          toAppend += `\n\n<!-- section:${saveScopeMeta.section} -->\n`;
+        }
+        if (saveScopeMeta.subsection && !hasSubsection) {
+          toAppend += `\n<!-- sub:${saveScopeMeta.subsection} -->\n`;
+        }
+        if (saveScope === "field" && !hasField && saveScopeMeta.name) {
+          toAppend += `\n<!-- ${saveScopeMeta.name} -->\n`;
+        }
+        if (toAppend) {
+          bodyToParse += toAppend;
+          state.acceptStructuralMutation(bodyToParse, {
+            reason: "saveAllEditors:auto-vivify",
+          });
+        }
+      }
+
+      const structuralDocumentBefore = parseStructuralDocument(bodyToParse);
       const runtimeProjectionResolution = resolveValidatedRuntimeProjectionForMutation(
         {
           state,
           scopeMeta: saveScopeMeta,
-          canonicalBody: splitBefore.body,
+          canonicalBody: bodyToParse,
           editor: langEditor,
           reason: "saveAllEditors",
         },
@@ -4502,7 +4539,7 @@ function saveAllEditors() {
           String(scopedMutation?.reason || "[mfe] mutation-plan failed"),
         );
       }
-      finalCanonicalBody = String(scopedMutation.canonicalBody || splitBefore.body);
+      finalCanonicalBody = String(scopedMutation.canonicalBody || bodyToParse);
       scopedMarkdownForSave = buildOutboundPayload({
         canonicalBody: finalCanonicalBody,
         scopeMeta: saveScopeMeta,
@@ -4545,7 +4582,7 @@ function saveAllEditors() {
         throw createSaveSafetyBlockedError();
       }
       let changedRanges = computeChangedRanges(
-        normalizeLineEndingsToLf(splitBefore.body),
+        normalizeLineEndingsToLf(bodyToParse),
         normalizeLineEndingsToLf(finalCanonicalBody),
       );
       const leakedRanges = changedRanges.filter(
@@ -4562,7 +4599,7 @@ function saveAllEditors() {
         trigger: "save-commit",
         dirtyBefore: state.isDirty(),
         dirtyAfter: state.isDirty(),
-        hashBefore: hashStateIdentity(splitBefore.body),
+        hashBefore: hashStateIdentity(bodyToParse),
         hashAfter: hashStateIdentity(finalCanonicalBody),
         scopeKind: saveScope,
         scopeName: applyScopeMeta.name,
@@ -6247,7 +6284,7 @@ function applyScopeSlice(state, scopeMeta, scopedMarkdown, reason, trigger) {
     }
     return { ok: false, markdown: String(state.getDraft() || "") };
   }
-  const before = String(state.getDraft() || state.getPersistedMarkdown() || "");
+  let before = String(state.getDraft() || state.getPersistedMarkdown() || "");
   scopedMarkdown = String(scopedMarkdown || "");
   let nextDraft = before;
   let mutationResult = null;
@@ -6280,7 +6317,42 @@ function applyScopeSlice(state, scopeMeta, scopedMarkdown, reason, trigger) {
     }
     return { ok: false, markdown: before };
   }
-  const structuralDoc = parseStructuralDocument(before);
+
+  let structuralDoc = parseStructuralDocument(before);
+  if (incomingScopeKind === "field" || incomingScopeKind === "section" || incomingScopeKind === "subsection") {
+    let toAppend = "";
+    let hasSection = false;
+    let hasSubsection = false;
+    let hasField = false;
+
+    for (let index = 0; index < structuralDoc.markers.length; index += 1) {
+      const marker = structuralDoc.markers[index];
+      if (marker.kind === "section" && marker.name === scopeMetaForMutation.section) {
+        hasSection = true;
+      }
+      if (marker.kind === "subsection" && marker.section === scopeMetaForMutation.section && marker.name === scopeMetaForMutation.subsection) {
+        hasSubsection = true;
+      }
+      if (marker.kind === "field" && marker.section === scopeMetaForMutation.section && marker.subsection === scopeMetaForMutation.subsection && marker.name === scopeMetaForMutation.name) {
+        hasField = true;
+      }
+    }
+
+    if (scopeMetaForMutation.section && !hasSection) {
+      toAppend += `\n\n<!-- section:${scopeMetaForMutation.section} -->\n`;
+    }
+    if (scopeMetaForMutation.subsection && !hasSubsection) {
+      toAppend += `\n<!-- sub:${scopeMetaForMutation.subsection} -->\n`;
+    }
+    if (incomingScopeKind === "field" && !hasField && scopeMetaForMutation.name) {
+      toAppend += `\n<!-- ${scopeMetaForMutation.name} -->\n`;
+    }
+    if (toAppend) {
+      before += toAppend;
+      structuralDoc = parseStructuralDocument(before);
+    }
+  }
+
   const stateLang = normalizeLangValue(String(state.lang || ""));
   const primaryLang = normalizeLangValue(getLanguagesConfig().current);
   const secondaryNormalizedLang = normalizeLangValue(secondaryLang);

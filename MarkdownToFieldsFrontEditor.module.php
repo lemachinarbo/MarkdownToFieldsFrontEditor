@@ -3692,7 +3692,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         $nextField = $this->findFirstMarkerPosInRange(
             $document,
-            '/<!--\s*(?!section:|sub:)[^>]+-->\s*/i',
+            '/<!--\s*(?!section:|sub(?:section)?:)[^>]+-->\s*/i',
             $start,
             $parentEnd
         );
@@ -3702,7 +3702,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         if ($parentType !== 'subsection') {
             $nextSub = $this->findFirstMarkerPosInRange(
                 $document,
-                '/<!--\s*sub:[^>]*-->\s*/i',
+                '/<!--\s*sub(?:section)?:[^>]*-->\s*/i',
                 $start,
                 $parentEnd
             );
@@ -3821,7 +3821,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $end = (int)$sectionBlock['end'];
         $firstSub = $this->findFirstMarkerPosInRange(
             $document,
-            '/<!--\s*sub:[^>]*-->\s*/i',
+            '/<!--\s*sub(?:section)?:[^>]*-->\s*/i',
             $start,
             $end
         );
@@ -3838,7 +3838,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         $sectionStart = (int)$sectionRange['start'];
         $sectionEnd = (int)$sectionRange['end'];
-        $subPattern = '/<!--\s*sub:' . preg_quote($subsectionName, '/') . '\s*-->\s*/i';
+        $subPattern = '/<!--\s*sub(?:section)?:' . preg_quote($subsectionName, '/') . '\s*-->\s*/i';
         $subMarkers = $this->findMarkersInRange($document, $subPattern, $sectionStart, $sectionEnd);
         $count = count($subMarkers);
         if ($count === 0) return ['status' => 'missing', 'reason' => 'subsection_marker_not_found'];
@@ -3848,7 +3848,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $end = $sectionEnd;
         $nextSub = $this->findFirstMarkerPosInRange(
             $document,
-            '/<!--\s*sub:[^>]*-->\s*/i',
+            '/<!--\s*sub(?:section)?:[^>]*-->\s*/i',
             $start,
             $sectionEnd
         );
@@ -4005,34 +4005,49 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             return null;
         }
 
-        $doc = rtrim($document) . "\n";
-        
-        if ($sectionName !== '') {
-            $sectionPattern = '/^[ \t]*<!--\s*section:' . preg_quote($sectionName, '/') . '\s*-->/mi';
-            if (!preg_match($sectionPattern, $doc)) {
-                $doc .= "\n\n<!-- section:{$sectionName} -->\n";
-            }
-        }
-        
         $actualSub = $subsectionName;
         if ($scope === 'subsection' && $actualSub === '') $actualSub = $name;
-        
-        if ($actualSub !== '') {
-            $subPattern = '/^[ \t]*<!--\s*sub(?:section)?:' . preg_quote($actualSub, '/') . '\s*-->/mi';
-            if (!preg_match($subPattern, $doc)) {
-                $doc .= "\n<!-- subsection:{$actualSub} -->\n";
+
+        // Try to find the exact insertion point based on existing structure
+        $insertPos = strlen($document);
+        $needsSectionMarker = ($sectionName !== '');
+        $needsSubMarker = ($actualSub !== '');
+
+        if ($sectionName !== '') {
+            $sectionRange = $this->resolveSectionBlockRange($document, $sectionName);
+            if (($sectionRange['status'] ?? '') === 'ok') {
+                $needsSectionMarker = false;
+                $insertPos = (int)$sectionRange['end'];
+                
+                if ($actualSub !== '') {
+                    $subRange = $this->resolveSubsectionContentRange($document, $sectionName, $actualSub);
+                    if (($subRange['status'] ?? '') === 'ok') {
+                        $needsSubMarker = false;
+                        $insertPos = (int)$subRange['end'];
+                    }
+                }
             }
         }
-        
+
+        // Split document at the insertion point
+        $before = rtrim(substr($document, 0, $insertPos));
+        $after = ltrim(substr($document, $insertPos));
+
+        $insertion = "\n";
+
+        if ($needsSectionMarker) {
+            $insertion .= "\n<!-- section:{$sectionName} -->\n";
+        }
+        if ($needsSubMarker) {
+            $insertion .= "\n<!-- sub:{$actualSub} -->\n";
+        }
         if ($scope === 'field') {
-            $fieldPattern = '/^[ \t]*<!--\s*' . preg_quote($name, '/') . '\s*-->/mi';
-            if (!preg_match($fieldPattern, $doc)) {
-                $doc .= "\n<!-- {$name} -->\n";
-            }
+            $insertion .= "\n<!-- {$name} -->\n";
         }
-        
-        $doc .= "\n" . $content . "\n\n";
-        return $doc;
+
+        $insertion .= "\n" . $content . "\n\n";
+
+        return $before . "\n" . $insertion . $after;
     }
 
     protected function mergeImageSrcOnlyChange(string $oldMarkdown, string $newMarkdown): ?string {

@@ -444,6 +444,18 @@ export class DocumentState {
     return `${this.frontmatterRaw}${body}`;
   }
 
+  acceptStructuralMutation(markdown, context = {}) {
+    const trigger = normalizeText(context.trigger || "system-structural-mutation");
+    return this._mutateDraft({
+      markdown,
+      type: "STATE_STRUCTURAL_MUTATION",
+      operation: "APPLY_SLICE",
+      reason: normalizeText(context.reason || "acceptStructuralMutation"),
+      trigger,
+      enforceDocumentShape: false,
+    });
+  }
+
   clearDraft(context = {}) {
     const trigger = normalizeText(context.trigger || "explicit-discard");
     if (!assertAllowedIntent(trigger, "draft", this)) {
