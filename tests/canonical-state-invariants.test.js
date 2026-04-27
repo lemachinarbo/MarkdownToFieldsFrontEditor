@@ -58,7 +58,7 @@ describe("canonical state invariants", () => {
     expect(state.markdown).not.toContain("# da");
   });
 
-  test("overlay referencing missing key throws", () => {
+  test("overlay referencing missing key auto-vivifies section", () => {
     const configDocument = [
       "<!-- section:hero -->",
       "",
@@ -66,13 +66,14 @@ describe("canonical state invariants", () => {
       "# foo",
     ].join("\n");
 
-    expect(() =>
-      computeCanonicalMarkdownStateFromInputs({
-        documentDraft: "",
-        configDocument,
-        scopedDraftEntries: [["section:missing", "<!-- title -->\n# bad"]],
-      }),
-    ).toThrow(/not found in document graph/);
+    const state = computeCanonicalMarkdownStateFromInputs({
+      documentDraft: "",
+      configDocument,
+      scopedDraftEntries: [["section:missing", "<!-- title -->\n# bad"]],
+    });
+    
+    expect(state.markdown).toContain("<!-- section:missing -->");
+    expect(state.markdown).toContain("# bad");
   });
 
   test("same-rank collision throws", () => {

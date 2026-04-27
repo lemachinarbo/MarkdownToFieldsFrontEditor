@@ -1443,7 +1443,7 @@ function renderSnapshotList() {
       deleteBtn.setAttribute("aria-label", "Delete snapshot");
       deleteBtn.innerHTML =
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9 3.75A2.25 2.25 0 0 0 6.75 6v.75H4.5a.75.75 0 0 0 0 1.5h.568l.813 10.557A2.25 2.25 0 0 0 8.124 21h7.752a2.25 2.25 0 0 0 2.243-2.193l.813-10.557h.568a.75.75 0 0 0 0-1.5h-2.25V6A2.25 2.25 0 0 0 15 3.75H9Zm6.75 3V6A.75.75 0 0 0 15 5.25H9A.75.75 0 0 0 8.25 6v.75h7.5ZM9.75 10.5a.75.75 0 0 1 .75.75v5.25a.75.75 0 0 1-1.5 0v-5.25a.75.75 0 0 1 .75-.75Zm4.5 0a.75.75 0 0 1 .75.75v5.25a.75.75 0 0 1-1.5 0v-5.25a.75.75 0 0 1 .75-.75Z"/></svg>';
-      deleteBtn.addEventListener("click", (event) => {
+      fullscreenEventRegistry.register(deleteBtn, "click", (event) => {
         event.preventDefault();
         event.stopPropagation();
         void deleteSnapshotFromFullscreen(item);
@@ -1460,7 +1460,7 @@ function renderSnapshotList() {
       row.appendChild(warning);
     }
 
-    row.addEventListener("click", () => {
+    fullscreenEventRegistry.register(row, "click", () => {
       snapshotSelectedId = item.snapshotId || "";
       renderSnapshotList();
       void refreshSnapshotDiff();
@@ -1800,7 +1800,7 @@ async function refreshSnapshotExternalNotice() {
       ".mfe-snapshot-external-action",
     );
     if (actionBtn) {
-      actionBtn.addEventListener("click", () => {
+      fullscreenEventRegistry.register(actionBtn, "click", () => {
         void reconcileExternalChangeFromFullscreen();
       });
     }
@@ -2153,16 +2153,16 @@ function createSnapshotPanel() {
   snapshotRestoreBtnEl = panel.querySelector(".mfe-snapshot-restore");
   snapshotCompareSelectEl = panel.querySelector(".mfe-snapshot-compare");
 
-  snapshotCreateBtnEl?.addEventListener("click", () => {
+  fullscreenEventRegistry.register(snapshotCreateBtnEl, "click", () => {
     void createManualSnapshotFromFullscreen();
   });
-  snapshotRefreshBtnEl?.addEventListener("click", () => {
+  fullscreenEventRegistry.register(snapshotRefreshBtnEl, "click", () => {
     void refreshSnapshotHistory({ preserveSelection: true });
   });
-  snapshotRestoreBtnEl?.addEventListener("click", () => {
+  fullscreenEventRegistry.register(snapshotRestoreBtnEl, "click", () => {
     void restoreSnapshotFromFullscreen();
   });
-  snapshotCompareSelectEl?.addEventListener("change", (event) => {
+  fullscreenEventRegistry.register(snapshotCompareSelectEl, "change", (event) => {
     snapshotCompareMode = String(event?.target?.value || "current");
     void refreshSnapshotDiff();
   });
@@ -9474,7 +9474,8 @@ window.MarkdownFrontEditor = {
 window.MarkdownFrontEditorRecompile = recompileMountGraph;
 initEditors();
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", () => {
+  const startupRegistry = createEventRegistry();
+  startupRegistry.register(document, "DOMContentLoaded", () => {
     initEditors();
   }, { once: true });
 }

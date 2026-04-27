@@ -488,11 +488,11 @@ export function computeCanonicalMarkdownStateFromInputs({
 }) {
   const hasDocumentDraft =
     typeof documentDraft === "string" && documentDraft !== "";
-  const documentBaseMarkdown = hasDocumentDraft
+  let documentBaseMarkdown = hasDocumentDraft
     ? documentDraft
     : configDocument;
 
-  const baseGraph = buildCanonicalIdentityGraph(documentBaseMarkdown);
+  let baseGraph = buildCanonicalIdentityGraph(documentBaseMarkdown);
   const rawOverlays = (
     Array.isArray(scopedDraftEntries) ? scopedDraftEntries : []
   )
