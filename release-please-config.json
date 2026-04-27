@@ -1,12 +1,18 @@
 {
   "target-branch": "main",
+  "include-component-in-tag": false,
   "packages": {
     ".": {
-      "release-type": "node",
+      "release-type": "php",
       "extra-files": [
         {
           "type": "generic",
           "path": "MarkdownToFieldsFrontEditor.module.php"
+        },
+        {
+          "type": "json",
+          "path": "package.json",
+          "jsonpath": "$.version"
         }
       ]
     }
