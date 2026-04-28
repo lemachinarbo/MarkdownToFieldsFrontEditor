@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.5](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.8.4...v0.8.5) (2026-04-28)
+
+
+### Bug Fixes
+
+* auto-vivify missing section/subsection/field markers ([c7f9013](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/c7f9013a326b39855951e0cef7b3f2793d38c9c7))
+* stabilize save status and thumb generation ([0552be7](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/0552be7e50d22fbda4dd098fec1ead63c29bbb1d))
+* stabilize save verification and status ([383729f](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/383729f4c1313f6ddbe6cc8c6c98aa6031a977f6))
+
 ## [0.8.4](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.8.3...v0.8.4) (2026-04-27)
 
 
