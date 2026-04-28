@@ -193,4 +193,5 @@ export const markDirty = globalManager.markDirty;
 export const clearDirty = globalManager.clearDirty;
 export const setSaved = globalManager.setSaved;
 export const setNoChanges = globalManager.setNoChanges;
+export const setProcessing = globalManager.setProcessing;
 export const setError = globalManager.setError;

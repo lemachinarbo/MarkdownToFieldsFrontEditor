@@ -193,6 +193,7 @@ import {
   assertStructuralMarkerGraphEqual,
   hasStructuralMarkerBoundaryViolations,
   parseStructuralDocument,
+  findTargetMarkerIndex,
 } from "./structural-document.js";
 import {
   applyScopedEdit,
@@ -4488,18 +4489,9 @@ function saveAllEditors() {
         let hasSubsection = false;
         let hasField = false;
 
-        for (let index = 0; index < structuralDoc.markers.length; index += 1) {
-          const marker = structuralDoc.markers[index];
-          if (marker.kind === "section" && marker.name === saveScopeMeta.section) {
-            hasSection = true;
-          }
-          if (marker.kind === "subsection" && marker.section === saveScopeMeta.section && marker.name === saveScopeMeta.subsection) {
-            hasSubsection = true;
-          }
-          if (marker.kind === "field" && marker.section === saveScopeMeta.section && marker.subsection === saveScopeMeta.subsection && marker.name === saveScopeMeta.name) {
-            hasField = true;
-          }
-        }
+        hasSection = saveScopeMeta.section ? findTargetMarkerIndex(structuralDoc.markers, { scopeKind: 'section', name: saveScopeMeta.section }) !== -1 : true;
+        hasSubsection = saveScopeMeta.subsection ? findTargetMarkerIndex(structuralDoc.markers, { scopeKind: 'subsection', section: saveScopeMeta.section, name: saveScopeMeta.subsection }) !== -1 : true;
+        hasField = saveScope === "field" ? findTargetMarkerIndex(structuralDoc.markers, saveScopeMeta) !== -1 : true;
 
         if (saveScopeMeta.section && !hasSection) {
           toAppend += `\n\n<!-- section:${saveScopeMeta.section} -->\n`;
@@ -5423,8 +5415,8 @@ function saveAllEditors() {
         }
         const verificationFailed =
           blockedReadbackMismatch ||
-          markerCountDriftSentCanonical ||
-          structuralGraphDrift;
+          (markerCountDriftSentCanonical && readbackClassification.className !== "exact") ||
+          (structuralGraphDrift && readbackClassification.className !== "exact");
         if (verificationFailed) {
           if (blockedReadbackMismatch) {
             if (unsupportedFeatures.includes("inline_footnote")) {

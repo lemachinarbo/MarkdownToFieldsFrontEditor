@@ -23,21 +23,21 @@ function resolveFieldIdentity(rawName, fallbackSection, fallbackSubsection) {
     return {
       section: parts[0],
       subsection: parts[1],
-      name: parts[2],
+      name: normalizeFieldMarkerName(parts[2]),
     };
   }
   if (parts.length === 2) {
     return {
       section: parts[0],
       subsection: "",
-      name: parts[1],
+      name: normalizeFieldMarkerName(parts[1]),
     };
   }
   if (parts.length === 1) {
     return {
       section: fallbackSection,
       subsection: fallbackSubsection,
-      name: parts[0],
+      name: normalizeFieldMarkerName(parts[0]),
     };
   }
   return {
@@ -91,7 +91,7 @@ function findFieldMarkerIndex(markers, section, subsection, name) {
   return -1;
 }
 
-function findTargetMarkerIndex(markers, scopeMeta = {}) {
+export function findTargetMarkerIndex(markers, scopeMeta = {}) {
   const scopeKind = normalizeScopeKind(scopeMeta.scopeKind || "field");
   const section = String(scopeMeta.section || "");
   const subsection = String(scopeMeta.subsection || "");
