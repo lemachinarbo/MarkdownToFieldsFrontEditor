@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.0](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.8.5...v0.9.0) (2026-05-04)
+
+
+### Features
+
+* add markdown toggle to fullscreen menubar and implement related tests ([d6f76c8](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/d6f76c81fd42ab5e84742cfda63c69324730ffbb))
+* add raw editor syntax colors ([d424fd5](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/d424fd517c3f32f1cdcdeeef5ef1de47ca441384))
+* add rich and raw view toggle buttons to the editor toolbar ([a889c19](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/a889c1939844b1dc9777b136fed86ae685c3be4d))
+
 ## [0.8.5](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.8.4...v0.8.5) (2026-04-28)
 
 
