@@ -329,7 +329,8 @@ export function openSecondaryPane({
   handleAriaLabel = "Resize pane",
   paneClassName = "mfe-editor-pane mfe-editor-pane--secondary",
 }) {
-  if (!editorShell) return { splitRegion: null, splitHandle: null, splitPane: null };
+  if (!editorShell)
+    return { splitRegion: null, splitHandle: null, splitPane: null };
 
   editorShell.classList.add("mfe-editor-shell--split");
   applySplitSecondarySize(splitSecondarySizePercent);
@@ -542,11 +543,9 @@ export function openImagePicker({
           },
         });
       }
-      if (
-        activeEditor === getSecondaryEditor() &&
-        getSecondaryLang()
-      ) {
-        const secondaryState = getDocumentStateForActiveField(getSecondaryLang());
+      if (activeEditor === getSecondaryEditor() && getSecondaryLang()) {
+        const secondaryState =
+          getDocumentStateForActiveField(getSecondaryLang());
         const applyScopeMeta = captureExplicitApplyScopeMeta(
           "openImagePicker:onSelect:secondary",
         );
@@ -581,6 +580,10 @@ export function createToolbar({
   getCurrentLanguage,
   markUserIntentToken,
   saveAllEditors,
+  toggleRichView,
+  isRichView,
+  toggleRawView,
+  isRawView,
   toggleHistory,
   isHistoryOpen,
   toggleSplit,
@@ -606,6 +609,10 @@ export function createToolbar({
     getCurrentLanguage,
     markUserIntentToken,
     onSave: saveAllEditors,
+    onToggleRichView: toggleRichView,
+    isRichView: () => Boolean(isRichView()),
+    onToggleRawView: toggleRawView,
+    isRawView: () => Boolean(isRawView()),
     onToggleHistory: toggleHistory,
     isHistoryActive: () => Boolean(isHistoryOpen()),
     onToggleSplit: toggleSplit,
@@ -613,7 +620,9 @@ export function createToolbar({
     onOpenDocumentView: openDocumentOutlineView,
     canOpenDocumentView: () => {
       const scopeKind =
-        getActiveSession()?.metadata?.scopeKind || getActiveFieldScope() || "field";
+        getActiveSession()?.metadata?.scopeKind ||
+        getActiveFieldScope() ||
+        "field";
       return scopeKind !== "document";
     },
     isDocumentView: () => isDocumentScopeActive() && isOutlineViewActive(),
@@ -623,12 +632,18 @@ export function createToolbar({
 
   const baseConfigButtons =
     window.MarkdownFrontEditorConfig?.toolbarButtons ||
-    "bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,code,codeblock,clear,|,split,document,outline";
+    "bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,code,codeblock,clear,|,rich,raw,split,document,outline";
   const normalizedConfigButtons = String(baseConfigButtons || "")
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean)
     .map((entry) => (entry === "markers" ? "outline" : entry));
+  if (!normalizedConfigButtons.includes("rich")) {
+    normalizedConfigButtons.push("rich");
+  }
+  if (!normalizedConfigButtons.includes("raw")) {
+    normalizedConfigButtons.push("raw");
+  }
   if (!normalizedConfigButtons.includes("document")) {
     normalizedConfigButtons.push("document");
   }
@@ -675,6 +690,12 @@ export function setupKeyboardShortcuts({
   }
 
   const onFullscreenKeydown = (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "s") {
+      event.preventDefault();
+      event.stopPropagation();
+      saveAllEditors();
+      return;
+    }
     if (
       typeof isEditingShortcutEnabled === "function" &&
       !isEditingShortcutEnabled()
@@ -683,13 +704,6 @@ export function setupKeyboardShortcuts({
     }
     const activeEditor = getActiveEditor();
     if (!activeEditor) return;
-
-    if ((event.ctrlKey || event.metaKey) && event.key === "s") {
-      event.preventDefault();
-      event.stopPropagation();
-      saveAllEditors();
-      return;
-    }
 
     if (event.ctrlKey || event.metaKey) {
       switch (event.key.toLowerCase()) {

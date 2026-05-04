@@ -175,6 +175,37 @@ body.mfe-split-resizing {
   min-height: 200px;
 }
 
+.mfe-state-fullscreen-open .mfe-raw-surface {
+  display: block;
+  min-height: 0;
+  padding: 0;
+}
+
+.mfe-state-fullscreen-open .mfe-raw-surface[hidden] {
+  display: none !important;
+}
+
+.mfe-state-fullscreen-open .mfe-raw-editor {
+  width: 100%;
+  min-height: 0;
+  resize: none;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #0f172a;
+  padding: 0;
+  margin: 0;
+  font-family: "IBM Plex Mono", "Fira Code", monospace;
+  font-size: 15px;
+  line-height: 1.6;
+  box-shadow: none;
+}
+
+.mfe-state-fullscreen-open .mfe-raw-editor:focus {
+  outline: none;
+}
+
 .mfe-state-fullscreen-open .mfe-backdrop {
   position: fixed;
   top: 0;
@@ -589,14 +620,26 @@ body.mfe-split-resizing {
   border-radius: 8px;
 }
 
-.mfe-state-fullscreen-open li.mfe-snapshot-compare-task-toggle--added > label input,
-.mfe-state-fullscreen-open li.mfe-snapshot-compare-task-toggle--added > label span {
+.mfe-state-fullscreen-open
+  li.mfe-snapshot-compare-task-toggle--added
+  > label
+  input,
+.mfe-state-fullscreen-open
+  li.mfe-snapshot-compare-task-toggle--added
+  > label
+  span {
   box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.18);
   border-radius: 4px;
 }
 
-.mfe-state-fullscreen-open li.mfe-snapshot-compare-task-toggle--removed > label input,
-.mfe-state-fullscreen-open li.mfe-snapshot-compare-task-toggle--removed > label span {
+.mfe-state-fullscreen-open
+  li.mfe-snapshot-compare-task-toggle--removed
+  > label
+  input,
+.mfe-state-fullscreen-open
+  li.mfe-snapshot-compare-task-toggle--removed
+  > label
+  span {
   box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
   border-radius: 4px;
 }
@@ -633,10 +676,6 @@ body.mfe-split-resizing {
   --mfe-menubar-top: var(--mfe-menubar-offset);
 }
 
-.mfe-state-fullscreen-open .mfe-window-breadcrumbs .mfe-window-inner {
-  /* padding-left: var(--mfe-doc-segment-gutter); */
-}
-
 .mfe-window--history-locked .mfe-window-breadcrumbs {
   position: relative;
   opacity: 0.5;
@@ -652,9 +691,7 @@ body.mfe-split-resizing {
   pointer-events: none;
 }
 
-.mfe-window--history-locked
-  .mfe-window-breadcrumbs
-  .mfe-breadcrumb-link {
+.mfe-window--history-locked .mfe-window-breadcrumbs .mfe-breadcrumb-link {
   pointer-events: none;
   color: #cbd5e1;
   cursor: default;

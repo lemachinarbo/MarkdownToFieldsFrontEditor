@@ -59,6 +59,100 @@ describe("document-state core", () => {
     expect(state.getDraft()).toBe("salut");
   });
 
+  test("frontmatter-only document edits are tracked as dirty", () => {
+    const documentPayload = {
+      pageId: "1",
+      fieldScope: "document",
+      fieldSection: "",
+      fieldSubsection: "",
+      fieldName: "document",
+      fieldId: "1:document::document",
+    };
+
+    const state = new DocumentState(documentPayload, "en", {
+      initialPersistedMarkdown: [
+        "---",
+        "title: original",
+        "---",
+        "",
+        "<!-- section:hero -->",
+        "<!-- title -->",
+        "Hello",
+      ].join("\n"),
+    });
+
+    expect(state.isDirty()).toBe(false);
+
+    state.setDocumentMarkdown(
+      [
+        "---",
+        "title: changed",
+        "---",
+        "",
+        "<!-- section:hero -->",
+        "<!-- title -->",
+        "Hello",
+      ].join("\n"),
+      {
+        reason: "test:setDocumentMarkdown",
+        trigger: "user-edit-transaction",
+      },
+    );
+
+    expect(state.isDirty()).toBe(true);
+    expect(state.getFrontmatterRaw()).toContain("title: changed");
+    expect(state.recomposeMarkdownForSave(state.getDraft())).toContain(
+      "title: changed",
+    );
+  });
+
+  test("markSaved resets frontmatter dirty baseline", () => {
+    const documentPayload = {
+      pageId: "1",
+      fieldScope: "document",
+      fieldSection: "",
+      fieldSubsection: "",
+      fieldName: "document",
+      fieldId: "1:document::document",
+    };
+
+    const nextMarkdown = [
+      "---",
+      "title: changed",
+      "---",
+      "",
+      "<!-- section:hero -->",
+      "<!-- title -->",
+      "Hello",
+    ].join("\n");
+
+    const state = new DocumentState(documentPayload, "en", {
+      initialPersistedMarkdown: [
+        "---",
+        "title: original",
+        "---",
+        "",
+        "<!-- section:hero -->",
+        "<!-- title -->",
+        "Hello",
+      ].join("\n"),
+    });
+
+    state.setDocumentMarkdown(nextMarkdown, {
+      reason: "test:setDocumentMarkdown",
+      trigger: "user-edit-transaction",
+    });
+    expect(state.isDirty()).toBe(true);
+
+    state.markSaved(nextMarkdown, {
+      reason: "test:markSavedDocumentMarkdown",
+      trigger: "save-commit",
+    });
+
+    expect(state.isDirty()).toBe(false);
+    expect(state.getPersistedFrontmatterRaw()).toContain("title: changed");
+  });
+
   test("scope-navigation mutation attempts fail fast", () => {
     const state = new DocumentState(payload, "es", {
       initialPersistedMarkdown: "hola",

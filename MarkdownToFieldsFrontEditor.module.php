@@ -31,7 +31,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
      */
     public static function getDefaultData() {
         return [
-            'toolbarButtons' => 'bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split,document,outline',
+            'toolbarButtons' => 'bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,rich,raw,split,document,outline',
             'allowedImageExtensions' => 'jpg,jpeg,png,gif,webp,svg',
             'defaultEmphasisStyle' => 'asterisk',
             'defaultUnorderedListMarker' => '*',
@@ -98,8 +98,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $field = self::createConfigInputfield('InputfieldText');
         $field->name = 'toolbarButtons';
         $field->label = 'Toolbar Buttons';
-        $field->description = 'Comma-separated list of toolbar buttons to show. Use "|" as a separator. Available: bold, italic, strike, code, codeblock, paragraph, h1-h6, ul, ol, blockquote, link, unlink, image, clear, split, document, outline. Save is always shown at the end.';
-        $field->notes = 'Defaults: bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,split,document,outline';
+        $field->description = 'Comma-separated list of toolbar buttons to show. Use "|" as a separator. Available: bold, italic, strike, code, codeblock, paragraph, h1-h6, ul, ol, blockquote, link, unlink, image, clear, rich, raw, split, document, outline. Save is always shown at the end.';
+        $field->notes = 'Defaults: bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,code,codeblock,clear,|,rich,raw,split,document,outline';
         $field->value = !empty($data['toolbarButtons']) ? $data['toolbarButtons'] : $defaults['toolbarButtons'];
         $field->columnWidth = 100;
 

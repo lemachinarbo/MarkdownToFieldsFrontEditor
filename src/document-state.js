@@ -202,6 +202,7 @@ export class DocumentState {
     const draftSplit = draftInput
       ? splitLeadingFrontmatter(draftInput)
       : persistedSplit;
+    this.persistedFrontmatterRaw = persistedSplit.frontmatter;
     this.frontmatterRaw = draftSplit.frontmatter || persistedSplit.frontmatter;
     this._persisted = persistedSplit.body;
     this._draft = draftSplit.body;
@@ -289,6 +290,10 @@ export class DocumentState {
       hashBefore,
       hashAfter,
     });
+  }
+
+  _getDraftIdentityMarkdown() {
+    return this.recomposeMarkdownForSave(this._draft);
   }
 
   _assertDocumentStateShape(nextBody, context = {}) {
@@ -390,6 +395,47 @@ export class DocumentState {
     return true;
   }
 
+  _mutateDocumentDraft({
+    markdown,
+    type,
+    reason,
+    trigger,
+    operation = "APPLY_SLICE",
+  }) {
+    failOnScopeNavigationMutation({ trigger });
+    const dirtyBefore = this.isDirty();
+    const hashBefore = hashStateIdentity(this._getDraftIdentityMarkdown());
+    const normalized = normalizeText(markdown);
+    const split = splitLeadingFrontmatter(normalized);
+    const nextFrontmatter = normalizeText(split.frontmatter);
+    const nextDraft = normalizeText(split.body);
+    if (
+      !this._assertDocumentStateShape(nextDraft, {
+        reason,
+        trigger,
+      })
+    ) {
+      return false;
+    }
+    if (this._draft === nextDraft && this.frontmatterRaw === nextFrontmatter) {
+      return false;
+    }
+    this.frontmatterRaw = nextFrontmatter;
+    this._draft = nextDraft;
+    this.flags.unreplayable = false;
+    this._recordMutationEvent({
+      type,
+      operation,
+      reason,
+      trigger,
+      dirtyBefore,
+      dirtyAfter: this.isDirty(),
+      hashBefore,
+      hashAfter: hashStateIdentity(this._getDraftIdentityMarkdown()),
+    });
+    return true;
+  }
+
   setDraft(markdown, context = {}) {
     const trigger = normalizeText(context.trigger || "user-edit-transaction");
     if (trigger === "save-commit") {
@@ -420,6 +466,28 @@ export class DocumentState {
     });
   }
 
+  setDocumentMarkdown(markdown, context = {}) {
+    const trigger = normalizeText(context.trigger || "user-edit-transaction");
+    if (trigger === "save-commit") {
+      if (isDebugMode()) {
+        throw new Error(
+          "[mfe] document-state: STATE_UPDATED forbidden during save-commit",
+        );
+      }
+      return false;
+    }
+    if (!assertAllowedIntent(trigger, "draft", this)) {
+      return false;
+    }
+    return this._mutateDocumentDraft({
+      markdown,
+      type: "STATE_UPDATED",
+      operation: "APPLY_SLICE",
+      reason: normalizeText(context.reason || "setDocumentMarkdown"),
+      trigger,
+    });
+  }
+
   getDraft() {
     return this._draft;
   }
@@ -430,6 +498,10 @@ export class DocumentState {
 
   getFrontmatterRaw() {
     return normalizeText(this.frontmatterRaw);
+  }
+
+  getPersistedFrontmatterRaw() {
+    return normalizeText(this.persistedFrontmatterRaw);
   }
 
   setFrontmatterRaw(frontmatterRaw = "") {
@@ -445,7 +517,9 @@ export class DocumentState {
   }
 
   acceptStructuralMutation(markdown, context = {}) {
-    const trigger = normalizeText(context.trigger || "system-structural-mutation");
+    const trigger = normalizeText(
+      context.trigger || "system-structural-mutation",
+    );
     return this._mutateDraft({
       markdown,
       type: "STATE_STRUCTURAL_MUTATION",
@@ -487,7 +561,7 @@ export class DocumentState {
     }
 
     const dirtyBefore = this.isDirty();
-    const hashBefore = hashStateIdentity(this._draft);
+    const hashBefore = hashStateIdentity(this._getDraftIdentityMarkdown());
     const hydratedSplit = splitLeadingFrontmatter(markdown);
     if (
       !this._assertDocumentStateShape(hydratedSplit.body, {
@@ -497,6 +571,7 @@ export class DocumentState {
     ) {
       return false;
     }
+    this.persistedFrontmatterRaw = hydratedSplit.frontmatter;
     this.frontmatterRaw = hydratedSplit.frontmatter;
     this._persisted = hydratedSplit.body;
     this._draft = hydratedSplit.body;
@@ -509,7 +584,7 @@ export class DocumentState {
       dirtyBefore,
       dirtyAfter: this.isDirty(),
       hashBefore,
-      hashAfter: hashStateIdentity(this._draft),
+      hashAfter: hashStateIdentity(this._getDraftIdentityMarkdown()),
     });
     return true;
   }
@@ -521,7 +596,7 @@ export class DocumentState {
     }
     failOnScopeNavigationMutation({ trigger });
     const dirtyBefore = this.isDirty();
-    const hashBefore = hashStateIdentity(this._draft);
+    const hashBefore = hashStateIdentity(this._getDraftIdentityMarkdown());
     const normalized = normalizeText(markdown);
     const split = hasLeadingFrontmatter(normalized)
       ? splitLeadingFrontmatter(normalized)
@@ -581,6 +656,7 @@ export class DocumentState {
     ) {
       return false;
     }
+    this.persistedFrontmatterRaw = split.frontmatter;
     this.frontmatterRaw = split.frontmatter;
     this._persisted = split.body;
     this._draft = split.body;
@@ -593,7 +669,7 @@ export class DocumentState {
       dirtyBefore,
       dirtyAfter: this.isDirty(),
       hashBefore,
-      hashAfter: hashStateIdentity(this._draft),
+      hashAfter: hashStateIdentity(this._getDraftIdentityMarkdown()),
     });
     return true;
   }
@@ -626,7 +702,11 @@ export class DocumentState {
   }
 
   isDirty() {
-    return this._draft !== this._persisted;
+    return (
+      this._draft !== this._persisted ||
+      normalizeText(this.frontmatterRaw) !==
+        normalizeText(this.persistedFrontmatterRaw)
+    );
   }
 
   markUnreplayable() {

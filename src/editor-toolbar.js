@@ -9,6 +9,10 @@ export function createToolbarButtons({
   getCurrentLanguage,
   markUserIntentToken,
   onSave,
+  onToggleRichView,
+  isRichView,
+  onToggleRawView,
+  isRawView,
   onToggleHistory,
   isHistoryActive,
   onToggleSplit,
@@ -247,6 +251,32 @@ export function createToolbarButtons({
       ),
       isActive: () => false,
       title: "Clear formatting",
+    },
+    {
+      key: "rich",
+      label: "Rich",
+      action: () => {
+        if (typeof onToggleRichView === "function") {
+          onToggleRichView();
+        }
+      },
+      isActive: () =>
+        typeof isRichView === "function" ? Boolean(isRichView()) : false,
+      title: "Switch to rich editor",
+      alt: "Edit rich content",
+    },
+    {
+      key: "raw",
+      label: "Raw",
+      action: () => {
+        if (typeof onToggleRawView === "function") {
+          onToggleRawView();
+        }
+      },
+      isActive: () =>
+        typeof isRawView === "function" ? Boolean(isRawView()) : false,
+      title: "Toggle raw markdown view",
+      alt: "Edit raw markdown",
     },
     {
       key: "history",
