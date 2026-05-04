@@ -188,8 +188,6 @@ body.mfe-split-resizing {
 .mfe-state-fullscreen-open .mfe-raw-editor {
   width: 100%;
   min-height: 0;
-  resize: none;
-  overflow: hidden;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -204,6 +202,66 @@ body.mfe-split-resizing {
 
 .mfe-state-fullscreen-open .mfe-raw-editor:focus {
   outline: none;
+}
+
+.mfe-state-fullscreen-open .mfe-raw-editor .cm-editor {
+  min-height: 0;
+  border: 0;
+  border-top: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.mfe-state-fullscreen-open .mfe-raw-editor .cm-editor.cm-focused {
+  outline: none;
+  border: 0;
+  border-top: 0;
+  box-shadow: none;
+}
+
+.mfe-state-fullscreen-open .mfe-raw-editor .cm-scroller {
+  overflow: visible;
+  font: inherit;
+}
+
+.mfe-state-fullscreen-open .mfe-raw-editor .cm-content {
+  padding: 0 0 4rem;
+}
+
+.mfe-state-fullscreen-open .mfe-raw-editor .cm-line {
+  padding: 0;
+}
+
+.mfe-state-fullscreen-open .mfe-raw-editor .cm-cursor,
+.mfe-state-fullscreen-open .mfe-raw-editor .cm-dropCursor {
+  border-left-color: #0f172a;
+}
+
+.mfe-state-fullscreen-open .mfe-raw-editor .cm-selectionBackground,
+.mfe-state-fullscreen-open
+  .mfe-raw-editor
+  .cm-editor.cm-focused
+  > .cm-scroller
+  > .cm-selectionLayer
+  .cm-selectionBackground {
+  background: rgba(59, 130, 246, 0.18);
+}
+
+.mfe-state-fullscreen-open .mfe-raw-editor .cm-mfe-frontmatter {
+  color: #41ad4e;
+}
+
+.mfe-state-fullscreen-open .mfe-raw-editor .cm-mfe-structural-marker {
+  color: #0aa3d6;
+}
+
+.mfe-state-fullscreen-open .mfe-raw-editor .cm-mfe-field-marker {
+  color: #e3946a;
+}
+
+.mfe-state-fullscreen-open .mfe-raw-editor .cm-mfe-link-syntax,
+.mfe-state-fullscreen-open .mfe-raw-editor .cm-mfe-image-syntax {
+  color: #41ad4e;
 }
 
 .mfe-state-fullscreen-open .mfe-backdrop {

@@ -271,11 +271,11 @@ Extra copies should use `data-mfe-source` so they mirror the same saved content.
 In the module config you can define which buttons to show in the toolbar when editing. You can choose from a variety of options, including:
 
 - **Toolbar Buttons**: comma list like:
-  `bold,italic,strike,paragraph,|,h1,h2,h3,|,ul,ol,blockquote,|,link,unlink,|,code,codeblock,clear,|,rich,raw,split,document,outline`
+  `bold,italic,strike,paragraph,|,h1,h2,h3,|,ul,ol,blockquote,|,link,unlink,|,code,codeblock,clear,|,markdown,split,document,outline`
 
 Notes:
 - `|` adds a separator.
-- `rich` and `raw` switch the fullscreen editor surface.
+- `markdown` toggles the fullscreen editor between rich and raw editing.
 - `document` opens full document view and enables outline mode.
 - `outline` toggles outline boundaries/labels for the current editor scope.
 - `save` is always shown at the end.

@@ -580,10 +580,8 @@ export function createToolbar({
   getCurrentLanguage,
   markUserIntentToken,
   saveAllEditors,
-  toggleRichView,
-  isRichView,
-  toggleRawView,
-  isRawView,
+  toggleMarkdownView,
+  isMarkdownView,
   toggleHistory,
   isHistoryOpen,
   toggleSplit,
@@ -609,10 +607,8 @@ export function createToolbar({
     getCurrentLanguage,
     markUserIntentToken,
     onSave: saveAllEditors,
-    onToggleRichView: toggleRichView,
-    isRichView: () => Boolean(isRichView()),
-    onToggleRawView: toggleRawView,
-    isRawView: () => Boolean(isRawView()),
+    onToggleMarkdownView: toggleMarkdownView,
+    isMarkdownView: () => Boolean(isMarkdownView()),
     onToggleHistory: toggleHistory,
     isHistoryActive: () => Boolean(isHistoryOpen()),
     onToggleSplit: toggleSplit,
@@ -632,17 +628,18 @@ export function createToolbar({
 
   const baseConfigButtons =
     window.MarkdownFrontEditorConfig?.toolbarButtons ||
-    "bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,code,codeblock,clear,|,rich,raw,split,document,outline";
+    "bold,italic,strike,paragraph,link,unlink,image,|,h1,h2,h3,h4,h5,h6,|,ul,ol,blockquote,|,code,codeblock,clear,|,markdown,split,document,outline";
   const normalizedConfigButtons = String(baseConfigButtons || "")
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean)
-    .map((entry) => (entry === "markers" ? "outline" : entry));
-  if (!normalizedConfigButtons.includes("rich")) {
-    normalizedConfigButtons.push("rich");
-  }
-  if (!normalizedConfigButtons.includes("raw")) {
-    normalizedConfigButtons.push("raw");
+    .map((entry) => {
+      if (entry === "markers") return "outline";
+      if (entry === "rich" || entry === "raw") return "markdown";
+      return entry;
+    });
+  if (!normalizedConfigButtons.includes("markdown")) {
+    normalizedConfigButtons.push("markdown");
   }
   if (!normalizedConfigButtons.includes("document")) {
     normalizedConfigButtons.push("document");

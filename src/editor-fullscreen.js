@@ -221,6 +221,7 @@ import {
   debugTable as debugTableHelper,
   emitRuntimeShapeLog as emitRuntimeShapeLogHelper,
 } from "./fullscreen-debug-trace.js";
+import { createRawMarkdownEditor } from "./raw-markdown-editor.js";
 import {
   handlePrimarySaveResponse,
   requestRenderedFragmentsDatastar,
@@ -299,7 +300,7 @@ let snapshotPreviewEl = null;
 let snapshotCompareEditor = null;
 let primaryPaneEl = null;
 let rawEditorSurfaceEl = null;
-let rawEditorTextareaEl = null;
+let rawEditorInstance = null;
 let saveStatusEl = null;
 let refreshToolbarState = null;
 let fullscreenPaneMode = "edit";
@@ -1234,44 +1235,32 @@ function syncPrimaryEditorEditability() {
   primaryEditor.setEditable(editable);
 }
 
-function autosizeRawTextarea() {
-  if (!rawEditorTextareaEl) return;
-  rawEditorTextareaEl.style.height = "auto";
-  const computed =
-    typeof window !== "undefined"
-      ? window.getComputedStyle(rawEditorTextareaEl)
-      : null;
-  const lineHeight = Number.parseFloat(computed?.lineHeight || "") || 24;
-  const minimumHeight = Math.ceil(lineHeight * 2);
-  rawEditorTextareaEl.style.height = `${Math.max(rawEditorTextareaEl.scrollHeight, minimumHeight)}px`;
+function getRawEditorValue() {
+  return String(rawEditorInstance?.getValue?.() || "");
 }
 
 function syncRawTextareaFromCanonical({ preserveSelection = false } = {}) {
-  if (!rawEditorTextareaEl) return;
+  if (!rawEditorInstance) return;
   const nextMarkdown = getCurrentRawMarkdownFromState();
   activeRawMarkdown = nextMarkdown;
   activeDisplayMarkdown = getPrimaryDisplayMarkdownFromState();
-  if (rawEditorTextareaEl.value === nextMarkdown) {
-    autosizeRawTextarea();
+  if (getRawEditorValue() === nextMarkdown) {
     return;
   }
-  const selectionStart = preserveSelection
-    ? rawEditorTextareaEl.selectionStart
+  const selection = preserveSelection
+    ? rawEditorInstance.getSelection?.() || null
     : null;
-  const selectionEnd = preserveSelection
-    ? rawEditorTextareaEl.selectionEnd
-    : null;
-  rawEditorTextareaEl.value = nextMarkdown;
+  rawEditorInstance.setValue(nextMarkdown);
   if (
     preserveSelection &&
-    Number.isInteger(selectionStart) &&
-    Number.isInteger(selectionEnd)
+    Number.isInteger(selection?.from) &&
+    Number.isInteger(selection?.to)
   ) {
-    const safeStart = Math.min(selectionStart, nextMarkdown.length);
-    const safeEnd = Math.min(selectionEnd, nextMarkdown.length);
-    rawEditorTextareaEl.setSelectionRange(safeStart, safeEnd);
+    rawEditorInstance.setSelection(
+      Math.min(selection.from, nextMarkdown.length),
+      Math.min(selection.to, nextMarkdown.length),
+    );
   }
-  autosizeRawTextarea();
 }
 
 function applyPrimaryMarkdownToCanonical(markdown, reason, trigger) {
@@ -1333,12 +1322,9 @@ function applyPrimaryMarkdownToCanonical(markdown, reason, trigger) {
   return true;
 }
 
-function handleRawTextareaInput() {
-  if (!rawEditorTextareaEl || pendingSavePromise) return;
-  autosizeRawTextarea();
-  const nextMarkdown = normalizeLineEndingsToLf(
-    rawEditorTextareaEl.value || "",
-  );
+function handleRawTextareaInput(nextValue = "") {
+  if (!rawEditorInstance || pendingSavePromise) return;
+  const nextMarkdown = normalizeLineEndingsToLf(nextValue || "");
   const currentMarkdown = getCurrentRawMarkdownFromState();
   if (nextMarkdown === currentMarkdown) return;
   traceStateMutation({
@@ -1391,8 +1377,7 @@ function activateRawSurface() {
   activeEditor = null;
   syncEditorSurfaceMode({ preserveRawSelection: true });
   afterNextPaint(() => {
-    autosizeRawTextarea();
-    rawEditorTextareaEl?.focus?.();
+    rawEditorInstance?.focus?.();
   });
 }
 
@@ -1414,20 +1399,22 @@ function createRawEditorSurface(primaryPane) {
   const surface = document.createElement("section");
   surface.className = "mfe-raw-surface";
   surface.hidden = true;
-  surface.innerHTML = `
-    <textarea class="mfe-raw-editor" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"></textarea>
-  `;
+  const editorHost = document.createElement("div");
+  editorHost.className = "mfe-raw-editor";
+  surface.appendChild(editorHost);
   rawEditorSurfaceEl = surface;
-  rawEditorTextareaEl = surface.querySelector(".mfe-raw-editor");
-  rawEditorTextareaEl?.addEventListener("focus", () => {
-    activeEditor = null;
-    if (typeof refreshToolbarState === "function") {
-      refreshToolbarState();
-    }
+  rawEditorInstance = createRawMarkdownEditor({
+    parent: editorHost,
+    value: getCurrentRawMarkdownFromState(),
+    onFocus: () => {
+      activeEditor = null;
+      if (typeof refreshToolbarState === "function") {
+        refreshToolbarState();
+      }
+    },
+    onChange: handleRawTextareaInput,
   });
-  rawEditorTextareaEl?.addEventListener("input", handleRawTextareaInput);
   primaryPane.appendChild(surface);
-  autosizeRawTextarea();
 }
 
 function syncDirtyStatusForActiveField() {
@@ -4557,7 +4544,7 @@ function saveAllEditors() {
       const langEditor = resolveEditorForLang(state.lang);
       const hasLiveEditorForState = Boolean(langEditor) && !rawSurfaceOwnsState;
       const rawEditorMarkdown = rawSurfaceOwnsState
-        ? String(rawEditorTextareaEl?.value || "")
+        ? getRawEditorValue()
         : langEditor
           ? String(readEditorMarkdown(langEditor) || "")
           : "";
@@ -7334,7 +7321,7 @@ function initEditor(markdownContent, fieldType = "tag") {
   setupKeyboardShortcuts();
   afterNextPaint(() => {
     if (isRawSurfaceActive()) {
-      rawEditorTextareaEl?.focus?.();
+      rawEditorInstance?.focus?.();
       return;
     }
     primaryEditor.view.focus();
@@ -7408,7 +7395,8 @@ function cleanupEditorOnly() {
   destroySnapshotCompareEditor();
   primaryPaneEl = null;
   rawEditorSurfaceEl = null;
-  rawEditorTextareaEl = null;
+  rawEditorInstance?.destroy?.();
+  rawEditorInstance = null;
   splitPane = null;
   splitRegion = null;
   splitHandle = null;
@@ -7547,14 +7535,10 @@ function createToolbar() {
       String(activeDocumentState?.lang || getLanguagesConfig().current || ""),
     markUserIntentToken,
     saveAllEditors,
-    toggleRichView: () => {
-      toggleEditorSurfaceMode("rich");
+    toggleMarkdownView: () => {
+      toggleEditorSurfaceMode();
     },
-    isRichView: () => isRichSurfaceActive(),
-    toggleRawView: () => {
-      toggleEditorSurfaceMode("raw");
-    },
-    isRawView: () => isRawSurfaceActive(),
+    isMarkdownView: () => isRawSurfaceActive(),
     toggleHistory: () => {
       toggleSnapshotHistoryPanel();
     },
