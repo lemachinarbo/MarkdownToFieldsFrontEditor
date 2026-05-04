@@ -296,9 +296,8 @@ describe("future breadcrumb valve", () => {
     expect(breadcrumbVirtualSource).toContain(
       "applyActiveOriginKeyToVirtualTarget(virtual);",
     );
-    expect(source).toContain(
-      "encodeMarkdownBase64(resolveMarkerBearingMarkdownForLensNode(node))",
-    );
+    expect(source).toContain("const markdownB64 = encodeMarkdownBase64(");
+    expect(source).toContain("resolveMarkerBearingMarkdownForLensNode(node)");
 
     expect(openForElementSource).not.toContain(
       "updateBreadcrumbAnchorFromPayload(payloadMetaWithOrigin);",
@@ -316,8 +315,10 @@ describe("future breadcrumb valve", () => {
     expect(applyActivePayloadStateSource).toContain(
       "originFieldKey: activeOriginFieldKey || activeFieldId",
     );
-    expect(openFromPayloadSource).toContain("applyActivePayloadState(payload,");
-    expect(replaceSource).toContain("applyActivePayloadState(payload,");
+    expect(openFromPayloadSource).toContain("applyActivePayloadState(");
+    expect(openFromPayloadSource).toContain("payload,");
+    expect(replaceSource).toContain("applyActivePayloadState(");
+    expect(replaceSource).toContain("payload,");
     expect(source).toContain(
       "function resolveScopedMarkdownFromPayloadSource(",
     );
