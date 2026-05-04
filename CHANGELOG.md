@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.9.0...v0.9.1) (2026-05-04)
+
+
+### Bug Fixes
+
+* update breadcrumb valve tests to improve source validation ([83dacf5](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/83dacf5d1ef8cd6963e9a0b86c5bd5e3ed2394f4))
+
 ## [0.9.0](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.8.5...v0.9.0) (2026-05-04)
 
 
