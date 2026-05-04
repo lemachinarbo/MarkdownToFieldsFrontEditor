@@ -103,6 +103,10 @@ Editors:
 - **Raw** → Markdown text
 - **Rich** → visual editor
 
+The fullscreen menubar exposes one `markdown` toggle for these editor modes:
+- off → Rich editor
+- on → Raw editor
+
 Helpers:
 - **Outline** → shows boundaries and labels
 - **Split** → shows two documents at the same time
