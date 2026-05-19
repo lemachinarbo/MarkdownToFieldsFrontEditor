@@ -2,6 +2,11 @@
 
 MarkdownToFieldsFrontEditor (MFE) is the **front-end editor** for the `MarkdownToFields` ProcessWire module. It allows users to double-click tagged content to edit and preview it directly on the page. It is NOT a standalone module; it only works together with `MarkdownToFields`.
 
+## Agent Configuration
+- **Test Command**: `npm test`
+- **Backlog Ledger**: `conductor-jules/tracks.md`
+- **Scratch Directory**: `conductor-jules/scratch/`
+
 ## Core Philosophy
 
 - **Markdown-First Pipeline**: Outside of an editing session, the persisted Markdown file is the absolute source of truth.
