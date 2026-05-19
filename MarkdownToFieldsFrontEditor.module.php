@@ -924,6 +924,13 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
         // Thumb delivery endpoint (GET) - serves cached thumbnails
         if ($input->get->text('action') === 'deliverThumb') {
+            $user = $this->wire()->user;
+            if(!$user->isLoggedIn() || !$user->hasPermission('page-edit-front')) {
+                header('HTTP/1.1 403 Forbidden');
+                echo 'Forbidden';
+                exit;
+            }
+
             $thumbName = $input->get->text('thumb');
             if (!$thumbName || !preg_match('/^[a-z0-9\-_.]+\.[a-z0-9]{64}\.jpg$/i', $thumbName)) {
                 header('HTTP/1.1 400 Bad Request');
@@ -1653,7 +1660,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 . ' hash=' . substr(md5($source), 0, 12)
                 . ' sample=' . (count($sample) ? implode(' | ', $sample) : 'none');
         };
-        $postKeys = implode(',', array_keys($_POST ?? []));
+        $postKeys = implode(',', array_keys($this->wire()->input->post->getArray()));
         $this->logInfo(
             "SAVE_REQUEST pageId={$pageId} mdScope='{$mdScope}' mdSection='{$mdSection}' fieldId='{$fieldId}' lang='{$langCode}' resolvedLang='{$languageCode}' batch=" . ($isBatch ? '1' : '0') . " postKeys='{$postKeys}'"
         );
@@ -1849,7 +1856,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             exit;
         }
 
-        $markdown = isset($_POST['markdown']) ? (string)$_POST['markdown'] : '';
+        $markdown = $this->wire()->input->post->has('markdown') ? (string)$this->wire()->input->post('markdown') : '';
         if(!$markdown) {
             $this->sendJsonError('Missing markdown content', 400);
         }
@@ -2754,7 +2761,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $eventType = trim((string)$input->post->text('eventType'));
         $snapshotState = trim((string)$input->post->text('snapshotState'));
         $label = trim((string)$input->post('label', 'string'));
-        $content = array_key_exists('content', $_POST) ? (string)$_POST['content'] : null;
+        $content = $this->wire()->input->post->has('content') ? (string)$this->wire()->input->post('content') : null;
 
         if ($eventType === '') {
             $this->sendJsonError('Missing eventType', 400);
@@ -4136,8 +4143,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 $config = $this->wire()->config;
                 $requestUrl = '';
                 $source = 'none';
-                $host = (string)($config->httpHost ?: ($_SERVER['HTTP_HOST'] ?? ''));
-                $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+                $host = (string)$config->httpHost;
+                $scheme = $config->https ? 'https' : 'http';
                 $requestedPath = trim($renderPath);
                 if ($requestedPath !== '') {
                     if (strpos($requestedPath, '://') !== false || strpos($requestedPath, '/') !== 0) {
