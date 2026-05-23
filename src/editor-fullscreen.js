@@ -290,12 +290,15 @@ let snapshotCreateBtnEl = null;
 let snapshotRestoreBtnEl = null;
 let snapshotRefreshBtnEl = null;
 let snapshotCompareSelectEl = null;
+let snapshotAutoToggleEl = null;
 let snapshotHistoryOpen = false;
 let snapshotHistoryLoading = false;
 let snapshotExternalReconcileInFlight = false;
 let snapshotHistoryItems = [];
+let snapshotVisibleItems = [];
 let snapshotSelectedId = "";
 let snapshotCompareMode = "current";
+let snapshotShowAutomatic = true;
 let snapshotPreviewEl = null;
 let snapshotCompareEditor = null;
 let primaryPaneEl = null;
@@ -1588,6 +1591,27 @@ function buildSnapshotVersionMap() {
   return versionMap;
 }
 
+function getNextSnapshotDefaultTitle() {
+  return `Version ${padSnapshotVersion(snapshotHistoryItems.length + 1)}`;
+}
+
+function isAutomaticSnapshot(item) {
+  const eventType = String(item?.eventType || "");
+  return eventType === "save" || eventType === "external";
+}
+
+function updateVisibleSnapshotItems() {
+  snapshotVisibleItems = snapshotShowAutomatic
+    ? snapshotHistoryItems
+    : snapshotHistoryItems.filter((item) => !isAutomaticSnapshot(item));
+  if (
+    snapshotSelectedId &&
+    !snapshotVisibleItems.some((item) => item.snapshotId === snapshotSelectedId)
+  ) {
+    snapshotSelectedId = String(snapshotVisibleItems[0]?.snapshotId || "");
+  }
+}
+
 function resolveSnapshotDisplayTarget(item) {
   let current = item && typeof item === "object" ? item : null;
   const visited = new Set();
@@ -1664,8 +1688,9 @@ function buildSnapshotPreviewText(diffText, selected) {
 function renderSnapshotList() {
   if (!snapshotListEl) return;
   snapshotListEl.innerHTML = "";
+  updateVisibleSnapshotItems();
   const versionMap = buildSnapshotVersionMap();
-  snapshotHistoryItems.forEach((item) => {
+  snapshotVisibleItems.forEach((item) => {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "mfe-snapshot-row";
@@ -1722,8 +1747,11 @@ function renderSnapshotList() {
     snapshotListEl.appendChild(row);
   });
 
-  if (!snapshotHistoryItems.length && snapshotEmptyEl) {
+  if (!snapshotVisibleItems.length && snapshotEmptyEl) {
     snapshotEmptyEl.hidden = false;
+    snapshotEmptyEl.textContent = snapshotHistoryItems.length
+      ? "Automatic snapshots are hidden."
+      : "No snapshots yet.";
   } else if (snapshotEmptyEl) {
     snapshotEmptyEl.hidden = true;
   }
@@ -1886,6 +1914,10 @@ function updateSnapshotPanelState() {
     snapshotCompareSelectEl.disabled = snapshotHistoryLoading;
     snapshotCompareSelectEl.value = snapshotCompareMode;
   }
+  if (snapshotAutoToggleEl) {
+    snapshotAutoToggleEl.disabled = snapshotHistoryLoading;
+    snapshotAutoToggleEl.checked = snapshotShowAutomatic;
+  }
   if (snapshotExternalNoticeEl) {
     const externalActionBtn = snapshotExternalNoticeEl.querySelector(
       ".mfe-snapshot-external-action",
@@ -1897,69 +1929,6 @@ function updateSnapshotPanelState() {
   if (typeof refreshToolbarState === "function") {
     refreshToolbarState();
   }
-}
-
-function shouldCreateExternalSnapshotOnReconcile({
-  payload,
-  previousPageId = "",
-  previousOriginFieldKey = "",
-  previousFieldId = "",
-}) {
-  if (!payload || payload.skipExternalSnapshot === true) {
-    return false;
-  }
-  if (!payload.canonicalHydrated) {
-    return false;
-  }
-  const incomingPageId = String(payload.pageId || "");
-  const incomingOriginFieldKey = String(
-    payload.originFieldKey ||
-      payload.originKey ||
-      payload.fieldId ||
-      buildPayloadFieldId(payload),
-  );
-  const previousOriginKey = String(
-    previousOriginFieldKey || previousFieldId || "",
-  );
-  if (
-    !incomingPageId ||
-    !incomingOriginFieldKey ||
-    !previousPageId ||
-    !previousOriginKey
-  ) {
-    return false;
-  }
-  return (
-    incomingPageId === previousPageId &&
-    incomingOriginFieldKey === previousOriginKey
-  );
-}
-
-function createExternalSnapshotOnReconcile() {
-  const pageId = getSnapshotPageId();
-  const lang = getSnapshotLanguageCode();
-  if (!pageId || !lang) return;
-  Promise.resolve(
-    createSnapshotRequest({
-      pageId,
-      lang,
-      eventType: "external",
-      snapshotState: "persisted",
-    }),
-  )
-    .then((result) => {
-      if (!snapshotHistoryOpen || !result?.created) {
-        return;
-      }
-      return refreshSnapshotHistory({ preserveSelection: true });
-    })
-    .catch((error) => {
-      showWindowToast(
-        String(error?.message || "Failed to create external snapshot"),
-        "alert",
-        { persistent: true },
-      );
-    });
 }
 
 async function reconcileExternalChangeFromFullscreen(options = {}) {
@@ -2192,13 +2161,14 @@ async function refreshSnapshotHistory({ preserveSelection = true } = {}) {
           (item) => String(item?.eventType || "") !== "pre_restore_backup",
         )
       : [];
+    updateVisibleSnapshotItems();
     if (
       !preserveSelection ||
-      !snapshotHistoryItems.some(
+      !snapshotVisibleItems.some(
         (item) => item.snapshotId === snapshotSelectedId,
       )
     ) {
-      snapshotSelectedId = String(snapshotHistoryItems[0]?.snapshotId || "");
+      snapshotSelectedId = String(snapshotVisibleItems[0]?.snapshotId || "");
     }
     renderSnapshotList();
     await refreshSnapshotExternalNotice();
@@ -2222,7 +2192,13 @@ async function createManualSnapshotFromFullscreen() {
   const pageId = getSnapshotPageId();
   const lang = getSnapshotLanguageCode();
   if (!pageId || !lang) return;
-  const label = window.prompt("Snapshot name (optional)", "") || "";
+  const defaultTitle = getNextSnapshotDefaultTitle();
+  const rawLabel = window.prompt(
+    `Snapshot name (optional).\nLeave empty to create ${defaultTitle}.`,
+    "",
+  );
+  if (rawLabel === null) return;
+  const label = String(rawLabel || "").trim();
   const dirty = hasPendingUnsavedChanges();
   const payload = {
     pageId,
@@ -2426,6 +2402,10 @@ function createSnapshotPanel() {
         <option value="current">Compare to current</option>
         <option value="previous">Compare to previous</option>
       </select>
+      <label class="mfe-snapshot-filter">
+        <input type="checkbox" class="mfe-snapshot-filter-input">
+        <span>Show automatic snapshots</span>
+      </label>
       <div class="mfe-snapshot-panel-actions">
         <button type="button" class="mfe-snapshot-action" data-action="create">Create snapshot</button>
         <button type="button" class="mfe-snapshot-action" data-action="refresh">Refresh</button>
@@ -2448,6 +2428,7 @@ function createSnapshotPanel() {
   snapshotRefreshBtnEl = panel.querySelector('[data-action="refresh"]');
   snapshotRestoreBtnEl = panel.querySelector(".mfe-snapshot-restore");
   snapshotCompareSelectEl = panel.querySelector(".mfe-snapshot-compare");
+  snapshotAutoToggleEl = panel.querySelector(".mfe-snapshot-filter-input");
 
   fullscreenEventRegistry.register(snapshotCreateBtnEl, "click", () => {
     void createManualSnapshotFromFullscreen();
@@ -2466,6 +2447,12 @@ function createSnapshotPanel() {
       void refreshSnapshotDiff();
     },
   );
+  fullscreenEventRegistry.register(snapshotAutoToggleEl, "change", (event) => {
+    snapshotShowAutomatic = Boolean(event?.target?.checked);
+    renderSnapshotList();
+    void refreshSnapshotDiff();
+    updateSnapshotPanelState();
+  });
   return panel;
 }
 
@@ -5940,27 +5927,8 @@ function saveAllEditors() {
         }
         return false;
       }
-      const pageId = getSnapshotPageId();
-      if (pageId) {
-        await Promise.all(
-          results
-            .filter((entry) => entry?.ok && entry?.state?.lang)
-            .map(async (entry) => {
-              try {
-                await createSnapshotRequest({
-                  pageId,
-                  lang: String(entry.state.lang || ""),
-                  eventType: "save",
-                  snapshotState: "persisted",
-                });
-              } catch (_error) {
-                // Snapshot history must not block the save pipeline.
-              }
-            }),
-        );
-        if (snapshotHistoryOpen) {
-          await refreshSnapshotHistory({ preserveSelection: false });
-        }
+      if (snapshotHistoryOpen) {
+        await refreshSnapshotHistory({ preserveSelection: false });
       }
       return true;
     })
@@ -7380,8 +7348,10 @@ function cleanupEditorOnly() {
   snapshotHistoryOpen = false;
   snapshotHistoryLoading = false;
   snapshotHistoryItems = [];
+  snapshotVisibleItems = [];
   snapshotSelectedId = "";
   snapshotCompareMode = "current";
+  snapshotShowAutomatic = true;
   snapshotPanelEl = null;
   snapshotListEl = null;
   snapshotDiffEl = null;
@@ -7391,6 +7361,7 @@ function cleanupEditorOnly() {
   snapshotRestoreBtnEl = null;
   snapshotRefreshBtnEl = null;
   snapshotCompareSelectEl = null;
+  snapshotAutoToggleEl = null;
   snapshotPreviewEl = null;
   destroySnapshotCompareEditor();
   primaryPaneEl = null;
@@ -9475,7 +9446,6 @@ function replaceActiveEditor(payload) {
   const previousSessionStateId = activeSessionStateId;
   const previousOriginFieldKey = activeOriginFieldKey;
   const previousPageId = activeTarget?.getAttribute("data-page") || "";
-  const previousFieldId = activeFieldId;
 
   const {
     effectiveMarkdown,
@@ -9564,17 +9534,6 @@ function replaceActiveEditor(payload) {
     breadcrumbClickHandler: handleBreadcrumbClick,
   });
   applyEditorViewMode(editorViewMode);
-
-  if (
-    shouldCreateExternalSnapshotOnReconcile({
-      payload,
-      previousPageId,
-      previousOriginFieldKey,
-      previousFieldId,
-    })
-  ) {
-    createExternalSnapshotOnReconcile();
-  }
 
   afterNextPaint(() => primaryEditor?.view?.focus());
   return true;

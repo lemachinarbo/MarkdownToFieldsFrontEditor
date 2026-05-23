@@ -41,6 +41,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'debugShowLabels' => false,
             'labelStyle' => 'outside',
             'confirmOnUnsavedClose' => true,
+            'autoSnapshotsOnSave' => true,
         ];
     }
 
@@ -176,6 +177,17 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $confirmUnsavedField->columnWidth = 100;
         $fieldset->add($confirmUnsavedField);
 
+        $autoSnapshotsField = self::createConfigInputfield('InputfieldCheckbox');
+        $autoSnapshotsField->name = 'autoSnapshotsOnSave';
+        $autoSnapshotsField->label = 'Create Automatic Snapshots Before Save';
+        $autoSnapshotsField->description = 'When enabled, MFE snapshots the last accepted Markdown before frontend saves overwrite the file.';
+        $autoSnapshotsField->value = 1;
+        $autoSnapshotsField->checked = array_key_exists('autoSnapshotsOnSave', $data)
+            ? !empty($data['autoSnapshotsOnSave'])
+            : !empty($defaults['autoSnapshotsOnSave']);
+        $autoSnapshotsField->columnWidth = 100;
+        $fieldset->add($autoSnapshotsField);
+
         return $fieldset;
     }
 
@@ -285,6 +297,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'debugShowLabels' => $defaults['debugShowLabels'],
             'labelStyle' => $defaults['labelStyle'],
             'confirmOnUnsavedClose' => $defaults['confirmOnUnsavedClose'],
+            'autoSnapshotsOnSave' => $defaults['autoSnapshotsOnSave'],
         ]);
     }
 
@@ -566,6 +579,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'defaultUnorderedListMarker' => (string)($this->defaultUnorderedListMarker ?? $defaults['defaultUnorderedListMarker']),
             'labelStyle' => (string)($this->labelStyle ?? $defaults['labelStyle']),
             'confirmOnUnsavedClose' => (bool)($this->confirmOnUnsavedClose ?? $defaults['confirmOnUnsavedClose']),
+            'autoSnapshotsOnSave' => (bool)($this->autoSnapshotsOnSave ?? $defaults['autoSnapshotsOnSave']),
         ];
     }
 
@@ -1856,7 +1870,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             exit;
         }
 
-        $markdown = $this->wire()->input->post->has('markdown') ? (string)$this->wire()->input->post('markdown') : '';
+        $postData = $this->wire()->input->post->getArray();
+        $markdown = array_key_exists('markdown', $postData) ? (string)$this->wire()->input->post('markdown') : '';
         if(!$markdown) {
             $this->sendJsonError('Missing markdown content', 400);
         }
@@ -2181,7 +2196,17 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         return (string)$raw;
     }
 
-    protected function saveRawMarkdownDocumentExact(\ProcessWire\Page $page, string $languageCode, string $markdown): void {
+    protected function saveRawMarkdownDocumentExact(
+        \ProcessWire\Page $page,
+        string $languageCode,
+        string $markdown,
+        bool $createAutoSnapshot = true,
+        bool $updateSnapshotBaseline = true
+    ): void {
+        if ($createAutoSnapshot && !empty($this->autoSnapshotsOnSave ?? self::getDefaultData()['autoSnapshotsOnSave'])) {
+            $this->createAutomaticSnapshotBeforeMarkdownWrite($page, $languageCode, $markdown);
+        }
+
         $path = \ProcessWire\MarkdownFileIO::getMarkdownFilePath($page, $languageCode);
         $bytes = @file_put_contents($path, $markdown, LOCK_EX);
         if ($bytes === false) {
@@ -2197,6 +2222,10 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
         if ((string)$persisted !== $markdown) {
             throw new \ProcessWire\WireException("Persisted markdown differs from requested markdown after exact write");
+        }
+
+        if ($updateSnapshotBaseline) {
+            $this->updateSnapshotBaseline($page, $languageCode, $markdown);
         }
     }
 
@@ -2274,6 +2303,7 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $historyDir = $this->resolveSnapshotHistoryRoot() . $historyKey . '/';
         $blobDir = $historyDir . 'blobs/';
         $indexPath = $historyDir . 'index.jsonl';
+        $baselinePath = $historyDir . 'baseline.json';
         $lockPath = $historyDir . '.lock';
 
         return [
@@ -2287,9 +2317,106 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
             'historyDir' => $historyDir,
             'blobDir' => $blobDir,
             'indexPath' => $indexPath,
+            'baselinePath' => $baselinePath,
             'lockPath' => $lockPath,
             'appVersion' => (string)(self::getModuleInfo()['version'] ?? ''),
         ];
+    }
+
+    protected function readSnapshotBaseline(array $context): ?array {
+        $baselinePath = (string)($context['baselinePath'] ?? '');
+        if ($baselinePath === '' || !is_file($baselinePath)) {
+            return null;
+        }
+
+        $raw = @file_get_contents($baselinePath);
+        if ($raw === false) {
+            throw new \ProcessWire\WireException("Failed to read snapshot baseline: {$baselinePath}", 500);
+        }
+
+        $decoded = json_decode((string)$raw, true);
+        if (!is_array($decoded)) {
+            throw new \ProcessWire\WireException("Invalid snapshot baseline JSON: {$baselinePath}", 500);
+        }
+
+        $content = base64_decode((string)($decoded['content_b64'] ?? ''), true);
+        if (!is_string($content)) {
+            throw new \ProcessWire\WireException("Invalid snapshot baseline content: {$baselinePath}", 500);
+        }
+
+        $hash = (string)($decoded['content_hash'] ?? '');
+        if ($hash === '' || $hash !== $this->computeSnapshotContentHash($content)) {
+            throw new \ProcessWire\WireException("Snapshot baseline hash mismatch: {$baselinePath}", 500);
+        }
+
+        return [
+            'content' => $content,
+            'contentHash' => $hash,
+            'updatedAt' => (string)($decoded['updated_at'] ?? ''),
+        ];
+    }
+
+    protected function writeSnapshotBaseline(array $context, string $content): void {
+        $this->ensureSnapshotDocumentDirectories($context);
+        $baselinePath = (string)($context['baselinePath'] ?? '');
+        if ($baselinePath === '') {
+            throw new \ProcessWire\WireException('Missing snapshot baseline path', 500);
+        }
+
+        $encoded = json_encode([
+            'document_id' => (string)($context['documentId'] ?? ''),
+            'page_id' => (string)($context['pageId'] ?? ''),
+            'language_code' => (string)($context['languageCode'] ?? ''),
+            'content_hash' => $this->computeSnapshotContentHash($content),
+            'content_b64' => base64_encode($content),
+            'updated_at' => gmdate('c'),
+            'schema_version' => self::SNAPSHOT_SCHEMA_VERSION,
+        ], JSON_UNESCAPED_SLASHES);
+        if ($encoded === false) {
+            throw new \ProcessWire\WireException('Failed to encode snapshot baseline', 500);
+        }
+        if (@file_put_contents($baselinePath, $encoded . "\n", LOCK_EX) === false) {
+            throw new \ProcessWire\WireException("Failed to write snapshot baseline: {$baselinePath}", 500);
+        }
+    }
+
+    protected function createAutomaticSnapshotBeforeMarkdownWrite(
+        \ProcessWire\Page $page,
+        string $languageCode,
+        string $nextMarkdown
+    ): void {
+        $context = $this->resolveSnapshotDocumentContext($page, $languageCode);
+        if (!is_file((string)$context['resolvedPath'])) {
+            return;
+        }
+
+        $this->withSnapshotDocumentLock($context, function () use ($context, $page, $languageCode, $nextMarkdown) {
+            $baseline = $this->readSnapshotBaseline($context);
+            if (!$baseline) {
+                $currentContent = $this->loadRawMarkdownDocument($page, $languageCode);
+                $this->writeSnapshotBaseline($context, $currentContent);
+                $baseline = [
+                    'content' => $currentContent,
+                    'contentHash' => $this->computeSnapshotContentHash($currentContent),
+                ];
+            }
+
+            $nextHash = $this->computeSnapshotContentHash($nextMarkdown);
+            if ((string)$baseline['contentHash'] === $nextHash) {
+                return;
+            }
+
+            $this->createSnapshotRecordUnlocked($context, $page, $languageCode, 'save', 'persisted', [
+                'content' => (string)$baseline['content'],
+            ]);
+        });
+    }
+
+    protected function updateSnapshotBaseline(\ProcessWire\Page $page, string $languageCode, string $content): void {
+        $context = $this->resolveSnapshotDocumentContext($page, $languageCode);
+        $this->withSnapshotDocumentLock($context, function () use ($context, $content) {
+            $this->writeSnapshotBaseline($context, $content);
+        });
     }
 
     protected function ensureSnapshotDocumentDirectories(array $context): void {
@@ -2688,8 +2815,24 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
 
         $contentProvided = array_key_exists('content', $options) && $options['content'] !== null;
+        $currentPersistedContent = null;
         if ($snapshotState === 'persisted') {
-            $content = $contentProvided ? (string)$options['content'] : $this->loadRawMarkdownDocument($page, $languageCode);
+            if ($contentProvided) {
+                $content = (string)$options['content'];
+            } elseif ($eventType === 'external') {
+                $currentPersistedContent = $this->loadRawMarkdownDocument($page, $languageCode);
+                $baseline = $this->readSnapshotBaseline($context);
+                if (!$baseline) {
+                    $this->writeSnapshotBaseline($context, $currentPersistedContent);
+                    $baseline = [
+                        'content' => $currentPersistedContent,
+                        'contentHash' => $this->computeSnapshotContentHash($currentPersistedContent),
+                    ];
+                }
+                $content = (string)$baseline['content'];
+            } else {
+                $content = $this->loadRawMarkdownDocument($page, $languageCode);
+            }
         } else {
             if (!$contentProvided) {
                 throw new \ProcessWire\WireException('Draft snapshot content is required', 400);
@@ -2704,6 +2847,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
         $contentHash = $this->computeSnapshotContentHash($content);
         if ($this->shouldSuppressSnapshotCreate($eventType, $contentHash, $latestForSuppression)) {
+            if ($eventType === 'external' && !$contentProvided && is_string($currentPersistedContent)) {
+                $this->writeSnapshotBaseline($context, $currentPersistedContent);
+            }
             return [
                 'created' => false,
                 'suppressed' => true,
@@ -2724,6 +2870,9 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         );
         $this->writeSnapshotBlob($context, $snapshotId, $content, (string)$metadata['content_hash']);
         $this->appendSnapshotIndexRecord($context, $metadata);
+        if ($eventType === 'external' && !$contentProvided && is_string($currentPersistedContent)) {
+            $this->writeSnapshotBaseline($context, $currentPersistedContent);
+        }
         $this->wire()->log->save('markdown-front-edit', sprintf(
             "SNAPSHOT_CREATED eventType='%s' snapshotState='%s' pageId=%d lang='%s' documentId='%s' snapshotId='%s'",
             $eventType,
@@ -2761,7 +2910,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         $eventType = trim((string)$input->post->text('eventType'));
         $snapshotState = trim((string)$input->post->text('snapshotState'));
         $label = trim((string)$input->post('label', 'string'));
-        $content = $this->wire()->input->post->has('content') ? (string)$this->wire()->input->post('content') : null;
+        $postData = $this->wire()->input->post->getArray();
+        $content = array_key_exists('content', $postData) ? (string)$this->wire()->input->post('content') : null;
 
         if ($eventType === '') {
             $this->sendJsonError('Missing eventType', 400);
@@ -3008,7 +3158,8 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
                 'content' => $currentContent,
                 'label' => 'Backup before restore',
             ]);
-            $this->saveRawMarkdownDocumentExact($page, $languageCode, $targetContent);
+            $this->saveRawMarkdownDocumentExact($page, $languageCode, $targetContent, false, false);
+            $this->writeSnapshotBaseline($context, $targetContent);
             $persisted = $this->loadRawMarkdownDocument($page, $languageCode);
             $restore = $this->createSnapshotRecordUnlocked($context, $page, $languageCode, 'restore', 'persisted', [
                 'internal' => true,
@@ -4780,21 +4931,25 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
         }
 
         $this->withSnapshotDocumentLock($context, function () use ($context, $page, $languageCode) {
-            $latestPersisted = $this->getLatestPersistedSnapshotEntry($context);
-            if (!$latestPersisted) {
-                return;
-            }
-
             $currentContent = $this->loadRawMarkdownDocument($page, $languageCode);
             $currentHash = $this->computeSnapshotContentHash($currentContent);
-            $latestHash = (string)($latestPersisted['summary']['contentHash'] ?? '');
-            if ($latestHash === '' || $latestHash === $currentHash) {
+            $baseline = $this->readSnapshotBaseline($context);
+            if (!$baseline) {
+                $this->writeSnapshotBaseline($context, $currentContent);
                 return;
             }
 
-            $this->createSnapshotRecordUnlocked($context, $page, $languageCode, 'external', 'persisted', [
-                'content' => $currentContent,
-            ]);
+            $baselineHash = (string)($baseline['contentHash'] ?? '');
+            if ($baselineHash === '' || $baselineHash === $currentHash) {
+                return;
+            }
+
+            if (!empty($this->autoSnapshotsOnSave ?? self::getDefaultData()['autoSnapshotsOnSave'])) {
+                $this->createSnapshotRecordUnlocked($context, $page, $languageCode, 'external', 'persisted', [
+                    'content' => (string)$baseline['content'],
+                ]);
+            }
+            $this->writeSnapshotBaseline($context, $currentContent);
         });
     }
 

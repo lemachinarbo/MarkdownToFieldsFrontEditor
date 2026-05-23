@@ -369,6 +369,19 @@ body.mfe-split-resizing {
   font-size: 12px;
 }
 
+.mfe-state-fullscreen-open .mfe-snapshot-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mfe-state-fullscreen-open .mfe-snapshot-filter-input {
+  margin: 0;
+}
+
 .mfe-state-fullscreen-open .mfe-snapshot-external {
   padding: 10px 12px;
   border-radius: 10px;

@@ -40,6 +40,15 @@ Click breadcrumbs to edit parent sections, subsections oor container fields.
 
 Double click images to open the image picker and select a new one from your MarkdownToFields image folder. The markdown will be updated with the new image path.
 
+### Snapshots
+
+The fullscreen editor includes snapshot history for each Markdown document and language.
+
+You can create snapshots manually, or let MFE create them automatically before overwriting the Markdown file on save or accepting external file changes.
+
+Automatic snapshots are enabled by default. You can disable them in **Modules → MarkdownToFieldsFrontEditor → Create Automatic Snapshots Before Save**.
+
+If a Markdown file changes outside the MFE editor, run a module refresh to create the external-change snapshot from the last accepted Markdown version.
 
 ## How MFE Works
 
@@ -106,6 +115,8 @@ Editors:
 The fullscreen menubar exposes one `markdown` toggle for these editor modes:
 - off → Rich editor
 - on → Raw editor
+
+Raw mode is the built-in Markdown editor. It edits the same canonical document state as rich mode, so switching between modes does not create a second draft.
 
 Helpers:
 - **Outline** → shows boundaries and labels
