@@ -5229,18 +5229,53 @@ class MarkdownToFieldsFrontEditor extends WireData implements Module, Configurab
 
     protected function resolveSourceImageAbsolutePath(string $sourceImagePath): string {
         $candidate = str_replace('\\', '/', trim($sourceImagePath));
+        $resolvedPath = '';
+        
         if ($candidate !== '' && str_starts_with($candidate, '/') && is_file($candidate) && is_readable($candidate)) {
-            return $candidate;
-        }
-
-        foreach ($this->getConfiguredImageSourcePaths() as $sourceBase) {
-            $full = rtrim($sourceBase, '/') . '/' . ltrim($candidate, '/');
-            if (is_file($full) && is_readable($full)) {
-                return str_replace('\\', '/', $full);
+            $resolvedPath = $candidate;
+        } else {
+            foreach ($this->getConfiguredImageSourcePaths() as $sourceBase) {
+                $full = rtrim($sourceBase, '/') . '/' . ltrim($candidate, '/');
+                if (is_file($full) && is_readable($full)) {
+                    $resolvedPath = str_replace('\\', '/', $full);
+                    break;
+                }
             }
         }
 
-        throw new \RuntimeException('Failed to resolve source image path for thumbnail generation.');
+        if ($resolvedPath === '') {
+            throw new \RuntimeException('Failed to resolve source image path for thumbnail generation.');
+        }
+
+        $realResolvedPath = realpath($resolvedPath);
+        if ($realResolvedPath === false) {
+            throw new \RuntimeException('Failed to resolve real path for source image.');
+        }
+        $realResolvedPath = str_replace('\\', '/', $realResolvedPath);
+
+        $allowedBasePaths = $this->getConfiguredImageSourcePaths();
+        $assetsPath = $this->wire()->config->paths->assets;
+        if (is_string($assetsPath) && $assetsPath !== '') {
+            $allowedBasePaths[] = $assetsPath;
+        }
+
+        $isAllowed = false;
+        foreach ($allowedBasePaths as $allowedBase) {
+            $realAllowedBase = realpath($allowedBase);
+            if ($realAllowedBase !== false) {
+                $realAllowedBase = rtrim(str_replace('\\', '/', $realAllowedBase), '/') . '/';
+                if (str_starts_with($realResolvedPath, $realAllowedBase)) {
+                    $isAllowed = true;
+                    break;
+                }
+            }
+        }
+
+        if (!$isAllowed) {
+            throw new \RuntimeException('Resolved source image path is outside permitted directories.');
+        }
+
+        return $resolvedPath;
     }
 
     protected function loadImageResourceForThumb(string $path, string $relativePath = '') {
