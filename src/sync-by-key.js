@@ -154,25 +154,26 @@ function debugError(...args) {
   console.error(...args);
 }
 
-function getDomPath(el) {
-  const parts = [];
-  let node = el;
-  while (node && node.nodeType === 1) {
-    const tag = (node.tagName || "x").toLowerCase();
-    let idx = 1;
-    let sib = node.previousElementSibling;
-    while (sib) {
-      if ((sib.tagName || "").toLowerCase() === tag) idx += 1;
-      sib = sib.previousElementSibling;
-    }
-    parts.push(`${tag}:${idx}`);
-    node = node.parentElement;
+function getDomPath(el, cache) {
+  if (!el || el.nodeType !== 1) return "";
+  if (cache && cache.has(el)) return cache.get(el);
+
+  const tag = (el.tagName || "x").toLowerCase();
+  let idx = 1;
+  let sib = el.previousElementSibling;
+  while (sib) {
+    if ((sib.tagName || "").toLowerCase() === tag) idx += 1;
+    sib = sib.previousElementSibling;
   }
-  return parts.reverse().join(">");
+  const part = `${tag}:${idx}`;
+  const parentPath = getDomPath(el.parentElement, cache);
+  const path = parentPath ? `${parentPath}>${part}` : part;
+  if (cache) cache.set(el, path);
+  return path;
 }
 
-function buildMountSignature(el, key) {
-  return `${key}|${getDomPath(el)}|${el.getAttribute("data-mfe") || ""}|${el.getAttribute("data-mfe-source") || ""}|${(el.tagName || "").toLowerCase()}`;
+function buildMountSignature(el, key, cache) {
+  return `${key}|${getDomPath(el, cache)}|${el.getAttribute("data-mfe") || ""}|${el.getAttribute("data-mfe-source") || ""}|${(el.tagName || "").toLowerCase()}`;
 }
 
 function canonicalKeyToPath(key) {
@@ -397,6 +398,7 @@ export function compileMountTargetsByKey({
   const keyIdToSig = new Map();
   const keyToSelectorSet = new Map();
   const devDiagnostics = isDevDiagnosticsEnabled();
+  const pathCache = new WeakMap();
 
   const addTarget = (key, el, mode = "inner", origin = "canonical") => {
     if (!el) return;
@@ -408,7 +410,7 @@ export function compileMountTargetsByKey({
     if (origin !== "editable") {
       graphKeySet.add(key);
     }
-    const sig = buildMountSignature(el, key);
+    const sig = buildMountSignature(el, key, pathCache);
     stampCanonicalIdentity(el, key, sig);
     if (devDiagnostics) {
       const sigMap =
