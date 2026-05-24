@@ -358,31 +358,35 @@ export function resolveBreadcrumbNavigationTarget({
 
   if (type === "field" || type === "container") {
     const fields = getFieldsIndex();
-    const exact = fields.find((field) => {
-      if ((field?.name || "") !== fieldName) return false;
-      if (sectionName && (field?.section || "") !== sectionName) return false;
-      if (subsectionName && (field?.subsection || "") !== subsectionName) {
-        return false;
-      }
-      return true;
-    });
-    const fallback =
-      exact ||
-      fields.find(
-        (field) =>
-          (field?.name || "") === fieldName &&
-          (field?.section || "") === sectionName,
-      );
+    let exact = null;
+    let fallback = null;
 
-    if (fallback) {
+    for (let i = 0; i < fields.length; i++) {
+      const field = fields[i];
+      if ((field?.name || "") === fieldName) {
+        const sectionMatch = !sectionName || (field?.section || "") === sectionName;
+        if (sectionMatch) {
+          if (!fallback) fallback = field;
+          const subsectionMatch = !subsectionName || (field?.subsection || "") === subsectionName;
+          if (subsectionMatch) {
+            exact = field;
+            break;
+          }
+        }
+      }
+    }
+
+    const match = exact || fallback;
+
+    if (match) {
       return createBreadcrumbVirtualTarget({
         scope: "field",
-        name: fallback.name || fieldName,
+        name: match.name || fieldName,
         pageId: activeTarget.getAttribute("data-page") || "0",
-        fieldType: fallback.fieldType || "tag",
-        section: fallback.section || sectionName,
-        subsection: fallback.subsection || subsectionName,
-        markdownB64: fallback.markdownB64 || "",
+        fieldType: match.fieldType || "tag",
+        section: match.section || sectionName,
+        subsection: match.subsection || subsectionName,
+        markdownB64: match.markdownB64 || "",
         activeOriginFieldKey,
         activeOriginKey,
       });

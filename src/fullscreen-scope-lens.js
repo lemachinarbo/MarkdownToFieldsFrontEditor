@@ -653,22 +653,24 @@ export function resolveIndexedMarkdownForLensNode(node, decodeMaybeB64) {
   }
   if (node.scope === "field") {
     const fields = getFieldsIndex();
-    const exact = fields.find((field) => {
-      if ((field?.name || "") !== (node.name || "")) return false;
-      if ((field?.section || "") !== (node.section || "")) return false;
-      if ((field?.subsection || "") !== (node.subsection || "")) {
-        return false;
+    let exact = null;
+    let fallback = null;
+    const nodeName = node.name || "";
+    const nodeSection = node.section || "";
+    const nodeSubsection = node.subsection || "";
+    
+    for (const field of fields) {
+      if ((field?.name || "") === nodeName && (field?.section || "") === nodeSection) {
+        if ((field?.subsection || "") === nodeSubsection) {
+          exact = field;
+          break;
+        } else if (!fallback) {
+          fallback = field;
+        }
       }
-      return true;
-    });
-    const fallback =
-      exact ||
-      fields.find((field) => {
-        if ((field?.name || "") !== (node.name || "")) return false;
-        if ((field?.section || "") !== (node.section || "")) return false;
-        return true;
-      });
-    return decodeMaybeB64(fallback?.markdownB64 || "");
+    }
+    
+    return decodeMaybeB64((exact || fallback)?.markdownB64 || "");
   }
   return "";
 }
