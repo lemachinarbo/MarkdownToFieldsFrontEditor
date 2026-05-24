@@ -7,6 +7,9 @@ This file tracks the active development tracks for Jules and other agents in Mar
 - [ ] **Code Health: Remove leftover console statement** (Session: 8475759274777109420)
 - [ ] **Testing Improvement: Missing tests for buildScopeKeyFromMeta** (Session: 15009249872801566978)
 - [ ] **Testing Improvement: Missing test file for markdown-text-utils.js** (Session: 13446809845484129784)
+- [ ] **Code Health: Remove commented out console.warn in emitStrictWithoutClassification** (Session: 8282192295177662674)
+- [ ] **Code Health: Remove deprecated EscapeKeyExtension comment** (Session: 16049321058421780400)
+- [ ] **Code Health: Remove old commented breadcrumbs implementation** (Session: 971202653914692730)
 
 ## Completed
 
