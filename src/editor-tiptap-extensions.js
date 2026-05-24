@@ -410,6 +410,10 @@ export const MarkerAwareTaskList = TaskList.extend({
   },
 });
 
+const precompiledInlineHtmlRegexes = inlineHtmlTags.map(
+  (tag) => new RegExp(`<\\s*\\/?\\s*${tag}\\b[^>]*>`, "gi"),
+);
+
 export const InlineHtmlLabelExtension = Extension.create({
   name: "inlineHtmlLabel",
   addProseMirrorPlugins() {
@@ -423,8 +427,9 @@ export const InlineHtmlLabelExtension = Extension.create({
               if (parent?.type?.name === "codeBlock") return;
               if (node.marks?.some((mark) => mark.type.name === "code")) return;
 
-              inlineHtmlTags.forEach((tag) => {
-                const re = new RegExp(`<\\s*\\/?\\s*${tag}\\b[^>]*>`, "gi");
+              inlineHtmlTags.forEach((tag, index) => {
+                const re = precompiledInlineHtmlRegexes[index];
+                re.lastIndex = 0;
                 let match;
                 while ((match = re.exec(node.text)) !== null) {
                   const from = pos + match.index;
