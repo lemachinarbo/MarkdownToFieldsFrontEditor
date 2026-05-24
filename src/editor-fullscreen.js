@@ -3755,7 +3755,6 @@ function getDocumentStateForActiveField(lang, options = {}) {
   return state;
 }
 
-let breadcrumbsEl = null;
 const statusManager = createStatusManager();
 
 const fullscreenEventRegistry = createEventRegistry();
@@ -3950,7 +3949,6 @@ function createEditorInstance(element, fieldType, fieldName) {
         shouldBlockTransaction: shouldBlockFullscreenTransaction,
         onBlockedTransaction: reportFullscreenTransactionBlocked,
       }),
-      // EscapeKeyExtension, - DEPRECATED: WindowManager now handles global Escape
     ],
     content: "",
     editorProps: {
@@ -7035,12 +7033,6 @@ function initEditor(markdownContent, fieldType = "tag") {
   };
   editorContainer = container;
 
-  // OLD: breadcrumbs are now handled by WindowManager
-  // Don't create breadcrumbs here anymore
-  // breadcrumbsEl = document.createElement("div");
-  // breadcrumbsEl.className = "mfe-breadcrumbs";
-  // container.appendChild(breadcrumbsEl);
-
   editorShell = document.createElement("div");
   editorShell.className = "mfe-editor-shell";
   container.appendChild(editorShell);
@@ -7425,7 +7417,6 @@ function cleanupEditorOnly() {
   splitPane = null;
   splitRegion = null;
   splitHandle = null;
-  breadcrumbsEl = null;
   breadcrumbAnchorIdentityKey = "";
   sessionScopeLens = null;
   sessionScopeIdentityKey = "";

@@ -7,11 +7,17 @@ This file tracks the active development tracks for Jules and other agents in Mar
 - [ ] **Code Health: Remove leftover console statement** (Session: 8475759274777109420)
 - [ ] **Testing Improvement: Missing tests for buildScopeKeyFromMeta** (Session: 15009249872801566978)
 - [ ] **Testing Improvement: Missing test file for markdown-text-utils.js** (Session: 13446809845484129784)
-- [ ] **Code Health: Remove commented out console.warn in emitStrictWithoutClassification** (Session: 8282192295177662674)
-- [ ] **Code Health: Remove deprecated EscapeKeyExtension comment** (Session: 16049321058421780400)
-- [ ] **Code Health: Remove old commented breadcrumbs implementation** (Session: 971202653914692730)
 
 ## Completed
+
+- [x] **Code Health: Remove commented out console.warn in emitStrictWithoutClassification** (Integrated: 8282192295177662674)
+  - [x] Remove commented-out console.warn and its containing conditional block in src/document-state.js
+
+- [x] **Code Health: Remove deprecated EscapeKeyExtension comment** (Integrated: 16049321058421780400)
+  - [x] Remove EscapeKeyExtension deprecated comment in src/editor-fullscreen.js
+
+- [x] **Code Health: Remove old commented breadcrumbs implementation** (Integrated: 971202653914692730)
+  - [x] Remove commented breadcrumbs initialization and unused breadcrumbsEl declarations/assignments in src/editor-fullscreen.js
 
 - [x] **Security: Path Traversal/IDOR in Thumbnail Generation** (Integrated: 691188520144938005)
   - [x] Implement path validation checks in resolveSourceImageAbsolutePath in MarkdownToFieldsFrontEditor.module.php

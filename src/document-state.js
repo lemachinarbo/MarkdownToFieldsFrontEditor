@@ -99,9 +99,6 @@ function emitStrictWithoutClassification(payload) {
     ...payload,
   };
   emitDocStateEvent("MFE_STRICT_WITHOUT_CLASSIFICATION", payload);
-  if (typeof console !== "undefined" && typeof console.warn === "function") {
-    //console.warn("MFE_STRICT_WITHOUT_CLASSIFICATION", JSON.stringify(message));
-  }
 }
 
 function emitDocumentStateShapeViolation(payload) {
