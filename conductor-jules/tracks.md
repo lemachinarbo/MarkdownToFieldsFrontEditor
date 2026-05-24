@@ -10,6 +10,21 @@ This file tracks the active development tracks for Jules and other agents in Mar
 
 ## Completed
 
+- [x] **Security: Path Traversal/IDOR in Thumbnail Generation** (Integrated: 691188520144938005)
+  - [x] Implement path validation checks in resolveSourceImageAbsolutePath in MarkdownToFieldsFrontEditor.module.php
+
+- [x] **Performance: Precompile RegExp in TipTap decorations loop** (Integrated: 16977852078807553084)
+  - [x] Cache compiled RegExps at module scope in src/editor-tiptap-extensions.js
+
+- [x] **Performance: Avoid redundant array searching in breadcrumbs** (Integrated: 11325154599533675953)
+  - [x] Optimize array lookup in resolveBreadcrumbNavigationTarget in src/fullscreen-breadcrumb-navigation.js
+
+- [x] **Performance: Avoid inefficient array searching in scope lens** (Integrated: 16355042910865082614)
+  - [x] Optimize fields lookup in resolveIndexedMarkdownForLensNode in src/fullscreen-scope-lens.js
+
+- [x] **Performance: Optimize DOM traversal in getDomPath** (Integrated: 5236952290924207948)
+  - [x] Cache DOM paths using WeakMap in src/sync-by-key.js
+
 - [x] **Security Fix: Use of unsafe $_POST superglobal** (Integrated: 5958058741393063784)
   - [x] Replace $_POST usage with $this->wire()->input->post in MarkdownToFieldsFrontEditor.module.php
 
