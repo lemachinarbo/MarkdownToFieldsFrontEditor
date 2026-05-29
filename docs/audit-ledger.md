@@ -36,7 +36,7 @@
 * **Impact:** Cross-language draft bleed, wrong-language saves, and non-deterministic state reuse.
 * **Required Fix:** Reject empty language values at `DocumentState` construction and `getOrCreate`, and fail fast instead of generating a key with an empty language suffix.
 * **Required Fixture:** Add document-state tests that call `new DocumentState(..., "")` and `getDocumentState(..., "")` and assert they throw before touching the store.
-* **Status:** Open
+* **Status:** Resolved
 
 ### MTF-006 - MEDIUM: Fallback Save Path Silently Uses Raw Marker-Bearing Markdown On Projection Failure
 * **Location:** `src/save-orchestration.js` (Lines 100-121)

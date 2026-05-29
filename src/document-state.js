@@ -11,6 +11,14 @@ function normalizeText(value) {
   return typeof value === "string" ? value : "";
 }
 
+function normalizeRequiredLanguage(lang) {
+  const normalized = normalizeText(lang).trim();
+  if (!normalized) {
+    throw new Error("[mfe] document-state: language is required");
+  }
+  return normalized;
+}
+
 function hashStateIdentity(value) {
   const text = normalizeText(value);
   let hash = 0;
@@ -168,6 +176,7 @@ export class DocumentState {
   constructor(payloadMeta, lang, options = {}) {
     const meta =
       payloadMeta && typeof payloadMeta === "object" ? payloadMeta : {};
+    const normalizedLang = normalizeRequiredLanguage(lang);
     this.payloadMeta = {
       pageId: normalizeText(meta.pageId) || "0",
       fieldScope: normalizeText(meta.fieldScope || meta.scope) || "field",
@@ -181,7 +190,7 @@ export class DocumentState {
       normalizeText(meta.sessionId) ||
       normalizeText(meta.originKey) ||
       this.payloadMeta.fieldId;
-    this.lang = normalizeText(lang);
+    this.lang = normalizedLang;
     this.id = `${this.sessionId}|${this.lang}`;
     Object.defineProperty(this, "scopeKind", {
       value: this.payloadMeta.fieldScope,
@@ -230,12 +239,13 @@ export class DocumentState {
     if (!(store instanceof Map)) {
       throw new Error("[mfe] document-state: store must be a Map");
     }
+    const normalizedLang = normalizeRequiredLanguage(lang);
     const fieldId =
       normalizeText(payloadMeta?.fieldId) || buildPayloadFieldId(payloadMeta);
     const originKey = normalizeText(payloadMeta?.originKey) || fieldId;
     const sessionId =
       normalizeText(payloadMeta?.sessionId) || originKey || fieldId;
-    const stateId = `${sessionId}|${normalizeText(lang)}`;
+    const stateId = `${sessionId}|${normalizedLang}`;
     const existing = store.get(stateId);
     if (existing) {
       existing.recordRebound({
@@ -256,7 +266,7 @@ export class DocumentState {
         originKey,
         fieldId,
       },
-      lang,
+      normalizedLang,
       options,
     );
     store.set(state.id, state);

@@ -38,6 +38,26 @@ describe("document-state core", () => {
     expect(a.getDraft()).toBe("eins");
   });
 
+  test("constructor rejects empty language values before creating a state id", () => {
+    expect(
+      () =>
+        new DocumentState(payload, "", {
+          initialPersistedMarkdown: "bonjour",
+        }),
+    ).toThrow(/language/i);
+  });
+
+  test("getDocumentState rejects empty language values before touching the store", () => {
+    const store = new Map();
+
+    expect(() =>
+      getDocumentState(store, payload, "", {
+        initialPersistedMarkdown: "eins",
+      }),
+    ).toThrow(/language/i);
+    expect(store.size).toBe(0);
+  });
+
   test("setDraft and markSaved are the only dirty state transitions", () => {
     const state = new DocumentState(payload, "fr", {
       initialPersistedMarkdown: "bonjour",
