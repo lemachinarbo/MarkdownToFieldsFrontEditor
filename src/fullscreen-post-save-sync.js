@@ -172,13 +172,6 @@ export async function requestRenderedFragmentsDatastar({
   const orderedMissingKeys = Array.isArray(staleScopeEventDetail?.missingKeys)
     ? staleScopeEventDetail.missingKeys
     : sortCanonicalScopedKeys(missingKeys);
-  if (staleScopeEventDetail) {
-    window.dispatchEvent(
-      new CustomEvent("mfe:fragment-stale-scope", {
-        detail: staleScopeEventDetail,
-      }),
-    );
-  }
   const appliedParents = new Set();
   const queuedScopedKeys = queued
     .map((entry) => String(entry.key || "").trim())
@@ -384,6 +377,14 @@ export async function requestRenderedFragmentsDatastar({
       });
     }
   });
+
+  if (staleScopeEventDetail) {
+    window.dispatchEvent(
+      new CustomEvent("mfe:fragment-stale-scope", {
+        detail: staleScopeEventDetail,
+      }),
+    );
+  }
 
   const result = {
     cycleId,

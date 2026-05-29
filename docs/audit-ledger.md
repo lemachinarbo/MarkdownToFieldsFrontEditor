@@ -52,7 +52,7 @@
 * **Impact:** Ordering bugs, false stale-scope handling, and nondeterministic listener behavior.
 * **Required Fix:** Emit the stale-scope event only after patch processing completes, or split it into explicit pre-patch and post-patch events with documented semantics.
 * **Required Fixture:** Add a fragment-sync test with a listener that inspects the DOM during `mfe:fragment-stale-scope` and assert the event fires only after patch completion.
-* **Status:** Open
+* **Status:** Resolved
 
 ### MTF-008 - MEDIUM: Raw Selectors From Fragment Payload Are Executed Without Validation
 * **Location:** `src/fullscreen-post-save-sync.js` (Lines 214-220)
