@@ -13,7 +13,7 @@ function buildUrl(action, params = {}) {
   return `${path || ""}?${query.toString()}`;
 }
 
-async function assertApiResult(result) {
+async function assertApiResult(result, requiredFields = []) {
   if (!result?.ok) {
     throw new Error(`Request failed (${result?.status || "unknown"})`);
   }
@@ -23,6 +23,11 @@ async function assertApiResult(result) {
   }
   if (Number(data.status) !== 1) {
     throw new Error(String(data.error || "Snapshot request failed"));
+  }
+  for (const field of requiredFields) {
+    if (!(field in data)) {
+      throw new Error(`Snapshot response missing required field: ${field}`);
+    }
   }
   return data;
 }
@@ -51,7 +56,7 @@ export async function listSnapshots({ pageId, lang }) {
       parse: "json",
     },
   );
-  return assertApiResult(result);
+  return assertApiResult(result, ["snapshots"]);
 }
 
 export async function createSnapshot({
@@ -97,7 +102,7 @@ export async function getSnapshotDiff({
       parse: "json",
     },
   );
-  return assertApiResult(result);
+  return assertApiResult(result, ["diff"]);
 }
 
 export async function checkExternalChange({
@@ -118,10 +123,15 @@ export async function checkExternalChange({
       parse: "json",
     },
   );
-  return assertApiResult(result);
+  return assertApiResult(result, ["changed", "currentHash"]);
 }
 
-export async function restoreSnapshot({ pageId, lang, snapshotId, label = "" }) {
+export async function restoreSnapshot({
+  pageId,
+  lang,
+  snapshotId,
+  label = "",
+}) {
   const formData = await buildFormData({
     action: "restoreSnapshot",
     pageId,
@@ -134,7 +144,7 @@ export async function restoreSnapshot({ pageId, lang, snapshotId, label = "" }) 
     body: formData,
     parse: "json",
   });
-  return assertApiResult(result);
+  return assertApiResult(result, ["documentMarkdownB64"]);
 }
 
 export async function deleteSnapshot({ pageId, lang, snapshotId }) {

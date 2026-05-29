@@ -75,4 +75,4 @@
 * **Impact:** Silent contract drift and late-failing snapshot workflows.
 * **Required Fix:** Validate response schema per snapshot action before returning data to callers.
 * **Required Fixture:** Add snapshot-service tests for each API action that prove malformed `status: 1` payloads are rejected when required fields are missing.
-* **Status:** Open
+* **Status:** Resolved
