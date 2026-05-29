@@ -125,4 +125,25 @@ describe("save-orchestration helpers", () => {
     expect(normalized).not.toContain("<!-- section:hero -->");
     expect(normalized.length).toBeLessThan(canonicalBody.length);
   });
+
+  test("marker-bearing fallback save markdown rejects when projection fails", () => {
+    const malformedCanonicalBody = [
+      "<!-- section:hero -->",
+      "Hero content",
+      "<!-- section:broken",
+    ].join("\n");
+
+    expect(() =>
+      resolveFallbackSaveEditorMarkdown({
+        fallbackMarkdown: malformedCanonicalBody,
+        canonicalBody: malformedCanonicalBody,
+        scopeMeta: {
+          scopeKind: "section",
+          section: "hero",
+          subsection: "",
+          name: "hero",
+        },
+      }),
+    ).toThrow(/projection|fallback|scope/i);
+  });
 });

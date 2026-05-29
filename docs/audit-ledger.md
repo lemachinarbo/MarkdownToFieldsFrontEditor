@@ -44,7 +44,7 @@
 * **Impact:** Silent wrong-scope save input and harder-to-diagnose corruption when no live editor is mounted.
 * **Required Fix:** Treat projection failure on marker-bearing fallback input as a blocked save boundary, not as permission to reuse the raw fallback string.
 * **Required Fixture:** Add a save-orchestration test with malformed marker-bearing fallback markdown that forces projection failure and assert the save path rejects instead of returning raw fallback content.
-* **Status:** Open
+* **Status:** Resolved
 
 ### MTF-007 - MEDIUM: Stale-Scope Event Fires Before DOM Patch Completion
 * **Location:** `src/fullscreen-post-save-sync.js` (Lines 162-177)

@@ -122,8 +122,10 @@ export function resolveFallbackSaveEditorMarkdown(params = {}) {
     if (scopeKind === "document" || displayText) {
       return displayText;
     }
-  } catch (_error) {
-    return fallbackMarkdown;
+  } catch (error) {
+    throw new Error(
+      `[mfe] fallback save blocked: marker-bearing projection failed (${error?.message || "unknown error"})`,
+    );
   }
 
   return fallbackMarkdown;
