@@ -28,7 +28,7 @@
 * **Impact:** Wrong canonical document can be transmitted even though the save pipeline appears to have a drift check.
 * **Required Fix:** Compare the planned hash against the same full outbound canonical markdown that will be posted and later committed.
 * **Required Fixture:** Add an editor-fullscreen save test that mutates only frontmatter after plan creation and proves the preflight hash mismatch path is triggered.
-* **Status:** Open
+* **Status:** Resolved
 
 ### MTF-005 - HIGH: Empty Language Values Collapse Distinct States Into One Key
 * **Location:** `src/document-state.js` (Lines 184-185, 238-238)

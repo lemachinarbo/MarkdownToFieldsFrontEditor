@@ -4975,7 +4975,7 @@ function saveAllEditors() {
         bytesMarkSavedArg,
       });
       const plannedHash = plannedHashesByStateId.get(state.id) || "";
-      const payloadHash = hashStateIdentity(stateDraftMarkdown);
+      const payloadHash = hashStateIdentity(outboundMarkdownForSave);
       if (plannedHash && plannedHash !== payloadHash) {
         const mismatchError = new Error(
           `[mfe] save-pipeline: draft hash drift before network for ${state.id}`,
