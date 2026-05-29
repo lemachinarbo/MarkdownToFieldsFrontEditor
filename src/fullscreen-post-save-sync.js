@@ -22,7 +22,6 @@ import {
 } from "./markdown-text-utils.js";
 import {
   applyChangedHtmlEditableOnly,
-  applyDatastarPatchElement,
   applyDatastarPatchToNodes,
   applyEditableFallbackInSectionHosts,
   hasDescendantScopedDrafts,
@@ -33,6 +32,32 @@ import {
   syncNonEditableImagesFromPatch,
 } from "./fullscreen-preview-sync.js";
 import { resolveMarkdownForScopeFromCanonical } from "./canonical-state.js";
+
+function assertValidPatchSelector(selector) {
+  const value = String(selector || "").trim();
+  if (!value) {
+    throw new Error("[mfe] fragment patch blocked: invalid selector (empty)");
+  }
+  const isKeyIdSelector = /^\[data-mfe-key-id="[A-Za-z0-9_-]+"\]$/.test(value);
+  const isIdSelector = /^#[A-Za-z][A-Za-z0-9_-]*$/.test(value);
+  if (!isKeyIdSelector && !isIdSelector) {
+    throw new Error(
+      `[mfe] fragment patch blocked: invalid selector (${value})`,
+    );
+  }
+  return value;
+}
+
+function queryPatchSelectorNodes(selector) {
+  const validatedSelector = assertValidPatchSelector(selector);
+  try {
+    return Array.from(document.querySelectorAll(validatedSelector));
+  } catch (error) {
+    throw new Error(
+      `[mfe] fragment patch blocked: invalid selector (${validatedSelector})`,
+    );
+  }
+}
 
 /**
  * Requests rendered fragment patches and applies safe patch ordering rules.
@@ -210,9 +235,7 @@ export async function requestRenderedFragmentsDatastar({
       }
     }
     const patchHtml = patch.elements || "";
-    const candidateNodes = Array.from(
-      document.querySelectorAll(patch.selector || ""),
-    );
+    const candidateNodes = queryPatchSelectorNodes(patch.selector || "");
     const keyParts = String(patch.key || "").split(":");
     const isSectionParentKey =
       patch.key?.startsWith("section:") && keyParts.length === 2;
@@ -342,8 +365,8 @@ export async function requestRenderedFragmentsDatastar({
         return;
       }
     }
-    const appliedCount = applyDatastarPatchElement({
-      selector: patch.selector || "",
+    const appliedCount = applyDatastarPatchToNodes({
+      nodes: candidateNodes,
       mode: patch.mode || "inner",
       elements: patchHtml,
       cycleId,

@@ -60,7 +60,7 @@
 * **Impact:** Patch-cycle aborts, preview corruption, and widened trust surface for server-provided selectors.
 * **Required Fix:** Validate selectors against the module's expected selector shape and reject invalid selector payloads before calling DOM query APIs.
 * **Required Fixture:** Add a fragment-sync test that injects an invalid selector in a patch payload and asserts the cycle reports a controlled error instead of throwing from `querySelectorAll()`.
-* **Status:** Open
+* **Status:** Resolved
 
 ### MTF-009 - MEDIUM: Identity Parsers Disagree On Three-Part `data-mfe` Paths
 * **Location:** `src/identity-resolver.js` (Lines 59-65, 132-137)

@@ -24,6 +24,49 @@ function buildTestSchema() {
   ]);
 }
 
+function installFragmentFetchStub(ssePayload) {
+  const originalFetch = global.fetch;
+  const encoder = new TextEncoder();
+
+  global.fetch = jest.fn().mockImplementation((url) => {
+    if (String(url).includes("markdownFrontEditorToken=1")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: async () => '<input name="csrf" value="token-value">',
+      });
+    }
+    if (String(url).includes("markdownFrontEditorFragments=1")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        body: {
+          getReader() {
+            let done = false;
+            return {
+              async read() {
+                if (done) {
+                  return { done: true, value: undefined };
+                }
+                done = true;
+                return {
+                  done: false,
+                  value: encoder.encode(ssePayload),
+                };
+              },
+            };
+          },
+        },
+      });
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  });
+
+  return () => {
+    global.fetch = originalFetch;
+  };
+}
+
 if (typeof global.TextEncoder === "undefined") {
   global.TextEncoder = TextEncoder;
 }
@@ -135,48 +178,13 @@ describe("fullscreen post-save sync active editor reseed", () => {
       '<div id="body-host"><span>body before</span></div>',
     ].join("");
 
-    const originalFetch = global.fetch;
-    const encoder = new TextEncoder();
     const ssePayload = [
       'event: datastar-patch-signals\ndata: signals {"mfe_missing":["field:hero:title"]}',
       "event: datastar-patch-elements\ndata: key field:body:text\ndata: selector #body-host\ndata: mode inner\ndata: elements <p>body after</p>",
       "",
     ].join("\n\n");
     const eventSnapshots = [];
-
-    global.fetch = jest.fn().mockImplementation((url) => {
-      if (String(url).includes("markdownFrontEditorToken=1")) {
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          text: async () => '<input name="csrf" value="token-value">',
-        });
-      }
-      if (String(url).includes("markdownFrontEditorFragments=1")) {
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          body: {
-            getReader() {
-              let done = false;
-              return {
-                async read() {
-                  if (done) {
-                    return { done: true, value: undefined };
-                  }
-                  done = true;
-                  return {
-                    done: false,
-                    value: encoder.encode(ssePayload),
-                  };
-                },
-              };
-            },
-          },
-        });
-      }
-      throw new Error(`Unexpected fetch URL: ${url}`);
-    });
+    const restoreFetch = installFragmentFetchStub(ssePayload);
 
     const onStaleScope = () => {
       eventSnapshots.push(
@@ -214,7 +222,44 @@ describe("fullscreen post-save sync active editor reseed", () => {
       );
     } finally {
       window.removeEventListener("mfe:fragment-stale-scope", onStaleScope);
-      global.fetch = originalFetch;
+      restoreFetch();
+    }
+  });
+
+  test("invalid fragment selectors fail with a controlled error instead of querySelectorAll", async () => {
+    document.body.innerHTML =
+      '<div id="body-host"><span>body before</span></div>';
+    const ssePayload = [
+      "event: datastar-patch-elements\ndata: key field:body:text\ndata: selector [[broken\ndata: mode inner\ndata: elements <p>body after</p>",
+      "",
+    ].join("\n\n");
+    const restoreFetch = installFragmentFetchStub(ssePayload);
+
+    try {
+      await expect(
+        requestRenderedFragmentsDatastar({
+          pageId: "123",
+          lang: "default",
+          keys: ["field:body:text"],
+          mountTargets: {
+            "field:body:text": [{ selector: "#body-host", mode: "inner" }],
+          },
+          graphChecksum: "",
+          graphNodeCount: 0,
+          graphKeys: [],
+          patchCycleCounter: {
+            next: () => 78,
+          },
+          hasPendingUnsavedChanges: () => false,
+          resolveHostImageSrc: (_host, src) => src,
+          debugWarn: jest.fn(),
+          debugInfo: jest.fn(),
+          isInlineOpen: () => false,
+          draftScopedKeys: [],
+        }),
+      ).rejects.toThrow(/fragment patch blocked: invalid selector/i);
+    } finally {
+      restoreFetch();
     }
   });
 });
