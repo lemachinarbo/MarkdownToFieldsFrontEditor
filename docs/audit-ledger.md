@@ -12,7 +12,7 @@
 * **Impact:** Silent UI desynchronization and incorrect baseline for the next edit/save cycle.
 * **Required Fix:** Gate active editor reseeding on an explicit successful apply for the active scoped key, and fail or defer reseeding when the active patch was skipped or unresolved.
 * **Required Fixture:** Add a save-response test where the active key is present in `requestedKeys` but absent from `patchResult.applied`, and assert that neither active markdown state nor editor content is updated.
-* **Status:** Open
+* **Status:** Resolved
 
 ### MTF-003 - HIGH: Save Drift Guard Ignores Frontmatter Mutations
 * **Location:** `src/save-orchestration.js` (Lines 173-176)

@@ -217,7 +217,9 @@ export async function requestRenderedFragmentsDatastar({
       }
     }
     const patchHtml = patch.elements || "";
-    const candidateNodes = Array.from(document.querySelectorAll(patch.selector || ""));
+    const candidateNodes = Array.from(
+      document.querySelectorAll(patch.selector || ""),
+    );
     const keyParts = String(patch.key || "").split(":");
     const isSectionParentKey =
       patch.key?.startsWith("section:") && keyParts.length === 2;
@@ -274,7 +276,8 @@ export async function requestRenderedFragmentsDatastar({
 
       const imageSynced = candidateNodes.reduce(
         (count, node) =>
-          count + syncNonEditableImagesFromPatch(node, patchHtml, resolveHostImageSrc),
+          count +
+          syncNonEditableImagesFromPatch(node, patchHtml, resolveHostImageSrc),
         0,
       );
       if (imageSynced > 0) {
@@ -444,8 +447,9 @@ export async function handlePrimarySaveResponse({
     preferDocumentCacheFallback = false,
     savedScopeKind = "",
   } = options;
-  const resolvedSavedScopeKind =
-    normalizeScopeKind(savedScopeKind || activeFieldScope || "field");
+  const resolvedSavedScopeKind = normalizeScopeKind(
+    savedScopeKind || activeFieldScope || "field",
+  );
   const activeScopedKey = getActiveScopedHtmlKey();
   const htmlMapKeys =
     data?.htmlMap && typeof data.htmlMap === "object"
@@ -479,7 +483,9 @@ export async function handlePrimarySaveResponse({
   );
   const requestedKeysFromServer =
     canonicalResponseKeys.size > 0
-      ? rawRequestedKeysFromServer.filter((key) => canonicalResponseKeys.has(key))
+      ? rawRequestedKeysFromServer.filter((key) =>
+          canonicalResponseKeys.has(key),
+        )
       : rawRequestedKeysFromServer;
   debugWarn("[mfe:save-sync] fragment response", {
     activeScopedKey,
@@ -532,7 +538,9 @@ export async function handlePrimarySaveResponse({
       source: "handlePrimarySaveResponse",
     });
   }
-  const sections = Array.isArray(window.MarkdownFrontEditorConfig?.sectionsIndex)
+  const sections = Array.isArray(
+    window.MarkdownFrontEditorConfig?.sectionsIndex,
+  )
     ? window.MarkdownFrontEditorConfig.sectionsIndex
     : [];
   const fields = Array.isArray(window.MarkdownFrontEditorConfig?.fieldsIndex)
@@ -568,7 +576,10 @@ export async function handlePrimarySaveResponse({
   if (compiled.report?.graphChecksum) {
     window.__MFE_GRAPH = compiled.report.graphChecksum;
   }
-  if (compiled.report?.ambiguous?.length || compiled.report?.unresolved?.length) {
+  if (
+    compiled.report?.ambiguous?.length ||
+    compiled.report?.unresolved?.length
+  ) {
     debugWarn("[mfe:bind] compile report", compiled.report);
     const rows = [
       ...(compiled.report.ambiguous || []).map((value) => ({
@@ -588,6 +599,7 @@ export async function handlePrimarySaveResponse({
     activeTarget?.getAttribute("data-page") ||
     activeFieldId?.split(":")?.[0] ||
     "0";
+  let allowActiveEditorReseed = true;
   if (!requestedKeys.length) {
     debugWarn(
       "[mfe:fragment-sync] no canonical mount keys, preview patch skipped",
@@ -595,6 +607,9 @@ export async function handlePrimarySaveResponse({
         changedKeys: requestedKeysFromServer,
       },
     );
+    if (activeScopedKey && requestedKeysFromServer.includes(activeScopedKey)) {
+      allowActiveEditorReseed = false;
+    }
   } else {
     try {
       const patchResult = await requestRenderedFragments({
@@ -608,21 +623,33 @@ export async function handlePrimarySaveResponse({
           ? compiled.report.graphKeys
           : [],
       });
+      const appliedKeys = Array.from(
+        new Set(
+          (Array.isArray(patchResult?.applied) ? patchResult.applied : [])
+            .filter((entry) => Number(entry?.updated || 0) > 0)
+            .map((entry) => String(entry?.key || ""))
+            .filter(Boolean),
+        ),
+      );
+      const skippedKeys = Array.from(
+        new Set([
+          ...nonMountedRequestedKeys,
+          ...requestedKeys.filter((key) => !appliedKeys.includes(key)),
+        ]),
+      );
+      if (activeScopedKey && requestedKeys.includes(activeScopedKey)) {
+        allowActiveEditorReseed = appliedKeys.includes(activeScopedKey);
+        if (!allowActiveEditorReseed) {
+          debugWarn("[mfe:save-sync] active editor reseed skipped", {
+            activeScopedKey,
+            requestedKeys,
+            appliedKeys,
+            skippedKeys,
+            cycleId: patchResult?.cycleId,
+          });
+        }
+      }
       if (isDevMode()) {
-        const appliedKeys = Array.from(
-          new Set(
-            (Array.isArray(patchResult?.applied) ? patchResult.applied : [])
-              .filter((entry) => Number(entry?.updated || 0) > 0)
-              .map((entry) => String(entry?.key || ""))
-              .filter(Boolean),
-          ),
-        );
-        const skippedKeys = Array.from(
-          new Set([
-            ...nonMountedRequestedKeys,
-            ...requestedKeys.filter((key) => !appliedKeys.includes(key)),
-          ]),
-        );
         debugWarn("[mfe:fragment-sync] coverage", {
           cycleId: patchResult?.cycleId,
           requestedKeys,
@@ -633,7 +660,10 @@ export async function handlePrimarySaveResponse({
       const staleScopeKeys = Array.isArray(patchResult?.staleScopeKeys)
         ? patchResult.staleScopeKeys
         : [];
-      if (Array.isArray(patchResult?.missingKeys) && patchResult.missingKeys.length) {
+      if (
+        Array.isArray(patchResult?.missingKeys) &&
+        patchResult.missingKeys.length
+      ) {
         const fallbackMissingKeys = patchResult.missingKeys.filter(
           (key) =>
             !staleScopeKeys.some((scopeKey) =>
@@ -674,6 +704,9 @@ export async function handlePrimarySaveResponse({
         message: error?.message || String(error),
         changedKeys: requestedKeys,
       });
+      if (activeScopedKey && requestedKeys.includes(activeScopedKey)) {
+        allowActiveEditorReseed = false;
+      }
     }
   }
   syncFieldsIndexToEditableAttrs({
@@ -686,7 +719,7 @@ export async function handlePrimarySaveResponse({
   annotateBoundImages();
   initEditors();
 
-  if (updateActiveEditor && activeTarget) {
+  if (updateActiveEditor && activeTarget && allowActiveEditorReseed) {
     const currentScopedMarkdown = trimTrailingLineBreaks(
       typeof finalMarkdown === "string" ? finalMarkdown : "",
     );
