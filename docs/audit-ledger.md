@@ -67,8 +67,7 @@
 * **Failure Mode:** `parseDataMfe()` interprets a three-part path as a `field` shape with `section/subsection/name`, while `resolveDataMfeCandidates()` resolves the same three-part path to a `subsection:` candidate. Different callers can derive different canonical meanings from the same authored `data-mfe` value.
 * **Impact:** Wrong-key binding, unstable identity resolution across refactors, and patch targeting drift.
 * **Required Fix:** Define one canonical interpretation for three-part paths and make all identity helpers share the same mapping rules.
-* **Required Fixture:** Add an identity-resolver consistency test that feeds the same three-part `data-mfe` value through both helpers and asserts they resolve to the same canonical scope/key.
-* **Status:** Open
+* **Status:** Resolved
 
 ### MTF-010 - LOW: Snapshot API Boundary Accepts Any Object-Shaped Success Payload
 * **Location:** `src/snapshot-service.js` (Lines 15-25)

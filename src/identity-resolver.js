@@ -132,8 +132,7 @@ export function resolveDataMfeCandidates(rawValue, lookup) {
   if (pathParts.length >= 3) {
     const [a, b, c] = pathParts;
     const fieldSubKey = `${a}/${b}/${c}`;
-    if (fieldSubsectionKeys?.has(fieldSubKey))
-      out.add(`subsection:${a}:${b}:${c}`);
+    if (fieldSubsectionKeys?.has(fieldSubKey)) out.add(`field:${a}:${b}:${c}`);
     return Array.from(out);
   }
   return Array.from(out);

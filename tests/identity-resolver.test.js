@@ -2,7 +2,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { buildSemanticLookup, scopedHtmlKeyFromMeta } from "../src/sync-by-key.js";
+import {
+  buildSemanticLookup,
+  scopedHtmlKeyFromMeta,
+} from "../src/sync-by-key.js";
 import {
   inferContextFromAncestors,
   parseDataMfe,
@@ -70,9 +73,9 @@ describe("identity resolver", () => {
     expect(resolveDataMfeCandidates("field:hero/title", lookup)).toEqual([
       "field:hero:title",
     ]);
-    expect(resolveDataMfeCandidates("subsection:hero/cta/title", lookup)).toEqual([
-      "subsection:hero:cta:title",
-    ]);
+    expect(
+      resolveDataMfeCandidates("subsection:hero/cta/title", lookup),
+    ).toEqual(["subsection:hero:cta:title"]);
     expect(resolveDataMfeCandidates("hero", lookup)).toEqual([
       "section:hero",
       "field:hero",
@@ -82,8 +85,25 @@ describe("identity resolver", () => {
       "field:hero:cta",
     ]);
     expect(resolveDataMfeCandidates("hero/cta/title", lookup)).toEqual([
-      "subsection:hero:cta:title",
+      "field:hero:cta:title",
     ]);
+  });
+
+  test("three-part data-mfe paths resolve consistently between parseDataMfe and resolveDataMfeCandidates", () => {
+    const lookup = buildSemanticLookup({
+      sections: [{ name: "hero", subsections: [{ name: "cta" }] }],
+      fields: [{ name: "title", section: "hero", subsection: "cta" }],
+    });
+
+    const parsed = parseDataMfe("hero/cta/title");
+    expect(parsed?.scope).toBe("field");
+    expect(parsed?.section).toBe("hero");
+    expect(parsed?.subsection).toBe("cta");
+    expect(parsed?.name).toBe("title");
+
+    const candidates = resolveDataMfeCandidates("hero/cta/title", lookup);
+    expect(candidates).toContain("field:hero:cta:title");
+    expect(candidates).not.toContain("subsection:hero:cta:title");
   });
 
   test("context fallback resolves field/subsection keys from ancestors", () => {
@@ -120,10 +140,9 @@ describe("identity resolver", () => {
       section: "hero",
       subsection: "cta",
     });
-    expect(resolveDataMfeCandidatesWithContext("title", subChild, lookup)).toEqual([
-      "subsection:hero:cta:title",
-      "field:hero:title",
-    ]);
+    expect(
+      resolveDataMfeCandidatesWithContext("title", subChild, lookup),
+    ).toEqual(["subsection:hero:cta:title", "field:hero:title"]);
     expect(resolveDataMfeKeyWithContext("title", subChild, lookup)).toBe("");
   });
 
@@ -170,7 +189,7 @@ describe("identity resolver", () => {
     });
 
     const syncByKeySource = readSource("src/sync-by-key.js");
-    expect(syncByKeySource.includes("from \"./identity-resolver.js\"")).toBe(
+    expect(syncByKeySource.includes('from "./identity-resolver.js"')).toBe(
       true,
     );
   });
