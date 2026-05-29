@@ -34,6 +34,37 @@ describe("save-orchestration helpers", () => {
     expect(events[0]?.type).toBe("SAVE_PLAN_BUILT");
   });
 
+  test("buildSavePlan hashes the full save payload so frontmatter-only drift is detectable before send", () => {
+    const events = [];
+    let frontmatter = "---\ntitle: First\n---\n";
+    const state = {
+      id: "doc:en",
+      lang: "en",
+      isDirty: () => true,
+      isUnreplayable: () => false,
+      getDraft: () => "Body stays the same",
+      recomposeMarkdownForSave: (bodyDraft) => `${frontmatter}${bodyDraft}`,
+    };
+
+    const { plannedHashesByStateId } = buildSavePlan({
+      sessionStateKey: "session:frontmatter",
+      currentLang: "en",
+      activeFieldScope: "document",
+      listStatesForActiveSession: () => [state],
+      emitDocStateLog: (type, payload) => events.push({ type, payload }),
+      hashStateIdentity: (value) => String(value || ""),
+    });
+
+    frontmatter = "---\ntitle: Second\n---\n";
+    const outboundPayload = state.recomposeMarkdownForSave(state.getDraft());
+
+    expect(plannedHashesByStateId.get("doc:en")).toBe(
+      "---\ntitle: First\n---\nBody stays the same",
+    );
+    expect(plannedHashesByStateId.get("doc:en")).not.toBe(outboundPayload);
+    expect(events[0]?.type).toBe("SAVE_PLAN_BUILT");
+  });
+
   test("detectDirtyDesync returns null when editor/state are equal", () => {
     const cleanState = {
       lang: "en",

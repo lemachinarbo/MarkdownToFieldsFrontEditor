@@ -4,6 +4,14 @@ import {
 } from "./canonical-scope-session.js";
 import { normalizeScopeKind } from "./scope-slice.js";
 
+function getStateSavePayloadMarkdown(state) {
+  const bodyDraft = String(state?.getDraft?.() || "");
+  if (typeof state?.recomposeMarkdownForSave === "function") {
+    return String(state.recomposeMarkdownForSave(bodyDraft) || "");
+  }
+  return bodyDraft;
+}
+
 export function detectDirtyDesync(params = {}) {
   const {
     sessionStates = [],
@@ -173,7 +181,7 @@ export function buildSavePlan(params = {}) {
     plannedHashesByStateId: new Map(
       saveCandidates.map((state) => [
         state.id,
-        params.hashStateIdentity(String(state.getDraft() || "")),
+        params.hashStateIdentity(getStateSavePayloadMarkdown(state)),
       ]),
     ),
   };

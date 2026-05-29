@@ -20,7 +20,7 @@
 * **Impact:** Silent pre-network drift escapes the save guard and can commit unintended document metadata changes.
 * **Required Fix:** Hash the exact canonical save payload for each state, including frontmatter, instead of hashing body draft only.
 * **Required Fixture:** Add a save-plan test where the document body stays stable but frontmatter changes between plan construction and send, and assert the drift guard blocks the save.
-* **Status:** Open
+* **Status:** Resolved
 
 ### MTF-004 - HIGH: Runtime Payload Hash Check Reuses Body-Only Draft
 * **Location:** `src/editor-fullscreen.js` (Lines 4500-4500, 4977-4978)
