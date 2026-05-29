@@ -2,6 +2,14 @@ import { getMetaAttr } from "./editor-shared-helpers.js";
 import { normalizeHtmlImageSources } from "./editor-image-annotations.js";
 import { scopedHtmlKeyFromMeta } from "./sync-by-key.js";
 
+const DISALLOWED_FRAGMENT_TAGS = new Set([
+  "script",
+  "iframe",
+  "object",
+  "embed",
+  "template",
+]);
+
 /**
  * Patch editable hosts directly when fragment updates match known scoped keys.
  * Does not read or mutate canonical markdown authority.
@@ -103,6 +111,7 @@ export function applyDatastarPatchElement({
  */
 export function applyDatastarPatchToNodes({ nodes, mode, elements, cycleId }) {
   if (!nodes.length) return 0;
+  assertSafeFragmentHtml(elements || "");
   const patchMode = mode || "inner";
   let updated = 0;
   nodes.forEach((node) => {
@@ -119,6 +128,41 @@ export function applyDatastarPatchToNodes({ nodes, mode, elements, cycleId }) {
     updated += 1;
   });
   return updated;
+}
+
+function assertSafeFragmentHtml(html) {
+  const parsed = parseFragmentHtmlDocument(html);
+  if (!parsed?.body) {
+    throw new Error("Unsafe fragment HTML: unable to parse patch payload");
+  }
+  const elements = Array.from(parsed.body.querySelectorAll("*"));
+  elements.forEach((element) => {
+    const tagName = element.tagName?.toLowerCase() || "";
+    if (DISALLOWED_FRAGMENT_TAGS.has(tagName)) {
+      throw new Error(
+        `Unsafe fragment HTML: disallowed <${tagName}> tag in patch payload`,
+      );
+    }
+    Array.from(element.attributes || []).forEach((attribute) => {
+      const name = attribute.name?.toLowerCase() || "";
+      const value = String(attribute.value || "")
+        .trim()
+        .toLowerCase();
+      if (name.startsWith("on")) {
+        throw new Error(
+          `Unsafe fragment HTML: disallowed ${attribute.name} attribute in patch payload`,
+        );
+      }
+      if (
+        (name === "href" || name === "src" || name === "xlink:href") &&
+        value.startsWith("javascript:")
+      ) {
+        throw new Error(
+          `Unsafe fragment HTML: disallowed ${attribute.name} URL in patch payload`,
+        );
+      }
+    });
+  });
 }
 
 /**
@@ -360,4 +404,3 @@ export function isScopeOrDescendantKey(key, scopeKey) {
   if (!key || !scopeKey) return false;
   return key === scopeKey || isDescendantKey(key, scopeKey);
 }
-
