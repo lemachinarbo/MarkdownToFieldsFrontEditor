@@ -5227,19 +5227,19 @@ function saveAllEditorsNow() {
         const plannedHash = hashStateIdentity(
           preComposeComparableMarkdownForHash,
         );
-        const payloadComparableMarkdownForHash = normalizeLineEndingsToLf(
+        const rawOutboundMarkdownForSave = isDocumentSaveScope
+          ? composeDocumentMarkdownForSave(finalCanonicalBody, {
+              lang: state.lang,
+              state,
+            })
+          : scopedMarkdownForSave;
+        const outboundMarkdownForSave = normalizeLineEndingsToLf(
           restoreEscapedMarkdownSyntaxForScopedSave(
-            isDocumentSaveScope
-              ? typeof state.recomposeMarkdownForSave === "function"
-                ? String(state.recomposeMarkdownForSave(finalCanonicalBody) || "")
-                : String(finalCanonicalBody || "")
-              : scopedMarkdownForSave,
+            rawOutboundMarkdownForSave,
             state.getPersistedMarkdown(),
           ),
         );
-        const payloadHash = hashStateIdentity(
-          payloadComparableMarkdownForHash,
-        );
+        const payloadHash = hashStateIdentity(outboundMarkdownForSave);
         if (plannedHash && plannedHash !== payloadHash) {
           const mismatchError = new Error(
             `[mfe] save-pipeline: draft hash drift before network for ${state.id}`,
@@ -5255,18 +5255,6 @@ function saveAllEditorsNow() {
           });
           continue;
         }
-        const rawOutboundMarkdownForSave = isDocumentSaveScope
-          ? composeDocumentMarkdownForSave(finalCanonicalBody, {
-              lang: state.lang,
-              state,
-            })
-          : scopedMarkdownForSave;
-        const outboundMarkdownForSave = normalizeLineEndingsToLf(
-          restoreEscapedMarkdownSyntaxForScopedSave(
-            rawOutboundMarkdownForSave,
-            state.getPersistedMarkdown(),
-          ),
-        );
         emitStageMarkdownDiagnostic(
           "payload_sent_backend",
           outboundMarkdownForSave,
