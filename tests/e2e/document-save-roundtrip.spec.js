@@ -97,15 +97,15 @@ async function normalizeHeroTitleToBaseline() {
 async function normalizeV2MatrixBaseline() {
   await resetHomesFromFixtures();
   let current = await readEn();
-  current = current.replace(/# The Urban <br>Farm(?:\s*V2)?/g, "# The Urban <br>Farm");
+  current = current.replace(
+    /# The Urban <br>Farm(?:\s*V2)?/g,
+    "# The Urban <br>Farm",
+  );
   current = current.replace(
     /We grow food and ideas in the city(?: V2)?\.[^\n]*/g,
     "We grow food and ideas in the city. From rooftop gardens to indoor farms, we craft systems that actually produce. We work where soil, design, and tech collide.",
   );
-  current = current.replace(
-    /### How we work(?:\s*V2)?s*/g,
-    "### How we work",
-  );
+  current = current.replace(/### How we work(?:\s*V2)?s*/g, "### How we work");
   current = current.replace(
     /Mushrooms and sprouts(?:\s*V2)?/g,
     "Mushrooms and sprouts",
@@ -185,7 +185,10 @@ async function ensureAuthenticated(page) {
     (await userInput.count()) > 0 && (await passInput.count()) > 0;
   if (!needsLogin) return true;
 
-  const bodyText = await page.locator("body").innerText().catch(() => "");
+  const bodyText = await page
+    .locator("body")
+    .innerText()
+    .catch(() => "");
   if (/SessionLoginThrottle/i.test(bodyText)) return false;
 
   await userInput.first().fill(ADMIN_USER);
@@ -262,7 +265,9 @@ async function ensureSplitLanguageSelected(page, languageLabel) {
   }
   const languageSelect = page.getByRole("combobox").first();
   await expect(languageSelect).toBeVisible();
-  await languageSelect.selectOption({ label: String(languageLabel || "Spanish") });
+  await languageSelect.selectOption({
+    label: String(languageLabel || "Spanish"),
+  });
   await expect(getActiveSecondaryEditor(page)).toBeVisible();
 }
 
@@ -274,7 +279,10 @@ async function openFullscreenEditor(page) {
   const isWindowOpen = async () =>
     editorWindow.isVisible({ timeout: 800 }).catch(() => false);
   if (
-    (await saveButton.first().isVisible({ timeout: 1500 }).catch(() => false)) &&
+    (await saveButton
+      .first()
+      .isVisible({ timeout: 1500 })
+      .catch(() => false)) &&
     (await isWindowOpen())
   ) {
     return true;
@@ -334,8 +342,10 @@ async function openFullscreenEditor(page) {
 
   if (openedByApi) {
     const opened =
-      (await saveButton.first().isVisible({ timeout: 5000 }).catch(() => false)) &&
-      (await isWindowOpen());
+      (await saveButton
+        .first()
+        .isVisible({ timeout: 5000 })
+        .catch(() => false)) && (await isWindowOpen());
     if (opened) {
       return true;
     }
@@ -351,12 +361,16 @@ async function openFullscreenEditor(page) {
 
   for (const selector of candidateSelectors) {
     const target = page.locator(selector).first();
-    const visible = await target.isVisible({ timeout: 2500 }).catch(() => false);
+    const visible = await target
+      .isVisible({ timeout: 2500 })
+      .catch(() => false);
     if (!visible) continue;
     await target.dblclick({ force: true });
     const opened =
-      (await saveButton.first().isVisible({ timeout: 4000 }).catch(() => false)) &&
-      (await isWindowOpen());
+      (await saveButton
+        .first()
+        .isVisible({ timeout: 4000 })
+        .catch(() => false)) && (await isWindowOpen());
     if (opened) {
       return true;
     }
@@ -399,8 +413,10 @@ async function openFullscreenEditor(page) {
 
   if (openedByVirtualTarget) {
     const opened =
-      (await saveButton.first().isVisible({ timeout: 5000 }).catch(() => false)) &&
-      (await isWindowOpen());
+      (await saveButton
+        .first()
+        .isVisible({ timeout: 5000 })
+        .catch(() => false)) && (await isWindowOpen());
     if (opened) {
       return true;
     }
@@ -415,21 +431,27 @@ async function openFullscreenEditor(page) {
   });
 
   return Boolean(
-    (await saveButton.first().isVisible({ timeout: 8000 }).catch(() => false)) &&
-      (await isWindowOpen()),
+    (await saveButton
+      .first()
+      .isVisible({ timeout: 8000 })
+      .catch(() => false)) && (await isWindowOpen()),
   );
 }
 
 async function navigateToDocumentScope(page) {
   const windowShell = page.locator('[data-mfe-window="true"]').last();
-  const documentLink = windowShell.getByRole("link", { name: "Document" }).first();
+  const documentLink = windowShell
+    .getByRole("link", { name: "Document" })
+    .first();
 
   if (await documentLink.isVisible({ timeout: 1500 }).catch(() => false)) {
     await documentLink.click();
     return;
   }
 
-  const sectionLink = windowShell.getByRole("link", { name: /^Section:/ }).first();
+  const sectionLink = windowShell
+    .getByRole("link", { name: /^Section:/ })
+    .first();
   if (await sectionLink.isVisible({ timeout: 3000 }).catch(() => false)) {
     await sectionLink.click();
   }
@@ -443,10 +465,9 @@ async function ensureDocumentScopeHydrated(page) {
   const editor = getActivePrimaryEditor(page);
   await expect(editor).toBeVisible();
   await expect
-    .poll(
-      async () => String((await editor.textContent()) || "").length,
-      { timeout: 10000 },
-    )
+    .poll(async () => String((await editor.textContent()) || "").length, {
+      timeout: 10000,
+    })
     .toBeGreaterThan(200);
   await waitForEditorTextContains(page, "How we work");
 }
@@ -485,7 +506,9 @@ async function openScopeFromCanonical(
         virtual.setAttribute("data-mfe-subsection", String(subsection));
       }
       virtual.setAttribute("data-mfe-markdown-kind", "canonical");
-      const encoded = btoa(unescape(encodeURIComponent(String(markdown || ""))));
+      const encoded = btoa(
+        unescape(encodeURIComponent(String(markdown || ""))),
+      );
       virtual.setAttribute("data-markdown-b64", encoded);
 
       try {
@@ -506,13 +529,12 @@ async function openScopeFromCanonical(
   expect(opened.ok, opened.reason).toBe(true);
   await expect
     .poll(() =>
-      page.evaluate(
-        () =>
-          Boolean(
-            window.MarkdownFrontEditor &&
-              typeof window.MarkdownFrontEditor.isOpen === "function" &&
-              window.MarkdownFrontEditor.isOpen(),
-          ),
+      page.evaluate(() =>
+        Boolean(
+          window.MarkdownFrontEditor &&
+          typeof window.MarkdownFrontEditor.isOpen === "function" &&
+          window.MarkdownFrontEditor.isOpen(),
+        ),
       ),
     )
     .toBe(true);
@@ -576,8 +598,14 @@ async function selectPrimaryEditorTextRange(page, startOffset, endOffset) {
         (sum, textNode) => sum + String(textNode.textContent || "").length,
         0,
       );
-      const start = Math.max(0, Math.min(totalLength, Number(startOffset || 0)));
-      const end = Math.max(start, Math.min(totalLength, Number(endOffset || 0)));
+      const start = Math.max(
+        0,
+        Math.min(totalLength, Number(startOffset || 0)),
+      );
+      const end = Math.max(
+        start,
+        Math.min(totalLength, Number(endOffset || 0)),
+      );
 
       function locate(offset) {
         let consumed = 0;
@@ -617,14 +645,26 @@ async function selectPrimaryEditorTextRange(page, startOffset, endOffset) {
 }
 
 async function replaceEntirePrimaryEditorText(page, nextText) {
-  const currentText = String((await getActivePrimaryEditor(page).textContent()) || "");
+  const currentText = String(
+    (await getActivePrimaryEditor(page).textContent()) || "",
+  );
   await selectPrimaryEditorTextRange(page, 0, currentText.length);
   await page.keyboard.type(String(nextText || ""));
 }
 
-async function replacePrimaryEditorBoundaryText(page, direction, charCount, nextText) {
-  const currentText = String((await getActivePrimaryEditor(page).textContent()) || "");
-  const safeCount = Math.max(0, Math.min(currentText.length, Number(charCount || 0)));
+async function replacePrimaryEditorBoundaryText(
+  page,
+  direction,
+  charCount,
+  nextText,
+) {
+  const currentText = String(
+    (await getActivePrimaryEditor(page).textContent()) || "",
+  );
+  const safeCount = Math.max(
+    0,
+    Math.min(currentText.length, Number(charCount || 0)),
+  );
   if (direction === "start") {
     await selectPrimaryEditorTextRange(page, 0, safeCount);
   } else {
@@ -638,17 +678,32 @@ async function replacePrimaryEditorBoundaryText(page, direction, charCount, next
 }
 
 async function insertTokenBeforePrimaryEditorNeedle(page, needle, token) {
-  const currentText = String((await getActivePrimaryEditor(page).textContent()) || "");
+  const currentText = String(
+    (await getActivePrimaryEditor(page).textContent()) || "",
+  );
   const index = currentText.indexOf(String(needle || ""));
-  expect(index, `needle not found in primary editor: ${needle}`).toBeGreaterThanOrEqual(0);
+  expect(
+    index,
+    `needle not found in primary editor: ${needle}`,
+  ).toBeGreaterThanOrEqual(0);
   await selectPrimaryEditorTextRange(page, index, index);
   await page.keyboard.type(String(token || ""));
 }
 
-async function insertTokenAtPrimaryEditorNeedleOffset(page, needle, offset, token) {
-  const currentText = String((await getActivePrimaryEditor(page).textContent()) || "");
+async function insertTokenAtPrimaryEditorNeedleOffset(
+  page,
+  needle,
+  offset,
+  token,
+) {
+  const currentText = String(
+    (await getActivePrimaryEditor(page).textContent()) || "",
+  );
   const anchor = currentText.indexOf(String(needle || ""));
-  expect(anchor, `needle not found in primary editor: ${needle}`).toBeGreaterThanOrEqual(0);
+  expect(
+    anchor,
+    `needle not found in primary editor: ${needle}`,
+  ).toBeGreaterThanOrEqual(0);
   const position = Math.max(
     0,
     Math.min(currentText.length, anchor + Number(offset || 0)),
@@ -658,7 +713,9 @@ async function insertTokenAtPrimaryEditorNeedleOffset(page, needle, offset, toke
 }
 
 async function insertTokenAtPrimaryEditorAbsoluteOffset(page, offset, token) {
-  const currentText = String((await getActivePrimaryEditor(page).textContent()) || "");
+  const currentText = String(
+    (await getActivePrimaryEditor(page).textContent()) || "",
+  );
   const position = Math.max(
     0,
     Math.min(currentText.length, Number(offset || 0)),
@@ -734,21 +791,27 @@ async function waitForEditorTextContains(page, needle) {
   const editor = getActivePrimaryEditor(page);
   await expect(editor).toBeVisible();
   await expect
-    .poll(
-      async () => String((await editor.textContent()) || ""),
-      { timeout: 10000 },
-    )
+    .poll(async () => String((await editor.textContent()) || ""), {
+      timeout: 10000,
+    })
     .toContain(String(needle || ""));
 }
 
 async function waitForSecondaryEditorTextContains(page, needle) {
-  const editor = getActiveSecondaryEditor(page);
+  let editor = getActiveSecondaryEditor(page);
+  const visible = await editor.isVisible({ timeout: 500 }).catch(() => false);
+  if (!visible) {
+    const splitButton = page.getByRole("button", { name: "View languages" });
+    if (await splitButton.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await splitButton.click();
+      editor = getActiveSecondaryEditor(page);
+    }
+  }
   await expect(editor).toBeVisible();
   await expect
-    .poll(
-      async () => String((await editor.textContent()) || ""),
-      { timeout: 10000 },
-    )
+    .poll(async () => String((await editor.textContent()) || ""), {
+      timeout: 10000,
+    })
     .toContain(String(needle || ""));
 }
 
@@ -781,7 +844,9 @@ async function assertNoCriticalDocStateEvents(page, contextLabel) {
       "MFE_DIRTY_DESYNC_RECONCILE_FAILED",
     ];
     return logs
-      .filter((entry) => entry && blockedTypes.includes(String(entry.type || "")))
+      .filter(
+        (entry) => entry && blockedTypes.includes(String(entry.type || "")),
+      )
       .map((entry) => ({
         type: String(entry.type || ""),
         reason: String(entry.reason || ""),
@@ -825,9 +890,10 @@ async function readRuntimeAuthorityTrace(page) {
 
 function assertNoCriticalConsoleSince(consoleIssues, cursor, contextLabel) {
   const next = consoleIssues.slice(Math.max(0, Number(cursor || 0)));
-  expect(next, `${contextLabel}: critical console diagnostics detected`).toEqual(
-    [],
-  );
+  expect(
+    next,
+    `${contextLabel}: critical console diagnostics detected`,
+  ).toEqual([]);
 }
 
 async function assertNoMarkerTextLeakInEditor(page, contextLabel) {
@@ -910,7 +976,20 @@ async function settleToNoChangesStatus(page) {
     })
     .toMatch(/^(Saved|No changes|Draft|)$/);
   await page.getByRole("button", { name: /Save changes/i }).click();
-  await expectStatusText(page, "No changes", "status:no-changes");
+  await expect
+    .poll(async () => {
+      const status = await readStatusBadge(page);
+      return {
+        text: status.text,
+        visible: status.visible,
+      };
+    })
+    .toEqual(
+      expect.objectContaining({
+        text: expect.stringMatching(/^(Saved|No changes)$/),
+        visible: true,
+      }),
+    );
 }
 
 async function waitForPersistedTokenOrThrow({
@@ -946,7 +1025,8 @@ async function waitForPersistedTokenOrThrow({
       const reconcileFailed = [...logs]
         .reverse()
         .find(
-          (event) => event && event.type === "MFE_DIRTY_DESYNC_RECONCILE_FAILED",
+          (event) =>
+            event && event.type === "MFE_DIRTY_DESYNC_RECONCILE_FAILED",
         );
       if (reconcileFailed?.error) {
         return `MFE_DIRTY_DESYNC_RECONCILE_FAILED:${String(
@@ -1016,7 +1096,10 @@ test.describe("document save roundtrip", () => {
     ).toBe(true);
 
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await navigateToDocumentScope(page);
 
@@ -1046,9 +1129,10 @@ test.describe("document save roundtrip", () => {
       const editors = Array.from(
         document.querySelectorAll("[contenteditable='true']"),
       );
-      const targetEditor = editors.find((editor) =>
-        String(editor?.innerText || "").includes("The Urban") &&
-        String(editor?.innerText || "").includes("Farm"),
+      const targetEditor = editors.find(
+        (editor) =>
+          String(editor?.innerText || "").includes("The Urban") &&
+          String(editor?.innerText || "").includes("Farm"),
       );
       if (!targetEditor) {
         const editorLengths = editors.map((editor) =>
@@ -1059,7 +1143,10 @@ test.describe("document save roundtrip", () => {
         );
       }
 
-      const walker = document.createTreeWalker(targetEditor, NodeFilter.SHOW_TEXT);
+      const walker = document.createTreeWalker(
+        targetEditor,
+        NodeFilter.SHOW_TEXT,
+      );
       let node = walker.nextNode();
       let replaced = false;
       while (node) {
@@ -1077,7 +1164,11 @@ test.describe("document save roundtrip", () => {
       }
 
       targetEditor.dispatchEvent(
-        new InputEvent("input", { bubbles: true, inputType: "insertText", data: "s" }),
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertText",
+          data: "s",
+        }),
       );
     });
 
@@ -1101,7 +1192,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await navigateToDocumentScope(page);
 
@@ -1141,7 +1235,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await navigateToDocumentScope(page);
 
@@ -1169,10 +1266,7 @@ test.describe("document save roundtrip", () => {
     const baseline = await readEn();
     const normalizedBaseline = String(baseline || "").replace(/\r\n/g, "\n");
     const withIntentionalSpacing = normalizedBaseline
-      .replace(
-        /---\n\n<!-- section:hero -->/,
-        "---\n\n\n<!-- section:hero -->",
-      )
+      .replace(/---\n\n<!-- section:hero -->/, "---\n\n\n<!-- section:hero -->")
       .replace(
         /(tech collide\.)\n\n<!-- section:columns -->/,
         "$1\n\n\n\n<!-- section:columns -->",
@@ -1197,7 +1291,7 @@ test.describe("document save roundtrip", () => {
       .poll(async () => (await readEn()).includes(token), { timeout: 20000 })
       .toBe(true);
 
-    const saved = String(await readEn() || "").replace(/\r\n/g, "\n");
+    const saved = String((await readEn()) || "").replace(/\r\n/g, "\n");
     expect(saved).toContain("---\n\n\n<!-- section:hero -->");
     expect(saved).toContain("tech collide.\n\n\n\n<!-- section:columns -->");
   });
@@ -1212,7 +1306,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await navigateToDocumentScope(page);
 
@@ -1243,7 +1340,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await navigateToDocumentScope(page);
     await ensureDocumentScopeHydrated(page);
@@ -1282,7 +1382,9 @@ test.describe("document save roundtrip", () => {
       // Intentional mismatch: stamped key points to subsection identity.
       virtual.setAttribute("data-mfe-key", "subsection:hero:title");
       virtual.setAttribute("data-mfe-markdown-kind", "canonical");
-      const encoded = btoa(unescape(encodeURIComponent(String(nextMarkdown || ""))));
+      const encoded = btoa(
+        unescape(encodeURIComponent(String(nextMarkdown || ""))),
+      );
       virtual.setAttribute("data-markdown-b64", encoded);
       try {
         api.openForElementFromCanonical(virtual, {
@@ -1337,7 +1439,9 @@ test.describe("document save roundtrip", () => {
       virtual.setAttribute("data-mfe-subsection", "");
       virtual.setAttribute("data-mfe-key", "subsection:hero:title");
       virtual.setAttribute("data-mfe-markdown-kind", "canonical");
-      const encoded = btoa(unescape(encodeURIComponent(String(nextMarkdown || ""))));
+      const encoded = btoa(
+        unescape(encodeURIComponent(String(nextMarkdown || ""))),
+      );
       virtual.setAttribute("data-markdown-b64", encoded);
       try {
         api.openForElementFromCanonical(virtual, {
@@ -1358,7 +1462,9 @@ test.describe("document save roundtrip", () => {
     await expect
       .poll(() => getCurrentBreadcrumbLabel(page), { timeout: 10000 })
       .toBe("Section: hero");
-    await expect(page.getByRole("link", { name: /^Field:\s*title$/i }).first()).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: /^Field:\s*title$/i }).first(),
+    ).toBeVisible();
   });
 
   test("outline toggle keeps current scope and shows markers in single view", async ({
@@ -1371,7 +1477,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await openScopeFromCanonical(page, {
       scope: "field",
@@ -1384,7 +1493,9 @@ test.describe("document save roundtrip", () => {
     const scopeBefore = await getCurrentBreadcrumbLabel(page);
     expect(scopeBefore).toBeTruthy();
 
-    const outlineBtn = page.getByRole("button", { name: /View outline/i }).first();
+    const outlineBtn = page
+      .getByRole("button", { name: /View outline/i })
+      .first();
     await expect(outlineBtn).toBeVisible();
     await outlineBtn.click();
 
@@ -1395,9 +1506,11 @@ test.describe("document save roundtrip", () => {
             const inDocumentMode = document.body.classList.contains(
               "mfe-state-document-mode",
             );
-            const markerCount = document.querySelectorAll(".mfe-doc-marker").length;
-            const activeRailCount =
-              document.querySelectorAll(".mfe-doc-segment--active").length;
+            const markerCount =
+              document.querySelectorAll(".mfe-doc-marker").length;
+            const activeRailCount = document.querySelectorAll(
+              ".mfe-doc-segment--active",
+            ).length;
             return inDocumentMode && markerCount > 0 && activeRailCount > 0;
           }),
         { timeout: 10000 },
@@ -1438,12 +1551,16 @@ test.describe("document save roundtrip", () => {
       readyContains: "The Urban",
     });
 
-    const outlineBtn = page.getByRole("button", { name: /View outline/i }).first();
+    const outlineBtn = page
+      .getByRole("button", { name: /View outline/i })
+      .first();
     await expect(outlineBtn).toBeVisible();
     await outlineBtn.click();
 
     const order = await page.evaluate(() => {
-      const root = document.querySelector(".mfe-editor-pane--primary .ProseMirror");
+      const root = document.querySelector(
+        ".mfe-editor-pane--primary .ProseMirror",
+      );
       if (!(root instanceof HTMLElement)) return [];
       return Array.from(root.children).map((element) => {
         const marker = String(
@@ -1451,7 +1568,9 @@ test.describe("document save roundtrip", () => {
             element.getAttribute?.("data-mfe-doc-label") ||
             "",
         );
-        const docLabel = String(element.getAttribute?.("data-mfe-doc-label") || "");
+        const docLabel = String(
+          element.getAttribute?.("data-mfe-doc-label") || "",
+        );
         const text = String(element.textContent || "").trim();
         return {
           tag: String(element.tagName || "").toLowerCase(),
@@ -1467,14 +1586,19 @@ test.describe("document save roundtrip", () => {
       (entry) => entry.marker === "section:hero",
     );
     const fieldHeroTitleMarkerIndex = findIndex(
-      (entry) => entry.marker === "title" && /field:hero\/title/.test(entry.docLabel),
+      (entry) =>
+        entry.marker === "title" &&
+        (entry.docLabel === "title" ||
+          /field:hero\/title/.test(entry.docLabel)),
     );
     const heroHeadingIndex = findIndex(
       (entry) => entry.tag === "h1" && entry.text.includes("The Urban"),
     );
     const fieldHeroIntroMarkerIndex = findIndex(
       (entry) =>
-        entry.marker === "intro..." && /field:hero\/intro\.\.\./.test(entry.docLabel),
+        entry.marker === "intro..." &&
+        (entry.docLabel === "intro..." ||
+          /field:hero\/intro\.\.\./.test(entry.docLabel)),
     );
     const heroIntroParagraphIndex = findIndex(
       (entry) =>
@@ -1488,18 +1612,20 @@ test.describe("document save roundtrip", () => {
       (entry) => entry.marker === "section:body",
     );
     const sectionBodyHeadingIndex = findIndex(
-      (entry) =>
-        entry.tag === "h2" &&
-        entry.text.includes("Forget"),
+      (entry) => entry.tag === "h2" && entry.text.includes("Forget"),
     );
     const sectionAboutMarkerIndex = findIndex(
       (entry) => entry.marker === "section:about",
     );
-    const fieldAboutTitleMarkerIndex = findIndex(
-      (entry) => entry.marker === "title" && /field:about\/title/.test(entry.docLabel),
-    );
     const sectionAboutHeadingIndex = findIndex(
       (entry) => entry.tag === "h2" && entry.text === "Chi sono",
+    );
+    const fieldAboutTitleMarkerIndex = order.findIndex(
+      (entry, index) =>
+        index > sectionAboutMarkerIndex &&
+        entry.marker === "title" &&
+        (entry.docLabel === "title" ||
+          /field:about\/title/.test(entry.docLabel)),
     );
 
     expect(sectionHeroMarkerIndex).toBeGreaterThanOrEqual(0);
@@ -1519,9 +1645,13 @@ test.describe("document save roundtrip", () => {
     expect(sectionAboutHeadingIndex).toBeGreaterThanOrEqual(0);
     expect(sectionBodyMarkerIndex).toBeLessThan(sectionBodyHeadingIndex);
     expect(sectionAboutMarkerIndex).toBeGreaterThan(sectionBodyHeadingIndex);
-    expect(Math.abs(sectionAboutMarkerIndex - sectionAboutHeadingIndex)).toBeLessThanOrEqual(4);
+    expect(
+      Math.abs(sectionAboutMarkerIndex - sectionAboutHeadingIndex),
+    ).toBeLessThanOrEqual(4);
     if (fieldAboutTitleMarkerIndex >= 0) {
-      expect(Math.abs(fieldAboutTitleMarkerIndex - sectionAboutHeadingIndex)).toBeLessThanOrEqual(3);
+      expect(
+        Math.abs(fieldAboutTitleMarkerIndex - sectionAboutHeadingIndex),
+      ).toBeLessThanOrEqual(3);
     }
   });
 
@@ -1540,12 +1670,16 @@ test.describe("document save roundtrip", () => {
       readyContains: "The Urban",
     });
 
-    const outlineBtn = page.getByRole("button", { name: /View outline/i }).first();
+    const outlineBtn = page
+      .getByRole("button", { name: /View outline/i })
+      .first();
     await expect(outlineBtn).toBeVisible();
     await outlineBtn.click();
 
     const order = await page.evaluate(() => {
-      const root = document.querySelector(".mfe-editor-pane--primary .ProseMirror");
+      const root = document.querySelector(
+        ".mfe-editor-pane--primary .ProseMirror",
+      );
       if (!(root instanceof HTMLElement)) return [];
       return Array.from(root.children).map((element) => ({
         tag: String(element.tagName || "").toLowerCase(),
@@ -1565,12 +1699,12 @@ test.describe("document save roundtrip", () => {
     const predictableMarkerIndex = findIndex(
       (entry) =>
         entry.marker === "predictable" &&
-        /field:body\/predictable/.test(entry.docLabel),
+        (entry.docLabel === "predictable" ||
+          /field:body\/predictable/.test(entry.docLabel)),
     );
     const predictableParagraphIndex = findIndex(
       (entry) =>
-        entry.tag === "p" &&
-        entry.text.includes("Every plot starts small"),
+        entry.tag === "p" && entry.text.includes("Every plot starts small"),
     );
     const sectionAboutMarkerIndex = findIndex(
       (entry) => entry.marker === "section:about",
@@ -1602,7 +1736,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await openScopeFromCanonical(page, {
       scope: "field",
@@ -1617,7 +1754,9 @@ test.describe("document save roundtrip", () => {
 
     await ensureSplitLanguageSelected(page, "Spanish");
 
-    const outlineBtn = page.getByRole("button", { name: /View outline/i }).first();
+    const outlineBtn = page
+      .getByRole("button", { name: /View outline/i })
+      .first();
     await expect(outlineBtn).toBeVisible();
     await outlineBtn.click();
 
@@ -1637,7 +1776,10 @@ test.describe("document save roundtrip", () => {
             const count = (root, selector) =>
               root ? root.querySelectorAll(selector).length : 0;
             const primaryMarkerCount = count(primaryPane, ".mfe-doc-marker");
-            const secondaryMarkerCount = count(secondaryPane, ".mfe-doc-marker");
+            const secondaryMarkerCount = count(
+              secondaryPane,
+              ".mfe-doc-marker",
+            );
             const secondaryActiveRailCount = count(
               secondaryPane,
               ".mfe-doc-segment--active",
@@ -1667,7 +1809,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await navigateToDocumentScope(page);
 
@@ -1680,12 +1825,18 @@ test.describe("document save roundtrip", () => {
     const explicitFieldTitle = page
       .getByRole("link", { name: /Field:\s*title/i })
       .first();
-    if (await explicitFieldTitle.isVisible({ timeout: 1500 }).catch(() => false)) {
+    if (
+      await explicitFieldTitle.isVisible({ timeout: 1500 }).catch(() => false)
+    ) {
       await explicitFieldTitle.click();
       await waitForEditorTextContains(page, token);
     } else {
-      const genericTitleLink = page.getByRole("link", { name: /title/i }).first();
-      if (await genericTitleLink.isVisible({ timeout: 1500 }).catch(() => false)) {
+      const genericTitleLink = page
+        .getByRole("link", { name: /title/i })
+        .first();
+      if (
+        await genericTitleLink.isVisible({ timeout: 1500 }).catch(() => false)
+      ) {
         await genericTitleLink.click();
         await waitForEditorTextContains(page, token);
       }
@@ -1712,7 +1863,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await expectStatusEmpty(page, "single:open-empty");
     await settleToNoChangesStatus(page);
@@ -1738,7 +1892,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     const token = `LENS_FIELD_TO_SECTION_${Date.now()}`;
     await appendTokenAndAssertVisible(page, token);
@@ -1750,12 +1907,18 @@ test.describe("document save roundtrip", () => {
     const explicitFieldTitle = page
       .getByRole("link", { name: /Field:\s*title/i })
       .first();
-    if (await explicitFieldTitle.isVisible({ timeout: 1500 }).catch(() => false)) {
+    if (
+      await explicitFieldTitle.isVisible({ timeout: 1500 }).catch(() => false)
+    ) {
       await explicitFieldTitle.click();
       await waitForEditorTextContains(page, token);
     } else {
-      const genericTitleLink = page.getByRole("link", { name: /title/i }).first();
-      if (await genericTitleLink.isVisible({ timeout: 1500 }).catch(() => false)) {
+      const genericTitleLink = page
+        .getByRole("link", { name: /title/i })
+        .first();
+      if (
+        await genericTitleLink.isVisible({ timeout: 1500 }).catch(() => false)
+      ) {
         await genericTitleLink.click();
         await waitForEditorTextContains(page, token);
       }
@@ -1782,7 +1945,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     const token = `REBOUND_FIELD_SECTION_DOCUMENT_FIELD_${Date.now()}`;
     await appendTokenAndAssertVisible(page, token);
@@ -1794,22 +1960,22 @@ test.describe("document save roundtrip", () => {
     const explicitFieldTitle = page
       .getByRole("link", { name: /Field:\s*title/i })
       .first();
-    if (await explicitFieldTitle.isVisible({ timeout: 1500 }).catch(() => false)) {
+    if (
+      await explicitFieldTitle.isVisible({ timeout: 1500 }).catch(() => false)
+    ) {
       await explicitFieldTitle.click();
       await waitForEditorTextContains(page, token);
     } else {
-      const genericTitleLink = page.getByRole("link", { name: /title/i }).first();
+      const genericTitleLink = page
+        .getByRole("link", { name: /title/i })
+        .first();
       await expect(genericTitleLink).toBeVisible();
       await genericTitleLink.click();
       await waitForEditorTextContains(page, token);
     }
 
     await page.getByRole("button", { name: /Save changes/i }).click();
-    await expectStatusText(
-      page,
-      "Saved",
-      "field-section-document-field:saved",
-    );
+    await expectStatusText(page, "Saved", "field-section-document-field:saved");
     await expect
       .poll(async () => (await readEn()).includes(token), { timeout: 20000 })
       .toBe(true);
@@ -1830,7 +1996,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     const token = `RAPID_SCOPE_SWITCH_${Date.now()}`;
     await appendTokenAndAssertVisible(page, token);
@@ -1852,10 +2021,7 @@ test.describe("document save roundtrip", () => {
       .poll(async () => (await readEn()).includes(token), { timeout: 20000 })
       .toBe(true);
     await assertMutationSavePathForScope(page, "document");
-    await assertNoCriticalDocStateEvents(
-      page,
-      "rapid-dirty-scope-switch-save",
-    );
+    await assertNoCriticalDocStateEvents(page, "rapid-dirty-scope-switch-save");
   });
 
   test("document split lens keeps unsaved edits across scopes and languages", async ({
@@ -1868,7 +2034,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await navigateToDocumentScope(page);
 
@@ -1891,12 +2060,18 @@ test.describe("document save roundtrip", () => {
     await waitForEditorTextContains(page, enToken);
     await waitForSecondaryEditorTextContains(page, esToken);
 
-    const fieldTitle = page.getByRole("link", { name: /Field:\s*title/i }).first();
+    const fieldTitle = page
+      .getByRole("link", { name: /Field:\s*title/i })
+      .first();
     if (await fieldTitle.isVisible({ timeout: 1500 }).catch(() => false)) {
       await fieldTitle.click();
     } else {
-      const genericTitleLink = page.getByRole("link", { name: /title/i }).first();
-      if (await genericTitleLink.isVisible({ timeout: 1500 }).catch(() => false)) {
+      const genericTitleLink = page
+        .getByRole("link", { name: /title/i })
+        .first();
+      if (
+        await genericTitleLink.isVisible({ timeout: 1500 }).catch(() => false)
+      ) {
         await genericTitleLink.click();
       }
     }
@@ -1938,7 +2113,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await ensureSplitLanguageSelected(page, "Spanish");
 
@@ -1957,11 +2135,15 @@ test.describe("document save roundtrip", () => {
     await waitForEditorTextContains(page, enToken);
     await waitForSecondaryEditorTextContains(page, esToken);
 
-    const fieldTitle = page.getByRole("link", { name: /Field:\s*title/i }).first();
+    const fieldTitle = page
+      .getByRole("link", { name: /Field:\s*title/i })
+      .first();
     if (await fieldTitle.isVisible({ timeout: 1500 }).catch(() => false)) {
       await fieldTitle.click();
     } else {
-      const genericTitleLink = page.getByRole("link", { name: /title/i }).first();
+      const genericTitleLink = page
+        .getByRole("link", { name: /title/i })
+        .first();
       await expect(genericTitleLink).toBeVisible();
       await genericTitleLink.click();
     }
@@ -1996,7 +2178,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await page.evaluate(() => {
       if (Array.isArray(window.__MFE_DOC_STATE_LOGS)) {
@@ -2015,7 +2200,7 @@ test.describe("document save roundtrip", () => {
     const reopenedTitle = await page.evaluate(() => {
       const candidate =
         document.querySelector('[data-mfe="field:hero/title"]') ||
-        document.querySelector('[data-mfe]');
+        document.querySelector("[data-mfe]");
       if (
         candidate instanceof HTMLElement &&
         typeof window.MarkdownFrontEditor?.openForElement === "function"
@@ -2029,7 +2214,11 @@ test.describe("document save roundtrip", () => {
     await waitForEditorTextContains(page, token);
 
     await page.getByRole("button", { name: /Save changes/i }).click();
-    await expectStatusText(page, "Saved", "projection-lifecycle:field-rebind-saved");
+    await expectStatusText(
+      page,
+      "Saved",
+      "projection-lifecycle:field-rebind-saved",
+    );
     await expect
       .poll(async () => (await readEn()).includes(token), { timeout: 20000 })
       .toBe(true);
@@ -2050,7 +2239,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await page.evaluate(() => {
       if (Array.isArray(window.__MFE_DOC_STATE_LOGS)) {
@@ -2071,19 +2263,22 @@ test.describe("document save roundtrip", () => {
     await expect
       .poll(
         async () =>
-          page.evaluate(() =>
-            Boolean(window.MarkdownFrontEditor?.isOpen?.()),
-          ),
+          page.evaluate(() => Boolean(window.MarkdownFrontEditor?.isOpen?.())),
         { timeout: 10000 },
       )
       .toBe(false);
 
     const reopened = await openFullscreenEditor(page);
-    expect(reopened, "fullscreen editor could not be reopened after discard").toBe(true);
+    expect(
+      reopened,
+      "fullscreen editor could not be reopened after discard",
+    ).toBe(true);
     await expect
       .poll(async () => {
         const editorText = String(
-          (await getActivePrimaryEditor(page).textContent().catch(() => "")) || "",
+          (await getActivePrimaryEditor(page)
+            .textContent()
+            .catch(() => "")) || "",
         );
         const markdownText = await page.evaluate(() =>
           String(window.MarkdownFrontEditor?.getMarkdown?.() || ""),
@@ -2133,24 +2328,29 @@ test.describe("document save roundtrip", () => {
     await waitForEditorTextContains(page, token);
 
     await expect
-      .poll(async () => {
-        const trace = await readRuntimeAuthorityTrace(page);
-        const rebindRevokedIndex = trace.findIndex(
-          (entry) =>
-            entry.authorityState === "revoked" &&
-            entry.authorityReason === "rebind",
-        );
-        const rebindTrustedIndex =
-          rebindRevokedIndex >= 0
-            ? trace.findIndex(
-                (entry, index) =>
-                  index > rebindRevokedIndex &&
-                  entry.authorityState === "trusted" &&
-                  entry.authorityReason === "reseed",
-              )
-            : -1;
-        return rebindRevokedIndex >= 0 && rebindTrustedIndex > rebindRevokedIndex;
-      }, { timeout: 15000 })
+      .poll(
+        async () => {
+          const trace = await readRuntimeAuthorityTrace(page);
+          const rebindRevokedIndex = trace.findIndex(
+            (entry) =>
+              entry.authorityState === "revoked" &&
+              entry.authorityReason === "rebind",
+          );
+          const rebindTrustedIndex =
+            rebindRevokedIndex >= 0
+              ? trace.findIndex(
+                  (entry, index) =>
+                    index > rebindRevokedIndex &&
+                    entry.authorityState === "trusted" &&
+                    entry.authorityReason === "reseed",
+                )
+              : -1;
+          return (
+            rebindRevokedIndex >= 0 && rebindTrustedIndex > rebindRevokedIndex
+          );
+        },
+        { timeout: 15000 },
+      )
       .toBe(true);
     const rebindTrace = await readRuntimeAuthorityTrace(page);
     const rebindRevokedIndex = rebindTrace.findIndex(
@@ -2179,34 +2379,34 @@ test.describe("document save roundtrip", () => {
     await expect
       .poll(
         async () =>
-          page.evaluate(() =>
-            Boolean(window.MarkdownFrontEditor?.isOpen?.()),
-          ),
+          page.evaluate(() => Boolean(window.MarkdownFrontEditor?.isOpen?.())),
         { timeout: 10000 },
       )
       .toBe(false);
 
     await expect
-      .poll(async () => {
-        const trace = await readRuntimeAuthorityTrace(page);
-        const discardRevokedIndex = trace.findIndex(
-          (entry, index) =>
-            index > rebindTrustedIndex &&
-            entry.authorityState === "revoked" &&
-            entry.authorityReason === "discard",
-        );
-        const clearedCount = await page.evaluate(() => {
-          const entries = Array.isArray(window.__MFE_DOC_STATE_LOGS)
-            ? window.__MFE_DOC_STATE_LOGS
-            : [];
-          return entries.filter(
-            (entry) =>
-              entry &&
-              entry.type === "MFE_RUNTIME_STATE_TRACKING_CLEARED",
-          ).length;
-        });
-        return discardRevokedIndex > rebindTrustedIndex && clearedCount > 0;
-      }, { timeout: 15000 })
+      .poll(
+        async () => {
+          const trace = await readRuntimeAuthorityTrace(page);
+          const discardRevokedIndex = trace.findIndex(
+            (entry, index) =>
+              index > rebindTrustedIndex &&
+              entry.authorityState === "revoked" &&
+              entry.authorityReason === "discard",
+          );
+          const clearedCount = await page.evaluate(() => {
+            const entries = Array.isArray(window.__MFE_DOC_STATE_LOGS)
+              ? window.__MFE_DOC_STATE_LOGS
+              : [];
+            return entries.filter(
+              (entry) =>
+                entry && entry.type === "MFE_RUNTIME_STATE_TRACKING_CLEARED",
+            ).length;
+          });
+          return discardRevokedIndex > rebindTrustedIndex && clearedCount > 0;
+        },
+        { timeout: 15000 },
+      )
       .toBe(true);
     const discardTrace = await readRuntimeAuthorityTrace(page);
     const discardRevokedIndex = discardTrace.findIndex(
@@ -2220,9 +2420,7 @@ test.describe("document save roundtrip", () => {
         ? window.__MFE_DOC_STATE_LOGS
         : [];
       return entries.filter(
-        (entry) =>
-          entry &&
-          entry.type === "MFE_RUNTIME_STATE_TRACKING_CLEARED",
+        (entry) => entry && entry.type === "MFE_RUNTIME_STATE_TRACKING_CLEARED",
       ).length;
     });
 
@@ -2255,27 +2453,31 @@ test.describe("document save roundtrip", () => {
     await expect(getSaveButton(page)).toBeVisible();
 
     await expect
-      .poll(async () => {
-        const trace = await readRuntimeAuthorityTrace(page);
-        const reopenTrustedIndex = trace.findIndex(
-          (entry, index) =>
-            index > discardRevokedIndex &&
-            entry.authorityState === "trusted" &&
-            entry.authorityReason === "reseed",
-        );
-        const editorText = String(
-          (await getActivePrimaryEditor(page).textContent().catch(() => "")) ||
-            "",
-        );
-        const markdownText = await page.evaluate(() =>
-          String(window.MarkdownFrontEditor?.getMarkdown?.() || ""),
-        );
-        return (
-          reopenTrustedIndex > discardRevokedIndex &&
-          !editorText.includes(token) &&
-          !markdownText.includes(token)
-        );
-      }, { timeout: 15000 })
+      .poll(
+        async () => {
+          const trace = await readRuntimeAuthorityTrace(page);
+          const reopenTrustedIndex = trace.findIndex(
+            (entry, index) =>
+              index > discardRevokedIndex &&
+              entry.authorityState === "trusted" &&
+              entry.authorityReason === "reseed",
+          );
+          const editorText = String(
+            (await getActivePrimaryEditor(page)
+              .textContent()
+              .catch(() => "")) || "",
+          );
+          const markdownText = await page.evaluate(() =>
+            String(window.MarkdownFrontEditor?.getMarkdown?.() || ""),
+          );
+          return (
+            reopenTrustedIndex > discardRevokedIndex &&
+            !editorText.includes(token) &&
+            !markdownText.includes(token)
+          );
+        },
+        { timeout: 15000 },
+      )
       .toBe(true);
     const finalTrace = await readRuntimeAuthorityTrace(page);
     const reopenTrustedIndex = finalTrace.findIndex(
@@ -2300,7 +2502,9 @@ test.describe("document save roundtrip", () => {
     );
   });
 
-  test("status lifecycle works in split multi-language mode", async ({ page }) => {
+  test("status lifecycle works in split multi-language mode", async ({
+    page,
+  }) => {
     await resetHomesFromFixtures();
 
     const authenticated = await ensureAuthenticated(page);
@@ -2308,11 +2512,28 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await navigateToDocumentScope(page);
     await expectStatusEmpty(page, "split:open-empty");
-    await settleToNoChangesStatus(page);
+    await page.getByRole("button", { name: /Save changes/i }).click();
+    await expect
+      .poll(async () => {
+        const status = await readStatusBadge(page);
+        return {
+          text: status.text,
+          visible: status.visible,
+        };
+      })
+      .toEqual(
+        expect.objectContaining({
+          text: expect.stringMatching(/^(Saved|No changes)$/),
+          visible: true,
+        }),
+      );
 
     const splitButton = page.getByRole("button", { name: "View languages" });
     await expect(splitButton).toBeVisible();
@@ -2344,7 +2565,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await expectStatusEmpty(page, "status-scope-single:open-empty");
 
@@ -2384,7 +2608,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await expectStatusEmpty(page, "status-scope-split:open-empty");
 
@@ -2413,10 +2640,14 @@ test.describe("document save roundtrip", () => {
         `status-scope-split:${entry.scopeKind}:saved`,
       );
       await expect
-        .poll(async () => (await readEn()).includes(tokenEn), { timeout: 20000 })
+        .poll(async () => (await readEn()).includes(tokenEn), {
+          timeout: 20000,
+        })
         .toBe(true);
       await expect
-        .poll(async () => (await readEs()).includes(tokenEs), { timeout: 20000 })
+        .poll(async () => (await readEs()).includes(tokenEs), {
+          timeout: 20000,
+        })
         .toBe(true);
       await assertMutationSavePathForScope(page, entry.scopeKind);
     }
@@ -2493,41 +2724,53 @@ test.describe("document save roundtrip", () => {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         await appendTokenInOpenEditor(page, entry.token);
         await expect
-          .poll(() =>
-            page.evaluate((nextToken) => {
-              const editor = document.querySelector(
-                '[role="textbox"][contenteditable="true"]',
-              );
-              const editorText = String(editor?.textContent || "");
-              const markdownText = String(
+          .poll(async () => {
+            const windowText = String(
+              (await page
+                .locator('[data-mfe-window="true"]')
+                .last()
+                .textContent()) || "",
+            );
+            const editorText = String(
+              (await getActivePrimaryEditor(page).textContent()) || "",
+            );
+            const markdownText = await page.evaluate(() =>
+              String(
                 window.MarkdownFrontEditor &&
                   typeof window.MarkdownFrontEditor.getMarkdown === "function"
                   ? window.MarkdownFrontEditor.getMarkdown()
                   : "",
-              );
-              const needle = String(nextToken || "");
-              return (
-                editorText.includes(needle) ||
-                markdownText.includes(needle)
-              );
-            }, entry.token),
-          )
+              ),
+            );
+            return (
+              windowText.includes(entry.token) ||
+              editorText.includes(entry.token) ||
+              markdownText.includes(entry.token)
+            );
+          })
           .toBe(true);
         await page.waitForTimeout(350);
-        tokenStableInEditor = await page.evaluate((nextToken) => {
-          const editor = document.querySelector(
-            '[role="textbox"][contenteditable="true"]',
-          );
-          const editorText = String(editor?.textContent || "");
-          const markdownText = String(
+        const windowText = String(
+          (await page
+            .locator('[data-mfe-window="true"]')
+            .last()
+            .textContent()) || "",
+        );
+        const editorText = String(
+          (await getActivePrimaryEditor(page).textContent()) || "",
+        );
+        const markdownText = await page.evaluate(() =>
+          String(
             window.MarkdownFrontEditor &&
               typeof window.MarkdownFrontEditor.getMarkdown === "function"
               ? window.MarkdownFrontEditor.getMarkdown()
               : "",
-          );
-          const needle = String(nextToken || "");
-          return editorText.includes(needle) || markdownText.includes(needle);
-        }, entry.token);
+          ),
+        );
+        tokenStableInEditor =
+          windowText.includes(entry.token) ||
+          editorText.includes(entry.token) ||
+          markdownText.includes(entry.token);
         if (tokenStableInEditor) break;
       }
       expect(tokenStableInEditor).toBe(true);
@@ -2553,8 +2796,7 @@ test.describe("document save roundtrip", () => {
                 .reverse()
                 .find(
                   (event) =>
-                    event &&
-                    event.type === "MFE_DIRTY_DESYNC_RECONCILE_FAILED",
+                    event && event.type === "MFE_DIRTY_DESYNC_RECONCILE_FAILED",
                 );
               if (reconcileFailed?.error) {
                 return `MFE_DIRTY_DESYNC_RECONCILE_FAILED:${String(
@@ -2564,8 +2806,7 @@ test.describe("document save roundtrip", () => {
               const safetyBlocked = [...logs]
                 .reverse()
                 .find(
-                  (event) =>
-                    event && event.type === "MFE_SAVE_SAFETY_BLOCKED",
+                  (event) => event && event.type === "MFE_SAVE_SAFETY_BLOCKED",
                 );
               if (safetyBlocked) {
                 return `save-safety-blocked:${String(
@@ -2580,9 +2821,7 @@ test.describe("document save roundtrip", () => {
                   document.querySelector(".mfe-status-text")
                 )?.textContent || "",
               ).trim();
-              return statusText.startsWith("Save failed")
-                ? statusText
-                : "";
+              return statusText.startsWith("Save failed") ? statusText : "";
             });
             if (failedMessage) {
               throw new Error(failedMessage);
@@ -2630,7 +2869,10 @@ test.describe("document save roundtrip", () => {
     });
 
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     await page.evaluate(() => {
       if (Array.isArray(window.__MFE_DOC_STATE_LOGS)) {
@@ -2753,14 +2995,19 @@ test.describe("document save roundtrip", () => {
     });
     page.on("pageerror", (error) => {
       const text = String(error?.message || error || "");
-      if (/apply scope leak|STATE_SAVE_FAILED|MFE_SAVE_SAFETY_BLOCKED/i.test(text)) {
+      if (
+        /apply scope leak|STATE_SAVE_FAILED|MFE_SAVE_SAFETY_BLOCKED/i.test(text)
+      ) {
         criticalPageErrors.push(text);
       }
     });
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     const cases = [
       {
@@ -2802,7 +3049,9 @@ test.describe("document save roundtrip", () => {
       const pageErrorCursor = criticalPageErrors.length;
       await entry.apply();
       await expect
-        .poll(async () => String((await getActivePrimaryEditor(page).textContent()) || ""))
+        .poll(async () =>
+          String((await getActivePrimaryEditor(page).textContent()) || ""),
+        )
         .toContain(entry.expected);
       await page.getByRole("button", { name: /Save changes/i }).click();
       await expect
@@ -2858,7 +3107,10 @@ test.describe("document save roundtrip", () => {
 
     await page.goto("/");
     const opened = await openFullscreenEditor(page);
-    expect(opened, "frontend editor window could not be opened in this runtime").toBe(true);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
 
     const cases = [
       {
@@ -3032,7 +3284,11 @@ test.describe("document save roundtrip", () => {
 
     const consoleCursor = criticalConsoleIssues.length;
     const pageErrorCursor = criticalPageErrors.length;
-    await insertTokenBeforePrimaryEditorNeedle(page, "tiefen Leidens", "steady ");
+    await insertTokenBeforePrimaryEditorNeedle(
+      page,
+      "tiefen Leidens",
+      "steady ",
+    );
     await waitForEditorTextContains(page, "steady tiefen Leidens");
     await page.getByRole("button", { name: /Save changes/i }).click();
 
@@ -3431,7 +3687,9 @@ test.describe("document save roundtrip", () => {
       await page.reload({ waitUntil: "domcontentloaded" });
       await openScopeFromCanonical(page, sweep.open);
 
-      const currentText = String((await getActivePrimaryEditor(page).textContent()) || "");
+      const currentText = String(
+        (await getActivePrimaryEditor(page).textContent()) || "",
+      );
       expect(
         currentText.length,
         `${sweep.label}: editor text should not be empty`,

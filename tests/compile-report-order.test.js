@@ -84,9 +84,11 @@ describe("compile report ordering is deterministic", () => {
     expect(first.graphKeys).toEqual([
       "section:hero",
       "field:hero:title",
-      "subsection:hero:cta:title",
+      "field:hero:cta:title",
     ]);
-    expect(first.ambiguous).toEqual(["hero/cta -> subsection:hero:cta|field:hero:cta"]);
+    expect(first.ambiguous).toEqual([
+      "hero/cta -> subsection:hero:cta|field:hero:cta",
+    ]);
     expect(first.unresolved).toEqual(["hero/unknown/path"]);
   });
 });
