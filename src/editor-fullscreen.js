@@ -5172,28 +5172,24 @@ function saveAllEditors() {
             activeFieldId ||
             "",
         );
-        const rawOutboundMarkdownForSave = isDocumentSaveScope
-          ? composeDocumentMarkdownForSave(finalCanonicalBody, {
-              lang: state.lang,
-              state,
-            })
+        const rawPreComposeMarkdownForHash = isDocumentSaveScope
+          ? typeof state.recomposeMarkdownForSave === "function"
+            ? String(state.recomposeMarkdownForSave(finalCanonicalBody) || "")
+            : String(finalCanonicalBody || "")
           : scopedMarkdownForSave;
-        const outboundMarkdownForSave = normalizeLineEndingsToLf(
+        const preComposeComparableMarkdownForHash = normalizeLineEndingsToLf(
           restoreEscapedMarkdownSyntaxForScopedSave(
-            rawOutboundMarkdownForSave,
+            rawPreComposeMarkdownForHash,
             state.getPersistedMarkdown(),
           ),
         );
-        const payloadHash = hashStateIdentity(outboundMarkdownForSave);
+        const payloadHash = hashStateIdentity(
+          preComposeComparableMarkdownForHash,
+        );
         const plannedHash = rawSurfaceOwnsState
           ? payloadHash
           : plannedHashesByStateId.get(state.id) || "";
-        // For document-scope saves, composeDocumentMarkdownForSave() is an intentional
-        // transformation that adds frontmatter formatting and structure. Skip hash drift
-        // check for this scope since the payload change is expected and deterministic.
-        // For field/section scopes, no such transformation is applied, so the check
-        // validates that the payload wasn't corrupted in the dispatch pipeline.
-        if (plannedHash && plannedHash !== payloadHash && !isDocumentSaveScope) {
+        if (plannedHash && plannedHash !== payloadHash) {
           const mismatchError = new Error(
             `[mfe] save-pipeline: draft hash drift before network for ${state.id}`,
           );
@@ -5208,6 +5204,18 @@ function saveAllEditors() {
           });
           continue;
         }
+        const rawOutboundMarkdownForSave = isDocumentSaveScope
+          ? composeDocumentMarkdownForSave(finalCanonicalBody, {
+              lang: state.lang,
+              state,
+            })
+          : scopedMarkdownForSave;
+        const outboundMarkdownForSave = normalizeLineEndingsToLf(
+          restoreEscapedMarkdownSyntaxForScopedSave(
+            rawOutboundMarkdownForSave,
+            state.getPersistedMarkdown(),
+          ),
+        );
         emitStageMarkdownDiagnostic(
           "payload_sent_backend",
           outboundMarkdownForSave,

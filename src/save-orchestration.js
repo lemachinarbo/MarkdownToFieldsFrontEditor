@@ -30,11 +30,12 @@ function restoreEscapedMarkdownSyntax(markdown) {
   return normalized;
 }
 
-function getStateSavePayloadMarkdown(state) {
+function getStatePreComposeComparableMarkdown(state) {
   const bodyDraft = String(state?.getDraft?.() || "");
   if (typeof state?.recomposeMarkdownForSave === "function") {
     const recomposed = String(state.recomposeMarkdownForSave(bodyDraft) || "");
-    // Apply the same transformations that will be applied in dispatch
+    // Keep plan-time hash aligned with dispatch pre-compose hash stage.
+    // Do not apply final document composition at this point.
     const restored = restoreEscapedMarkdownSyntax(recomposed);
     return normalizeLineEndingsToLf(restored);
   }
@@ -216,7 +217,7 @@ export function buildSavePlan(params = {}) {
     plannedHashesByStateId: new Map(
       saveCandidates.map((state) => [
         state.id,
-        params.hashStateIdentity(getStateSavePayloadMarkdown(state)),
+        params.hashStateIdentity(getStatePreComposeComparableMarkdown(state)),
       ]),
     ),
   };
