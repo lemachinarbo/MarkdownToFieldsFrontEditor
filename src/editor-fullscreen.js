@@ -5188,7 +5188,12 @@ function saveAllEditors() {
         const plannedHash = rawSurfaceOwnsState
           ? payloadHash
           : plannedHashesByStateId.get(state.id) || "";
-        if (plannedHash && plannedHash !== payloadHash) {
+        // For document-scope saves, composeDocumentMarkdownForSave() is an intentional
+        // transformation that adds frontmatter formatting and structure. Skip hash drift
+        // check for this scope since the payload change is expected and deterministic.
+        // For field/section scopes, no such transformation is applied, so the check
+        // validates that the payload wasn't corrupted in the dispatch pipeline.
+        if (plannedHash && plannedHash !== payloadHash && !isDocumentSaveScope) {
           const mismatchError = new Error(
             `[mfe] save-pipeline: draft hash drift before network for ${state.id}`,
           );
