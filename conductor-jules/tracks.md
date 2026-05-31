@@ -2,6 +2,13 @@
 
 This file tracks the active development tracks for Jules and other agents in MarkdownToFieldsFrontEditor.
 
+- [x] **Audit: Unpushed commits adversarial review** (Session: 3593641779581853666)
+  - [x] Type: Review-Only (no code changes)
+  - [x] Status: Complete
+  - [x] Verdict: Merge after fixes
+  - [x] Ledger: conductor-audits/2026-05-30-main/audit-ledger.md
+  - [x] Open issues: 1 critical, 1 high, 3 medium, 0 low
+
 - [ ] **Performance: Cache snapshot index file reads** (Session: 12712479203828006873)
 - [ ] **Performance: Optimize DOM query loop in collectReadOnlyHostMounts** (Session: 15552125936496673555)
 - [ ] **Code Health: Remove leftover console statement** (Session: 8475759274777109420)
