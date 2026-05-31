@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.10.1](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.10.0...v0.10.1) (2026-05-31)
+
+
+### Bug Fixes
+
+* enforce pre-compose hash validation ([55325c1](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/55325c1bccf26b9b35607dafe48f6903415ba651))
+* fix raw mode scope navigation rendering ([a17aaa5](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/a17aaa533745334911bf7300426934eedcbcbb64))
+* implement async transition queue and lock mechanism for save/scope race conditions ([6f47325](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/6f473251567a4f1c7bdafaece417fcf765072d74))
+* isolate split language state ([e50272c](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/e50272cb4e7ce7fc9c33b68e10f5bb1ca3760616))
+* remove menubar transition on scope switch ([ebf5e8e](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/ebf5e8ede8e593dd22bc72639214b1aefac8bf05))
+* reorder outbound markdown computation to fix temporal dead zone and ensure payload hash includes frontmatter ([e109abf](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/e109abfdf4736dd691abfc2661fef9c6023e058a))
+* resolve hash drift for document-scope saves in split view ([8dd74aa](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/8dd74aafb55b41618ce99ee16ffb4cd7d7a46eb2))
+* stabilize markdown scope switching ([8712e76](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/8712e76c9171c2c095488c36728d3bda9f1b37f9))
+* stabilize save hash source-of-truth ([796f285](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/796f28549c637929cdd8001927a0694e138491d0))
+* update breadcrumb test to inspect Now functions instead of async wrappers ([f16f01c](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/f16f01c92ff55ecc461f45a6acec9f6b6686d071))
+* use matching composition logic for hash calculation in document scope saves ([c3e48dc](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/c3e48dc6f6eeadaaf76d0d1fbfdee2bf9e74d1c0))
+
+
+### Miscellaneous Chores
+
+* update conductor tracks ledger ([fd2820f](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/fd2820f1d0ba6e99bfbf921febfaf33f75c6417e))
+
 ## [0.10.0](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.9.1...v0.10.0) (2026-05-31)
 
 
