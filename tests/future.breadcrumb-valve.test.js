@@ -223,9 +223,9 @@ describe("future breadcrumb valve", () => {
     );
     const openFromPayloadSource = extractFunctionSource(
       source,
-      "openFullscreenEditorFromPayload",
+      "openFullscreenEditorFromPayloadNow",
     );
-    const replaceSource = extractFunctionSource(source, "replaceActiveEditor");
+    const replaceSource = extractFunctionSource(source, "replaceActiveEditorNow");
 
     expect(source).toContain("function buildSessionScopeLens()");
     expect(source).toContain("function resolveLensNodeForBreadcrumb(");
