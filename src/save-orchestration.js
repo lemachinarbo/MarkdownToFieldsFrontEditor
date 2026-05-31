@@ -135,6 +135,7 @@ export function buildSavePlan(params = {}) {
     emitDocStateLog,
     isStateDirtyForSave = null,
     isStateExcludedFromSave = null,
+    hashStateIdentity,
   } = params;
 
   const deriveDirty =
@@ -173,8 +174,24 @@ export function buildSavePlan(params = {}) {
     hashAfter: "save-plan",
   });
 
+  if (typeof hashStateIdentity !== "function") {
+    throw new Error(
+      "[mfe] invariant: buildSavePlan called without hashStateIdentity function"
+    );
+  }
+
   return {
     saveCandidates,
+    plannedHashesByStateId: new Map(
+      saveCandidates.map((state) => [
+        state.id,
+        hashStateIdentity(
+          typeof state.recomposeMarkdownForSave === "function"
+            ? String(state.recomposeMarkdownForSave(state.getDraft?.() || "") || "")
+            : String(state.getDraft?.() || "")
+        ),
+      ])
+    ),
   };
 }
 

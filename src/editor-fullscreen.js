@@ -626,13 +626,20 @@ function getPersistedIdentityHashForTrace() {
 }
 
 function getCanonicalDraftIdentityHashForTrace() {
-  if (stateTraceSnapshotDepth > 0) return hashStateIdentity("");
+  if (stateTraceSnapshotDepth > 0) {
+    throw new Error(
+      "[mfe] invariant: canonical draft hash requested during nested snapshot depth"
+    );
+  }
   stateTraceSnapshotDepth += 1;
   try {
     const canonical = getCanonicalMarkdownState();
-    return hashStateIdentity(canonical?.markdown || "");
-  } catch (_error) {
-    return hashStateIdentity("");
+    if (!canonical) {
+      throw new Error(
+        "[mfe] invariant: getCanonicalMarkdownState() returned null during trace hash computation"
+      );
+    }
+    return hashStateIdentity(canonical.markdown || "");
   } finally {
     stateTraceSnapshotDepth = Math.max(0, stateTraceSnapshotDepth - 1);
   }
@@ -1503,32 +1510,21 @@ function syncEditorSurfaceMode({ preserveRawSelection = false } = {}) {
   }
 }
 
-function primaryEditorContractMatchesActiveScope() {
-  if (!primaryEditor?.view?.dom) return true;
+function activateRichSurface() {
+  if (!primaryEditor?.view?.dom) {
+    throw new Error(
+      "[mfe] invariant: activateRichSurface called without primary editor DOM"
+    );
+  }
   const editorDom = primaryEditor.view.dom;
   const domFieldType = String(editorDom.getAttribute("data-field-type") || "");
   const domFieldName = String(editorDom.getAttribute("data-field-name") || "");
-  return (
-    domFieldType === String(activeFieldType || "") &&
-    domFieldName === String(activeFieldName || "")
-  );
-}
-
-function reopenActiveScopeForRichSurface() {
-  if (!(activeTarget instanceof Element)) return false;
-  const payloadMeta = getPayloadFromElement(activeTarget);
-  if (!payloadMeta) return false;
-  void openFullscreenEditorFromPayload(hydrateCanonicalPayload(payloadMeta));
-  return true;
-}
-
-function activateRichSurface() {
-  if (!primaryEditorContractMatchesActiveScope()) {
-    editorSurfaceMode = "rich";
-    activeEditor = primaryEditor;
-    if (reopenActiveScopeForRichSurface()) {
-      return;
-    }
+  const activeScopeType = String(activeFieldType || "");
+  const activeScopeName = String(activeFieldName || "");
+  if (domFieldType !== activeScopeType || domFieldName !== activeScopeName) {
+    throw new Error(
+      `[mfe] invariant: editor contract mismatch at activateRichSurface. Expected scope (${activeScopeType}, ${activeScopeName}), but editor is bound to (${domFieldType}, ${domFieldName})`
+    );
   }
   editorSurfaceMode = "rich";
   activeEditor = primaryEditor;
@@ -4717,36 +4713,10 @@ function saveAllEditorsNow() {
         language: state.lang,
         scopeKind: saveScope,
       });
-      try {
-        scopedReferenceMarkdown = readScopeSliceFromMarkdown(
-          stateDraftMarkdown,
-          applyScopeMeta,
-        );
-      } catch (err) {
-        if (strictStructuralScope) {
-          emitDocStateLog("MFE_SCOPE_READ_FAILED", {
-            stateId: state.id,
-            language: state.lang,
-            reason: "saveAllEditors:scopeReadFailed",
-            trigger: "save-commit",
-            scopeKind: applyScopeMeta.scopeKind || "field",
-            errorMsg: err?.message || "unknown error",
-          });
-          throw err;
-        }
-        emitDocStateLog("MFE_SCOPE_READ_FALLBACK", {
-          stateId: state.id,
-          language: state.lang,
-          reason: "saveAllEditors:scopeReadFallback",
-          trigger: "save-commit",
-          scopeKind: applyScopeMeta.scopeKind || "field",
-          errorMsg: err?.message || "unknown error",
-        });
-        scopedReferenceMarkdown = readScopeSliceFromMarkdown(
-          state.getPersistedMarkdown() || "",
-          applyScopeMeta,
-        );
-      }
+      scopedReferenceMarkdown = readScopeSliceFromMarkdown(
+        stateDraftMarkdown,
+        applyScopeMeta,
+      );
       const scopeMarkdownFromActiveEditor = rawSurfaceOwnsState
         ? isDocumentSaveScope
           ? String(splitLeadingFrontmatter(rawEditorMarkdown).body || "")
