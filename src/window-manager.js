@@ -321,6 +321,37 @@ export function openWindow({
   className = "",
   background = "white",
 }) {
+  if (id) {
+    for (let index = windowStack.length - 1; index >= 0; index -= 1) {
+      const existing = windowStack[index];
+      if (String(existing?.id || "") !== String(id)) continue;
+      windowStack.splice(index, 1);
+      existing?.cleanupChromeMetrics?.();
+      if (existing?.dom && toastEl && existing.dom.contains(toastEl)) {
+        pinToastToBody();
+      }
+      if (existing?.dom && existing.dom.parentNode) {
+        existing.dom.remove();
+      }
+      if (typeof existing?.onClose === "function") {
+        existing.onClose();
+      }
+    }
+
+    const escapedId =
+      typeof CSS !== "undefined" && typeof CSS.escape === "function"
+        ? CSS.escape(String(id))
+        : String(id);
+    const selector = `#${escapedId}[data-mfe-window="true"]`;
+    const trackedDomSet = new Set(windowStack.map((entry) => entry?.dom));
+    const staleDomWindows = Array.from(document.querySelectorAll(selector));
+    staleDomWindows.forEach((node) => {
+      if (!trackedDomSet.has(node)) {
+        node.remove();
+      }
+    });
+  }
+
   if (windowStack.length === 0) {
     document.body.classList.add("mfe-no-scroll");
   }

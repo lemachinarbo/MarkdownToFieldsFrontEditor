@@ -233,6 +233,14 @@ function getActiveSecondaryEditor(page) {
     .first();
 }
 
+function getActiveRawEditor(page) {
+  return page
+    .locator('[data-mfe-window="true"]')
+    .last()
+    .locator('.mfe-raw-surface:not([hidden]) .cm-content')
+    .first();
+}
+
 async function appendTokenInSecondaryEditor(page, token) {
   const activeTextbox = getActiveSecondaryEditor(page);
   await expect(activeTextbox).toBeVisible();
@@ -251,6 +259,24 @@ async function appendTokenInSecondaryEditor(page, token) {
     }
   }
   await page.keyboard.type(` ${token}`);
+}
+
+async function appendTokenInRawEditor(page, token) {
+  const rawEditor = getActiveRawEditor(page);
+  await expect(rawEditor).toBeVisible();
+  await rawEditor.click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(` ${token}`);
+}
+
+async function waitForRawEditorTextContains(page, needle) {
+  const rawEditor = getActiveRawEditor(page);
+  await expect(rawEditor).toBeVisible();
+  await expect
+    .poll(async () => String((await rawEditor.textContent()) || ""), {
+      timeout: 10000,
+    })
+    .toContain(String(needle || ""));
 }
 
 async function ensureSplitLanguageSelected(page, languageLabel) {
@@ -2022,6 +2048,314 @@ test.describe("document save roundtrip", () => {
       .toBe(true);
     await assertMutationSavePathForScope(page, "document");
     await assertNoCriticalDocStateEvents(page, "rapid-dirty-scope-switch-save");
+  });
+
+  test("markdown mode breadcrumb switching keeps one window and resolves save status", async ({
+    page,
+  }) => {
+    await resetHomesFromFixtures();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    const opened = await openFullscreenEditor(page);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
+
+    const markdownToggle = page
+      .getByRole("button", { name: /Edit markdown/i })
+      .first();
+    await expect(markdownToggle).toBeVisible();
+    await markdownToggle.click();
+
+    const token = `MD_BREADCRUMB_${Date.now()}`;
+    await appendTokenInRawEditor(page, token);
+    await waitForRawEditorTextContains(page, token);
+    await expectStatusText(page, "Draft", "markdown-breadcrumb:draft");
+
+    await clickBreadcrumbLink(page, /Section:/i);
+    await waitForRawEditorTextContains(page, token);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const windows = Array.from(
+            document.querySelectorAll('[data-mfe-window="true"]'),
+          );
+          return {
+            count: windows.length,
+            ids: windows.map((entry) => String(entry.id || "")),
+          };
+        }),
+      )
+      .toEqual({ count: 1, ids: ["mfe-editor"] });
+
+    await clickBreadcrumbLink(page, /^Document$/i);
+    await waitForRawEditorTextContains(page, token);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const windows = Array.from(
+            document.querySelectorAll('[data-mfe-window="true"]'),
+          );
+          return {
+            count: windows.length,
+            ids: windows.map((entry) => String(entry.id || "")),
+          };
+        }),
+      )
+      .toEqual({ count: 1, ids: ["mfe-editor"] });
+
+    await clickBreadcrumbLink(page, /Section:/i);
+    await waitForRawEditorTextContains(page, token);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const windows = Array.from(
+            document.querySelectorAll('[data-mfe-window="true"]'),
+          );
+          return {
+            count: windows.length,
+            ids: windows.map((entry) => String(entry.id || "")),
+          };
+        }),
+      )
+      .toEqual({ count: 1, ids: ["mfe-editor"] });
+
+    await page.getByRole("button", { name: /Save changes/i }).click();
+    await expect
+      .poll(async () => {
+        const status = await readStatusBadge(page);
+        return status.text;
+      })
+      .not.toBe("Saving...");
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          document.querySelectorAll('[data-mfe-window="true"]').length,
+        ),
+      )
+      .toBe(1);
+  });
+
+  test("markdown mode dirty scope switching still saves through canonical pipeline", async ({
+    page,
+  }) => {
+    await resetHomesFromFixtures();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    const opened = await openFullscreenEditor(page);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
+
+    const markdownToggle = page
+      .getByRole("button", { name: /Edit markdown/i })
+      .first();
+    await expect(markdownToggle).toBeVisible();
+    await markdownToggle.click();
+
+    const token = `MD_SCOPE_SWITCH_${Date.now()}`;
+    await appendTokenInRawEditor(page, token);
+    await waitForRawEditorTextContains(page, token);
+    await expectStatusText(page, "Draft", "markdown-scope-switch:draft");
+
+    await clickBreadcrumbLink(page, /Section:/i);
+    await waitForRawEditorTextContains(page, token);
+
+    await clickBreadcrumbLink(page, /^Document$/i);
+    await waitForRawEditorTextContains(page, token);
+
+    await clickBreadcrumbLink(page, /Section:/i);
+    await waitForRawEditorTextContains(page, token);
+
+    await clickBreadcrumbLink(page, /^Document$/i);
+    await waitForRawEditorTextContains(page, token);
+
+    await page.getByRole("button", { name: /Save changes/i }).click();
+    await expect
+      .poll(async () => {
+        const status = await readStatusBadge(page);
+        return status.text;
+      })
+      .not.toBe("Saving...");
+    await expect
+      .poll(async () => (await readEn()).includes(token), { timeout: 20000 })
+      .toBe(true);
+    await assertMutationSavePathForScope(page, "document");
+    await assertNoCriticalDocStateEvents(
+      page,
+      "markdown-rapid-dirty-scope-switch-save",
+    );
+  });
+
+  test("markdown mode field edit still saves after rebinding to section scope", async ({
+    page,
+  }) => {
+    await resetHomesFromFixtures();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    const opened = await openFullscreenEditor(page);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
+
+    const markdownToggle = page
+      .getByRole("button", { name: /Edit markdown/i })
+      .first();
+    await expect(markdownToggle).toBeVisible();
+    await markdownToggle.click();
+
+    const token = `MD_FIELD_SECTION_${Date.now()}`;
+    await appendTokenInRawEditor(page, token);
+    await waitForRawEditorTextContains(page, token);
+    await expectStatusText(page, "Draft", "markdown-field-section:draft");
+
+    await clickBreadcrumbLink(page, /Section:/i);
+    await waitForRawEditorTextContains(page, token);
+
+    await page.getByRole("button", { name: /Save changes/i }).click();
+    await expect
+      .poll(async () => {
+        const status = await readStatusBadge(page);
+        return status.text;
+      })
+      .not.toBe("Saving...");
+    await expect
+      .poll(async () => (await readEn()).includes(token), { timeout: 20000 })
+      .toBe(true);
+    await assertMutationSavePathForScope(page, "section");
+    await assertNoCriticalDocStateEvents(
+      page,
+      "markdown-field-edit-rebound-section-save",
+    );
+  });
+
+  test("markdown mode section typing stays editable after breadcrumb switch", async ({
+    page,
+  }) => {
+    await resetHomesFromFixtures();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    const opened = await openFullscreenEditor(page);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
+
+    const markdownToggle = page
+      .getByRole("button", { name: /Edit markdown/i })
+      .first();
+    await expect(markdownToggle).toBeVisible();
+    await markdownToggle.click();
+
+    const firstToken = `MD_SECTION_REBIND_A_${Date.now()}`;
+    const secondToken = `MD_SECTION_REBIND_B_${Date.now()}`;
+
+    await appendTokenInRawEditor(page, firstToken);
+    await waitForRawEditorTextContains(page, firstToken);
+
+    await clickBreadcrumbLink(page, /Section:/i);
+    await waitForRawEditorTextContains(page, firstToken);
+
+    await appendTokenInRawEditor(page, secondToken);
+    await waitForRawEditorTextContains(page, secondToken);
+    await expectStatusText(page, "Draft", "markdown-section-rebind:draft");
+
+    await page.getByRole("button", { name: /Save changes/i }).click();
+    await expect
+      .poll(async () => {
+        const status = await readStatusBadge(page);
+        return status.text;
+      })
+      .not.toBe("Saving...");
+    await expect
+      .poll(
+        async () => {
+          const body = await readEn();
+          return body.includes(firstToken) && body.includes(secondToken);
+        },
+        { timeout: 20000 },
+      )
+      .toBe(true);
+    await assertMutationSavePathForScope(page, "section");
+    await assertNoCriticalDocStateEvents(
+      page,
+      "markdown-section-typing-after-breadcrumb-switch",
+    );
+  });
+
+  test("markdown mode document breadcrumb returns to visible rich document content", async ({
+    page,
+  }) => {
+    await resetHomesFromFixtures();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    const opened = await openFullscreenEditor(page);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
+
+    const markdownToggle = page
+      .getByRole("button", { name: /Edit markdown/i })
+      .first();
+    await expect(markdownToggle).toBeVisible();
+    await markdownToggle.click();
+
+    await clickBreadcrumbLink(page, /Section:/i);
+    await waitForRawEditorTextContains(page, "The Urban");
+
+    await clickBreadcrumbLink(page, /^Document$/i);
+    await expect
+      .poll(() => getCurrentBreadcrumbLabel(page), { timeout: 10000 })
+      .toBe("Document");
+    await expect
+      .poll(
+        async () => {
+          const rawText = await getActiveRawEditor(page).textContent();
+          return String(rawText || "");
+        },
+        { timeout: 10000 },
+      )
+      .toContain("<!-- section:columns -->");
+
+    await markdownToggle.click();
+    await ensureDocumentScopeHydrated(page);
+
+    const editorContract = await page.evaluate(() => {
+      const editor = document.querySelector(
+        '.mfe-editor-pane--primary .mfe-editor[contenteditable="true"]',
+      );
+      return {
+        fieldType: String(editor?.getAttribute("data-field-type") || ""),
+        fieldName: String(editor?.getAttribute("data-field-name") || ""),
+        textLength: String(editor?.textContent || "").trim().length,
+      };
+    });
+    expect(editorContract.fieldType).toBe("container");
+    expect(editorContract.fieldName).toBe("document");
+    expect(editorContract.textLength).toBeGreaterThan(200);
+    await assertNoCriticalDocStateEvents(
+      page,
+      "markdown-document-breadcrumb-rich-return",
+    );
   });
 
   test("document split lens keeps unsaved edits across scopes and languages", async ({

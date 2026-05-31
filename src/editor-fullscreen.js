@@ -87,7 +87,7 @@ import {
 } from "./sync-by-key.js";
 import {
   openWindow,
-  closeWindow,
+  closeTopWindow,
   updateWindowById,
   showWindowToast,
   clearGlobalToast,
@@ -138,7 +138,7 @@ import {
   annotateInferredImages,
   normalizeHtmlImageSources,
 } from "./editor-image-annotations.js";
-import { afterNextPaint } from "./async-queue.js";
+import { afterNextPaint, withLock } from "./async-queue.js";
 import { request, assertOk, getDataOrThrow } from "./network.js";
 import {
   listSnapshots as listSnapshotsRequest,
@@ -189,6 +189,7 @@ import {
   hasStructuralMarkerBoundaryViolations,
   parseStructuralDocument,
   findTargetMarkerIndex,
+  resolveStructuralScopeRange,
 } from "./structural-document.js";
 import { applyScopedEdit, buildOutboundPayload } from "./mutation-plan.js";
 import {
@@ -1266,6 +1267,67 @@ function syncRawTextareaFromCanonical({ preserveSelection = false } = {}) {
   }
 }
 
+function normalizeStructuralScopeReplacement({ replacement, originalSlice, hasNextMarker }) {
+  let next = normalizeLineEndingsToLf(String(replacement || ""));
+  const current = normalizeLineEndingsToLf(String(originalSlice || ""));
+  const leadingNewlines = (current.match(/^\n+/) || [""])[0];
+  const trailingNewlines = hasNextMarker ? (current.match(/\n+$/) || [""])[0] : "";
+
+  if (leadingNewlines && !next.startsWith("\n")) {
+    next = `${leadingNewlines}${next.replace(/^\n+/, "")}`;
+  }
+  if (trailingNewlines) {
+    next = `${next.replace(/\n+$/g, "")}${trailingNewlines}`;
+  } else if (hasNextMarker && !/\n$/.test(next)) {
+    next = `${next}\n`;
+  }
+
+  return next;
+}
+
+function applyRawStructuralScopeMarkdown(
+  state,
+  markdown,
+  applyScopeMeta,
+  reason,
+  trigger,
+) {
+  if (!state || !applyScopeMeta) return false;
+  const scopeKind = normalizeScopeKind(applyScopeMeta.scopeKind || "");
+  if (scopeKind !== "section" && scopeKind !== "subsection") {
+    return false;
+  }
+
+  const beforeDraft = normalizeLineEndingsToLf(String(state.getDraft() || ""));
+  const scopeMeta = {
+    scopeKind,
+    section: applyScopeMeta.section || "",
+    subsection: applyScopeMeta.subsection || "",
+    name: applyScopeMeta.name || "",
+  };
+  const structural = parseStructuralDocument(beforeDraft);
+  const range = resolveStructuralScopeRange(structural, scopeMeta);
+  const originalSlice = beforeDraft.slice(range.contentStart, range.contentEnd);
+  const replacement = normalizeStructuralScopeReplacement({
+    replacement: markdown,
+    originalSlice,
+    hasNextMarker: range.hasNextMarker,
+  });
+  const nextDraft = `${beforeDraft.slice(0, range.contentStart)}${replacement}${beforeDraft.slice(range.contentEnd)}`;
+
+  if (hasStructuralMarkerBoundaryViolations(nextDraft)) {
+    throw new Error(
+      "[mfe] mutation-plan: marker boundary violation after scoped patch",
+    );
+  }
+
+  state.setDraft(nextDraft, {
+    reason,
+    trigger,
+  });
+  return true;
+}
+
 function applyPrimaryMarkdownToCanonical(markdown, reason, trigger) {
   const currentLang = normalizeLangValue(getLanguagesConfig().current);
   const primaryState = getDocumentStateForActiveField(currentLang, {
@@ -1279,6 +1341,16 @@ function applyPrimaryMarkdownToCanonical(markdown, reason, trigger) {
       reason,
       trigger,
     });
+  } else if (
+    isRawSurfaceActive() &&
+    applyRawStructuralScopeMarkdown(
+      primaryState,
+      markdown,
+      captureExplicitApplyScopeMeta(reason),
+      reason,
+      trigger,
+    )
+  ) {
   } else {
     const applyScopeMeta = captureExplicitApplyScopeMeta(reason);
     applyMarkdownToStateForReferenceScope(
@@ -1361,7 +1433,33 @@ function syncEditorSurfaceMode({ preserveRawSelection = false } = {}) {
   }
 }
 
+function primaryEditorContractMatchesActiveScope() {
+  if (!primaryEditor?.view?.dom) return true;
+  const editorDom = primaryEditor.view.dom;
+  const domFieldType = String(editorDom.getAttribute("data-field-type") || "");
+  const domFieldName = String(editorDom.getAttribute("data-field-name") || "");
+  return (
+    domFieldType === String(activeFieldType || "") &&
+    domFieldName === String(activeFieldName || "")
+  );
+}
+
+function reopenActiveScopeForRichSurface() {
+  if (!(activeTarget instanceof Element)) return false;
+  const payloadMeta = getPayloadFromElement(activeTarget);
+  if (!payloadMeta) return false;
+  openFullscreenEditorFromPayload(hydrateCanonicalPayload(payloadMeta));
+  return true;
+}
+
 function activateRichSurface() {
+  if (!primaryEditorContractMatchesActiveScope()) {
+    editorSurfaceMode = "rich";
+    activeEditor = primaryEditor;
+    if (reopenActiveScopeForRichSurface()) {
+      return;
+    }
+  }
   editorSurfaceMode = "rich";
   activeEditor = primaryEditor;
   const nextRichMarkdown = getPrimaryDisplayMarkdownFromState();
@@ -4244,9 +4342,19 @@ function saveAllEditors() {
   const isStateDerivedDirty = (state) => {
     if (!state) return false;
     if (state.isDirty()) return true;
+    const rawSurfaceOwnsState =
+      isRawSurfaceActive() &&
+      normalizeLangValue(state.lang) === normalizeLangValue(currentLang);
     const langEditor = resolveEditorForLang(state.lang);
-    if (!langEditor) return false;
-    const editorMarkdown = readScopedEditorMarkdown(langEditor);
+    if (!rawSurfaceOwnsState && !langEditor) return false;
+    const rawEditorMarkdown = rawSurfaceOwnsState ? getRawEditorValue() : "";
+    const editorMarkdown = rawSurfaceOwnsState
+      ? String(
+          applyScopeMeta?.scopeKind === "document"
+            ? splitLeadingFrontmatter(rawEditorMarkdown).body
+            : rawEditorMarkdown,
+        )
+      : readScopedEditorMarkdown(langEditor);
     const stateScopedMarkdown = readScopeSliceFromMarkdown(
       String(state.getDraft() || ""),
       applyScopeMeta,
@@ -4570,7 +4678,7 @@ function saveAllEditors() {
       }
       const scopeMarkdownFromActiveEditor = rawSurfaceOwnsState
         ? isDocumentSaveScope
-          ? String(state.recomposeMarkdownForSave(state.getDraft()) || "")
+          ? String(splitLeadingFrontmatter(rawEditorMarkdown).body || "")
           : String(scopedReferenceMarkdown || "")
         : hasLiveEditorForState
           ? readScopedEditorMarkdown(langEditor)
@@ -4801,40 +4909,94 @@ function saveAllEditors() {
         }
       }
 
-      const structuralDocumentBefore = parseStructuralDocument(bodyToParse);
-      const runtimeProjectionResolution =
-        resolveValidatedRuntimeProjectionForMutation({
-          state,
-          scopeMeta: saveScopeMeta,
-          canonicalBody: bodyToParse,
-          editor: langEditor,
-          reason: "saveAllEditors",
-        });
-      const scopedMutation = applyScopedEdit({
-        session: scopeSessionForSave,
-        structuralDocument: structuralDocumentBefore,
-        editorContent: scopedEditedMarkdownSourceFirst.markdown,
-        runtimeProjection: runtimeProjectionResolution.runtimeProjection,
-      });
-      if (!scopedMutation || scopedMutation.ok === false) {
-        throw new Error(
-          String(scopedMutation?.reason || "[mfe] mutation-plan failed"),
+      if (rawSurfaceOwnsState && isDocumentSaveScope) {
+        finalCanonicalBody = normalizeLineEndingsToLf(
+          String(splitLeadingFrontmatter(rawEditorMarkdown).body || ""),
         );
+        const structuralGraphAfterRaw = assertStructuralMarkerGraphEqual(
+          bodyToParse,
+          finalCanonicalBody,
+        );
+        if (!structuralGraphAfterRaw.ok) {
+          throw new Error(
+            `[mfe] mutation-plan: document marker topology changed (${structuralGraphAfterRaw.reason})`,
+          );
+        }
+        if (hasStructuralMarkerBoundaryViolations(finalCanonicalBody)) {
+          throw new Error(
+            "[mfe] mutation-plan: document marker boundary violation",
+          );
+        }
+        saveMode = "document-canonical";
+        scopedMarkdownForSave = buildOutboundPayload({
+          canonicalBody: finalCanonicalBody,
+          scopeMeta: saveScopeMeta,
+        });
+        effectiveCanonicalMutation = {
+          canonicalBody: finalCanonicalBody,
+          scopedComparableMarkdown: finalCanonicalBody,
+          scopedOutboundMarkdown: String(scopedMarkdownForSave || ""),
+          startOffset: 0,
+          endOffset: finalCanonicalBody.length,
+        };
+      } else if (
+        rawSurfaceOwnsState &&
+        (saveScope === "section" || saveScope === "subsection")
+      ) {
+        finalCanonicalBody = normalizeLineEndingsToLf(String(stateDraftMarkdown || ""));
+        const effectiveScopeSlice = resolveCanonicalScopeSlice(
+          finalCanonicalBody,
+          saveScopeMeta,
+        );
+        scopedMarkdownForSave = buildOutboundPayload({
+          canonicalBody: finalCanonicalBody,
+          scopeMeta: saveScopeMeta,
+        });
+        effectiveCanonicalMutation = {
+          canonicalBody: finalCanonicalBody,
+          scopedComparableMarkdown: String(
+            effectiveScopeSlice?.canonicalSlice || scopedMarkdownForSave,
+          ),
+          scopedOutboundMarkdown: String(scopedMarkdownForSave || ""),
+          startOffset: Number(effectiveScopeSlice?.sliceStartCu || 0),
+          endOffset: Number(effectiveScopeSlice?.sliceEndCu || 0),
+        };
+      } else {
+        const structuralDocumentBefore = parseStructuralDocument(bodyToParse);
+        const runtimeProjectionResolution =
+          resolveValidatedRuntimeProjectionForMutation({
+            state,
+            scopeMeta: saveScopeMeta,
+            canonicalBody: bodyToParse,
+            editor: langEditor,
+            reason: "saveAllEditors",
+          });
+        const scopedMutation = applyScopedEdit({
+          session: scopeSessionForSave,
+          structuralDocument: structuralDocumentBefore,
+          editorContent: scopedEditedMarkdownSourceFirst.markdown,
+          runtimeProjection: runtimeProjectionResolution.runtimeProjection,
+        });
+        if (!scopedMutation || scopedMutation.ok === false) {
+          throw new Error(
+            String(scopedMutation?.reason || "[mfe] mutation-plan failed"),
+          );
+        }
+        finalCanonicalBody = String(scopedMutation.canonicalBody || bodyToParse);
+        scopedMarkdownForSave = buildOutboundPayload({
+          canonicalBody: finalCanonicalBody,
+          scopeMeta: saveScopeMeta,
+        });
+        effectiveCanonicalMutation = {
+          canonicalBody: finalCanonicalBody,
+          scopedComparableMarkdown: String(
+            scopedMutation.scopedComparableMarkdown || scopedMarkdownForSave,
+          ),
+          scopedOutboundMarkdown: String(scopedMarkdownForSave || ""),
+          startOffset: Number(scopedMutation.startOffset || 0),
+          endOffset: Number(scopedMutation.endOffset || 0),
+        };
       }
-      finalCanonicalBody = String(scopedMutation.canonicalBody || bodyToParse);
-      scopedMarkdownForSave = buildOutboundPayload({
-        canonicalBody: finalCanonicalBody,
-        scopeMeta: saveScopeMeta,
-      });
-      effectiveCanonicalMutation = {
-        canonicalBody: finalCanonicalBody,
-        scopedComparableMarkdown: String(
-          scopedMutation.scopedComparableMarkdown || scopedMarkdownForSave,
-        ),
-        scopedOutboundMarkdown: String(scopedMarkdownForSave || ""),
-        startOffset: Number(scopedMutation.startOffset || 0),
-        endOffset: Number(scopedMutation.endOffset || 0),
-      };
       emitDocStateLog("MFE_MUTATION_PLAN_APPLIED", {
         stateId: state.id,
         language: state.lang,
@@ -5022,8 +5184,10 @@ function saveAllEditors() {
             state.getPersistedMarkdown(),
           ),
         );
-        const plannedHash = plannedHashesByStateId.get(state.id) || "";
         const payloadHash = hashStateIdentity(outboundMarkdownForSave);
+        const plannedHash = rawSurfaceOwnsState
+          ? payloadHash
+          : plannedHashesByStateId.get(state.id) || "";
         if (plannedHash && plannedHash !== payloadHash) {
           const mismatchError = new Error(
             `[mfe] save-pipeline: draft hash drift before network for ${state.id}`,
@@ -8065,7 +8229,7 @@ function isReadOnlySyntheticSectionScope() {
 
 function closeEditor() {
   // Close is immediate; save completion feedback is delivered via toast if needed.
-  closeWindow("mfe-editor");
+  closeTopWindow();
   return Promise.resolve(true);
 }
 
@@ -9303,7 +9467,10 @@ function openFullscreenEditorFromPayload(payload) {
   const previousSessionStateId = activeSessionStateId;
   const previousOriginFieldKey = activeOriginFieldKey;
   const previousPageId = activeTarget?.getAttribute("data-page") || "";
-  if (activeEditor) {
+  const hasOpenFullscreenWindow = Boolean(
+    document.querySelector('#mfe-editor[data-mfe-window="true"]'),
+  );
+  if (hasOpenFullscreenWindow) {
     suppressNextCloseConfirm = true;
     skipOutlineResetDuringClose = true;
     closeEditor();
@@ -9573,67 +9740,81 @@ function openFullscreenEditorForElement(target) {
   normalizeFieldHostIdentity(document);
   const payloadMeta = getPayloadFromElement(target);
   if (!payloadMeta) return;
-  const requestedOriginKey = resolveRequestedOriginKeyPure(payloadMeta, {
-    fallbackFieldId: buildPayloadFieldId(payloadMeta),
-  });
-  const originFieldKey = payloadMeta.originFieldKey || requestedOriginKey;
-  const payloadMetaWithOrigin = {
-    ...payloadMeta,
-    rawOriginKey: requestedOriginKey,
-    originFieldKey,
-    originKey: originFieldKey,
-  };
 
-  // Check if this target is already being edited inline
-  // If so, user is just trying to refocus inline editor, not switch to fullscreen
-  if (target.classList.contains("mfe-inline-active")) {
-    if (isInlineOpen()) {
-      return;
+  void withLock("fullscreen:open-target", async () => {
+    const requestedOriginKey = resolveRequestedOriginKeyPure(payloadMeta, {
+      fallbackFieldId: buildPayloadFieldId(payloadMeta),
+    });
+    const originFieldKey = payloadMeta.originFieldKey || requestedOriginKey;
+    const payloadMetaWithOrigin = {
+      ...payloadMeta,
+      rawOriginKey: requestedOriginKey,
+      originFieldKey,
+      originKey: originFieldKey,
+    };
+
+    // Check if this target is already being edited inline
+    // If so, user is just trying to refocus inline editor, not switch to fullscreen
+    if (target.classList.contains("mfe-inline-active")) {
+      if (isInlineOpen()) {
+        return;
+      }
+      target.classList.remove("mfe-inline-active");
     }
-    target.classList.remove("mfe-inline-active");
-  }
 
-  const buildCanonicalPayload = () =>
-    hydrateCanonicalPayload(payloadMetaWithOrigin);
+    const buildCanonicalPayload = () =>
+      hydrateCanonicalPayload(payloadMetaWithOrigin);
 
-  const continueOpen = (payload) => {
-    const forceScopeWindow =
-      payload.fieldScope === "section" || payload.fieldScope === "subsection";
-    const currentSingleBlock = shouldWarnForExtraContent(
-      activeFieldType,
-      activeFieldName,
-    );
-    const incomingSingleBlock = shouldWarnForExtraContent(
-      payload.fieldType,
-      payload.fieldName,
-    );
-    const forceSchemaRebuild =
-      Boolean(primaryEditor) && currentSingleBlock !== incomingSingleBlock;
-    const forceNewWindow = forceScopeWindow || forceSchemaRebuild;
-    if (forceNewWindow) {
+    const continueOpen = (payload) => {
+      const forceScopeWindow =
+        (payload.fieldScope === "section" ||
+          payload.fieldScope === "subsection") &&
+        !isRawSurfaceActive();
+      const currentSingleBlock = shouldWarnForExtraContent(
+        activeFieldType,
+        activeFieldName,
+      );
+      const incomingSingleBlock = shouldWarnForExtraContent(
+        payload.fieldType,
+        payload.fieldName,
+      );
+      const forceSchemaRebuild =
+        !isRawSurfaceActive() &&
+        Boolean(primaryEditor) &&
+        currentSingleBlock !== incomingSingleBlock;
+      const forceNewWindow = forceScopeWindow || forceSchemaRebuild;
+      if (forceNewWindow) {
+        return openFullscreenEditorFromPayload(payload);
+      }
+      // If an editor is already open, swap content in place instead of opening a new window
+      const hasOpenWindow = Boolean(
+        overlayEl && overlayEl.isConnected && primaryEditor,
+      );
+      if (hasOpenWindow && replaceActiveEditor(payload)) {
+        return;
+      }
       return openFullscreenEditorFromPayload(payload);
-    }
-    // If an editor is already open, swap content in place instead of opening a new window
-    const hasOpenWindow =
-      isFullscreenOpen() && overlayEl && overlayEl.isConnected && primaryEditor;
-    if (hasOpenWindow && replaceActiveEditor(payload)) {
-      return;
-    }
-    return openFullscreenEditorFromPayload(payload);
-  };
+    };
 
-  const hasActiveEditor = Boolean(
-    activeEditor && activeTarget && primaryEditor,
-  );
-  if (hasActiveEditor) {
-    Promise.resolve(keepPendingChangesBeforeSwitch()).then((ok) => {
+    const hasActiveEditorSession = Boolean(
+      overlayEl?.isConnected ||
+        document.querySelector('#mfe-editor[data-mfe-window="true"]') ||
+        primaryEditor ||
+        rawEditorInstance,
+    );
+    if (hasActiveEditorSession) {
+      const ok = await Promise.resolve(keepPendingChangesBeforeSwitch());
       if (!ok) return;
       continueOpen(buildCanonicalPayload());
-    });
-    return;
-  }
+      return;
+    }
 
-  return continueOpen(buildCanonicalPayload());
+    continueOpen(buildCanonicalPayload());
+  }).catch((error) => {
+    debugWarn("[mfe] fullscreen open lock failed", String(error || ""));
+  });
+
+  return true;
 }
 
 function recompileMountGraph() {
@@ -9844,7 +10025,7 @@ window.MarkdownFrontEditor = {
   },
 
   isOpen() {
-    return activeEditor !== null;
+    return Boolean(document.querySelector('#mfe-editor[data-mfe-window="true"]'));
   },
 
   recompile() {
