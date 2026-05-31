@@ -6173,7 +6173,14 @@ function hydrateTranslationsForActiveScope(reasonPrefix = "openSplit") {
     getLanguagesConfig,
     fetchTranslations,
     isStateTraceEnabled,
-    getDocumentStateForActiveField,
+    getDocumentStateForActiveField: (lang, options = {}) => {
+      const previousActiveDocumentState = activeDocumentState;
+      const previousSessionStateId = activeSessionStateId;
+      const state = getDocumentStateForActiveField(lang, options);
+      activeDocumentState = previousActiveDocumentState;
+      activeSessionStateId = previousSessionStateId;
+      return state;
+    },
     ingestDocumentStateMarkdown,
   });
 }
@@ -6298,13 +6305,16 @@ function setSecondaryLanguage(lang) {
     secondaryEditor,
     "setSecondaryLanguage:scopeRebind",
   );
-  const state = getDocumentStateForActiveField(lang, {
+  const previousActiveDocumentState = activeDocumentState;
+  const previousSessionStateId = activeSessionStateId;
+  const secondaryState = getDocumentStateForActiveField(lang, {
     reason: "setSecondaryLanguage:bind",
     trigger: "scope-navigation",
     initialPersistedMarkdown: "",
     initialDraftMarkdown: "",
   });
-  activeDocumentState = state;
+  activeDocumentState = previousActiveDocumentState;
+  activeSessionStateId = previousSessionStateId;
   const activeScopeMeta = captureExplicitApplyScopeMeta("setSecondaryLanguage");
   const canonicalScopeMeta = buildCanonicalSessionScopeMeta({
     scopeKind: activeScopeMeta.scopeKind || activeFieldScope || "field",
@@ -6312,19 +6322,18 @@ function setSecondaryLanguage(lang) {
     subsection: activeScopeMeta.subsection || activeFieldSubsection || "",
     name: activeScopeMeta.name || activeFieldName || "",
   });
-  const canonicalSession = state
+  const canonicalSession = secondaryState
     ? setCanonicalMutationSessionForState(
-        state.id,
-        String(state.getDraft() || ""),
+        secondaryState.id,
+        String(secondaryState.getDraft() || ""),
         canonicalScopeMeta,
       )
     : null;
+  const secondaryDraftMarkdown = String(
+    secondaryState?.getDraft?.() || secondaryState?.getPersistedMarkdown?.() || "",
+  );
   const scopeSliceMarkdown = enforceBodyOnlyEditorInput(
-    readScopeSliceForScopeMeta(
-      lang,
-      activeScopeMeta,
-      "setSecondaryLanguage:read",
-    ),
+    readScopeSliceFromMarkdown(secondaryDraftMarkdown, activeScopeMeta),
     {
       source: "setSecondaryLanguage",
       lang,
@@ -6350,7 +6359,7 @@ function setSecondaryLanguage(lang) {
       stripTrailingEmptyParagraph(secondaryEditor);
     });
   }
-  if (canonicalSession && state) {
+  if (canonicalSession && secondaryState) {
     const runtimeProjection =
       canonicalSession?.runtimeProjection ||
       canonicalSession?.projection ||
@@ -6359,7 +6368,7 @@ function setSecondaryLanguage(lang) {
       String(runtimeProjection?.displayText || ""),
     );
     const secondaryBoundaryProjection = stampProjectionIdentityForSession(
-      String(state.id || ""),
+      String(secondaryState.id || ""),
       canonicalSession?.scopeMeta,
       canonicalSession?.scopeSlice?.protectedSpans,
       buildProjectionWithResolvedMarkerAnchors(secondaryEditor, {
@@ -6398,12 +6407,12 @@ function setSecondaryLanguage(lang) {
     );
     const seededBuffer = String(getMarkdownFromEditor(secondaryEditor) || "");
     syncCanonicalProjectionRuntimeForEditor(
-      String(state.id || ""),
+      String(secondaryState.id || ""),
       secondaryEditor,
       seededBuffer,
     );
     performCanonicalSeedNormalizationHandshake(
-      String(state.id || ""),
+      String(secondaryState.id || ""),
       secondaryEditor,
     );
   }
@@ -6415,8 +6424,8 @@ function setSecondaryLanguage(lang) {
   );
   highlightExtraContent(secondaryEditor);
 
-  if (state) {
-    const stateDraft = String(state.getDraft() || "");
+  if (secondaryState) {
+    const stateDraft = String(secondaryState.getDraft() || "");
     const scopeKind = normalizeScopeKind(activeFieldScope || "field");
     const isStructuralScope = isStructuralScopeKind(scopeKind);
     if (
@@ -6425,9 +6434,9 @@ function setSecondaryLanguage(lang) {
         normalizeComparableMarkdown(stateDraft)
     ) {
       emitDocStateLog("MFE_SPLIT_STRUCTURAL_INGEST_BLOCKED", {
-        stateId: state.id,
+        stateId: secondaryState.id,
         language: lang,
-        originKey: state.originKey,
+        originKey: secondaryState.originKey,
         currentScope: activeFieldScope || scopeKind,
         reason: "setSecondaryLanguage:structuralIngestBlocked",
         trigger: "system-rehydrate",

@@ -2358,6 +2358,53 @@ test.describe("document save roundtrip", () => {
     );
   });
 
+  test("split secondary language does not leak into primary markdown surface", async ({
+    page,
+  }) => {
+    await resetHomesFromFixtures();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    const opened = await openFullscreenEditor(page);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
+
+    const splitButton = page.getByRole("button", { name: "View languages" });
+    await expect(splitButton).toBeVisible();
+    await splitButton.click();
+
+    const languageSelect = page.getByRole("combobox").first();
+    await expect(languageSelect).toBeVisible();
+    await languageSelect.selectOption({ label: "Spanish" });
+    await expect(getActiveSecondaryEditor(page)).toBeVisible();
+    await waitForSecondaryEditorTextContains(page, "La granja");
+
+    const markdownToggle = page
+      .getByRole("button", { name: /Edit markdown/i })
+      .first();
+    await expect(markdownToggle).toBeVisible();
+    await markdownToggle.click();
+
+    await waitForRawEditorTextContains(page, "The Urban");
+    await expect
+      .poll(
+        async () => String((await getActiveRawEditor(page).textContent()) || ""),
+        { timeout: 10000 },
+      )
+      .not.toContain("La granja");
+
+    await clickBreadcrumbLink(page, /Section:/i);
+    await waitForRawEditorTextContains(page, "The Urban");
+    await assertNoCriticalDocStateEvents(
+      page,
+      "split-secondary-language-primary-markdown-surface",
+    );
+  });
+
   test("document split lens keeps unsaved edits across scopes and languages", async ({
     page,
   }) => {
