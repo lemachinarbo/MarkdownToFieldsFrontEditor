@@ -14,6 +14,11 @@ This file tracks the active development tracks for Jules and other agents in Mar
 - [ ] **Code Health: Remove leftover console statement** (Session: 8475759274777109420)
 - [ ] **Testing Improvement: Missing tests for buildScopeKeyFromMeta** (Session: 15009249872801566978)
 - [ ] **Testing Improvement: Missing test file for markdown-text-utils.js** (Session: 13446809845484129784)
+- [ ] **Code Health: Review fullscreen rich/raw surface lifecycle smell**
+  - [ ] Re-evaluate whether the fullscreen shell should reuse or rebuild the hidden rich editor across scope and schema transitions.
+  - [ ] Verify the lifecycle stays aligned with the single canonical DocumentState north star and does not encode scope-specific contracts in stale UI instances.
+  - [ ] Decide whether scope rebinds should always derive editor contracts from active scope instead of relying on mismatch-triggered refresh.
+  - [ ] Add regression coverage for any lifecycle simplification chosen during the review.
 
 ## Completed
 
