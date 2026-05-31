@@ -132,10 +132,10 @@ export function applyDatastarPatchToNodes({ nodes, mode, elements, cycleId }) {
 
 function assertSafeFragmentHtml(html) {
   const parsed = parseFragmentHtmlDocument(html);
-  if (!parsed?.body) {
+  if (!parsed?.documentElement) {
     throw new Error("Unsafe fragment HTML: unable to parse patch payload");
   }
-  const elements = Array.from(parsed.body.querySelectorAll("*"));
+  const elements = Array.from(parsed.querySelectorAll("*"));
   elements.forEach((element) => {
     const tagName = element.tagName?.toLowerCase() || "";
     if (DISALLOWED_FRAGMENT_TAGS.has(tagName)) {

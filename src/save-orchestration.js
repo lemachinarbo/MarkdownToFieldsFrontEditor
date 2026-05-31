@@ -122,6 +122,9 @@ export function resolveFallbackSaveEditorMarkdown(params = {}) {
     if (scopeKind === "document" || displayText) {
       return displayText;
     }
+    throw new Error(
+      "marker-bearing projection resolved empty display text for non-document scope",
+    );
   } catch (error) {
     throw new Error(
       `[mfe] fallback save blocked: marker-bearing projection failed (${error?.message || "unknown error"})`,

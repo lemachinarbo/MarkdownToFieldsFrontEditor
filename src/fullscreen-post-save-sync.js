@@ -655,14 +655,18 @@ export async function handlePrimarySaveResponse({
             .filter(Boolean),
         ),
       );
+      const wasScopedKeyApplied = (candidateKey) =>
+        appliedKeys.some((appliedKey) =>
+          isScopeOrDescendantKey(candidateKey, appliedKey),
+        );
       const skippedKeys = Array.from(
         new Set([
           ...nonMountedRequestedKeys,
-          ...requestedKeys.filter((key) => !appliedKeys.includes(key)),
+          ...requestedKeys.filter((key) => !wasScopedKeyApplied(key)),
         ]),
       );
       if (activeScopedKey && requestedKeys.includes(activeScopedKey)) {
-        allowActiveEditorReseed = appliedKeys.includes(activeScopedKey);
+        allowActiveEditorReseed = wasScopedKeyApplied(activeScopedKey);
         if (!allowActiveEditorReseed) {
           debugWarn("[mfe:save-sync] active editor reseed skipped", {
             activeScopedKey,

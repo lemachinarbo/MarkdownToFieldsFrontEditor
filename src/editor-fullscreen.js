@@ -4974,23 +4974,6 @@ function saveAllEditors() {
         bytesFinalCanonical,
         bytesMarkSavedArg,
       });
-      const plannedHash = plannedHashesByStateId.get(state.id) || "";
-      const payloadHash = hashStateIdentity(outboundMarkdownForSave);
-      if (plannedHash && plannedHash !== payloadHash) {
-        const mismatchError = new Error(
-          `[mfe] save-pipeline: draft hash drift before network for ${state.id}`,
-        );
-        if (isDevMode()) {
-          throw mismatchError;
-        }
-        results.push({
-          ok: false,
-          state,
-          error: mismatchError,
-          hasFragments: false,
-        });
-        continue;
-      }
       try {
         const saveMdName = isDocumentSaveScope
           ? "document"
@@ -5039,6 +5022,23 @@ function saveAllEditors() {
             state.getPersistedMarkdown(),
           ),
         );
+        const plannedHash = plannedHashesByStateId.get(state.id) || "";
+        const payloadHash = hashStateIdentity(outboundMarkdownForSave);
+        if (plannedHash && plannedHash !== payloadHash) {
+          const mismatchError = new Error(
+            `[mfe] save-pipeline: draft hash drift before network for ${state.id}`,
+          );
+          if (isDevMode()) {
+            throw mismatchError;
+          }
+          results.push({
+            ok: false,
+            state,
+            error: mismatchError,
+            hasFragments: false,
+          });
+          continue;
+        }
         emitStageMarkdownDiagnostic(
           "payload_sent_backend",
           outboundMarkdownForSave,
@@ -7289,6 +7289,7 @@ function initEditor(markdownContent, fieldType = "tag") {
 }
 
 function cleanupEditorOnly() {
+  const preserveSplitDuringRebind = skipOutlineResetDuringClose;
   const currentSessionStateIds = listStatesForActiveSession(
     getActiveSessionStateKey(),
   ).map((state) => String(state?.id || ""));
@@ -7336,7 +7337,9 @@ function cleanupEditorOnly() {
   activeEditor = null;
   refreshToolbarState = null;
   fullscreenPaneMode = "edit";
-  splitEnabledByUser = false;
+  if (!preserveSplitDuringRebind) {
+    splitEnabledByUser = false;
+  }
   snapshotHistoryOpen = false;
   snapshotHistoryLoading = false;
   snapshotHistoryItems = [];
