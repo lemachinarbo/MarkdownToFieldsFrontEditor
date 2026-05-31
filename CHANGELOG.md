@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.10.0](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.9.1...v0.10.0) (2026-05-31)
+
+
+### Features
+
+* add automatic snapshots ([b97a369](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/b97a369f40cb70d753f4ac0a47a0008171853e89))
+* initialize standalone conductor environment ([86d8db5](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/86d8db56f0b6855234b256f340df79783eedb133))
+
+
+### Bug Fixes
+
+* align three-part data-mfe path resolution ([88f36ae](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/88f36ae74298307d2312e42f1f881cefcb11f270))
+* block raw fallback saves ([aed8cb2](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/aed8cb26cd64349a360dd775fd0eded58b4b558c))
+* check outbound save hash ([280ca81](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/280ca8149809ee1b53c2b6ed58a50c13d700e203))
+* correct save-pipeline and preview-sync logic ([a02328f](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/a02328f6d31dc013f213e424d2cafba7271dbe64))
+* delay stale scope event ([afca5cb](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/afca5cb6780d8391112e1d0984914cb79eb9ee9f))
+* gate active editor reseed ([0c2b8a8](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/0c2b8a833a33e9a584f1f8691592d25ac269efd3))
+* hash full save payload ([5ac855a](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/5ac855a748771bafddfe851fd3a893ed6d631995))
+* reject empty state languages ([d89cb4e](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/d89cb4ec4ad8b13f9d8428decb554c6baab4d8ee))
+* reject unsafe fragment html ([1a96efd](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/1a96efdaef8647d44d25c316988838bf3f8c3f1c))
+* resolve security vulnerabilities ([f6fd479](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/f6fd479c6e152ba9d8503eb2cf90ef59674ea738))
+* secure path traversal in thumbnail generation ([e196591](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/e1965915aa83a4e59f03c5554545ce46606045e7))
+* validate fragment patch selectors ([887912b](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/887912b7ae1aaadf270790658f378ece2c12c4e4))
+* validate snapshot api response schema per action ([9270145](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/927014561beb4cf1d7258658f3edce9745f065de))
+
+
+### Miscellaneous Chores
+
+* add conductor audit ledger for main branch review ([29ab07f](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/29ab07fb1431ac4bd48090c182590afcee4085d5))
+* lock active code health tracks ([a6e2c8d](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/a6e2c8d7c9046feefbb59ce93f76e4ee6f00e600))
+* sync conductor protocol and commit rules ([f23013f](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/f23013f00fd24a694e78cd529bf3bf651c7a21b5))
+* update active tracks ledger ([2fe7445](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/2fe7445e5b5507d141f93cafd7ee60ede7c3aa02))
+* update conductor tracks ledger ([8f4f2ae](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/8f4f2ae88ab26a19b28e194574c6e90a848a7f06))
+* update playwright dependencies ([d5e9364](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/d5e9364aac7fa71e212fbabda027eeb28f42774e))
+
 ## [0.9.1](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.9.0...v0.9.1) (2026-05-04)
 
 
