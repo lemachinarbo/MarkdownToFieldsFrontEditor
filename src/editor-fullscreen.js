@@ -4539,7 +4539,7 @@ function saveAllEditors() {
       }
     }
   }
-  const { saveCandidates, plannedHashesByStateId } = buildSavePlan({
+  const { saveCandidates } = buildSavePlan({
     sessionStateKey,
     currentLang,
     activeFieldScope: activeSaveScopeKind,
@@ -5183,12 +5183,22 @@ function saveAllEditors() {
             state.getPersistedMarkdown(),
           ),
         );
-        const payloadHash = hashStateIdentity(
+        const plannedHash = hashStateIdentity(
           preComposeComparableMarkdownForHash,
         );
-        const plannedHash = rawSurfaceOwnsState
-          ? payloadHash
-          : plannedHashesByStateId.get(state.id) || "";
+        const payloadComparableMarkdownForHash = normalizeLineEndingsToLf(
+          restoreEscapedMarkdownSyntaxForScopedSave(
+            isDocumentSaveScope
+              ? typeof state.recomposeMarkdownForSave === "function"
+                ? String(state.recomposeMarkdownForSave(finalCanonicalBody) || "")
+                : String(finalCanonicalBody || "")
+              : scopedMarkdownForSave,
+            state.getPersistedMarkdown(),
+          ),
+        );
+        const payloadHash = hashStateIdentity(
+          payloadComparableMarkdownForHash,
+        );
         if (plannedHash && plannedHash !== payloadHash) {
           const mismatchError = new Error(
             `[mfe] save-pipeline: draft hash drift before network for ${state.id}`,

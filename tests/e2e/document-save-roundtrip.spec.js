@@ -237,7 +237,7 @@ function getActiveRawEditor(page) {
   return page
     .locator('[data-mfe-window="true"]')
     .last()
-    .locator('.mfe-raw-surface:not([hidden]) .cm-content')
+    .locator(".mfe-raw-surface:not([hidden]) .cm-content")
     .first();
 }
 
@@ -2133,8 +2133,8 @@ test.describe("document save roundtrip", () => {
       .not.toBe("Saving...");
     await expect
       .poll(() =>
-        page.evaluate(() =>
-          document.querySelectorAll('[data-mfe-window="true"]').length,
+        page.evaluate(
+          () => document.querySelectorAll('[data-mfe-window="true"]').length,
         ),
       )
       .toBe(1);
@@ -2392,7 +2392,8 @@ test.describe("document save roundtrip", () => {
     await waitForRawEditorTextContains(page, "The Urban");
     await expect
       .poll(
-        async () => String((await getActiveRawEditor(page).textContent()) || ""),
+        async () =>
+          String((await getActiveRawEditor(page).textContent()) || ""),
         { timeout: 10000 },
       )
       .not.toContain("La granja");

@@ -3,45 +3,6 @@ import {
   resolveCanonicalScopeSlice,
 } from "./canonical-scope-session.js";
 import { normalizeScopeKind } from "./scope-slice.js";
-import { normalizeLineEndingsToLf } from "./markdown-text-utils.js";
-
-// Restore escaped markdown syntax (unescapes \# to # and \[ to [)
-function restoreEscapedMarkdownSyntax(markdown) {
-  const current = String(markdown || "");
-  if (!current) return current;
-
-  const normalized = current
-    .split(/\r?\n/)
-    .map((line) => {
-      let nextLine = String(line || "");
-
-      if (/^[ \t]*\\#{1,6}[ \t]+\S/.test(nextLine)) {
-        nextLine = nextLine.replace(/^([ \t]*)\\(#{1,6}[ \t]+)/, "$1$2");
-      }
-
-      if (/^[ \t]*!\\\[[^\]]*\\\]\([^\)]+\)/.test(nextLine)) {
-        nextLine = nextLine.replace(/\\\[/g, "[").replace(/\\\]/g, "]");
-      }
-
-      return nextLine;
-    })
-    .join("\n");
-
-  return normalized;
-}
-
-function getStatePreComposeComparableMarkdown(state) {
-  const bodyDraft = String(state?.getDraft?.() || "");
-  if (typeof state?.recomposeMarkdownForSave === "function") {
-    const recomposed = String(state.recomposeMarkdownForSave(bodyDraft) || "");
-    // Keep plan-time hash aligned with dispatch pre-compose hash stage.
-    // Do not apply final document composition at this point.
-    const restored = restoreEscapedMarkdownSyntax(recomposed);
-    return normalizeLineEndingsToLf(restored);
-  }
-  const restored = restoreEscapedMarkdownSyntax(bodyDraft);
-  return normalizeLineEndingsToLf(restored);
-}
 
 export function detectDirtyDesync(params = {}) {
   const {
@@ -214,12 +175,6 @@ export function buildSavePlan(params = {}) {
 
   return {
     saveCandidates,
-    plannedHashesByStateId: new Map(
-      saveCandidates.map((state) => [
-        state.id,
-        params.hashStateIdentity(getStatePreComposeComparableMarkdown(state)),
-      ]),
-    ),
   };
 }
 
