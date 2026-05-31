@@ -9575,6 +9575,7 @@ function openFullscreenEditorFromPayloadNow(payload) {
   const hasOpenFullscreenWindow = Boolean(
     document.querySelector('#mfe-editor[data-mfe-window="true"]'),
   );
+  const modeToPreserve = hasOpenFullscreenWindow ? editorSurfaceMode : "rich";
   if (hasOpenFullscreenWindow) {
     suppressNextCloseConfirm = true;
     skipOutlineResetDuringClose = true;
@@ -9614,7 +9615,11 @@ function openFullscreenEditorFromPayloadNow(payload) {
       primaryEditor.commands.setContent(syntheticSectionPreviewHtml, false);
     });
   }
-  syncEditorSurfaceMode();
+  if (modeToPreserve === "raw") {
+    activateRawSurface();
+  } else {
+    syncEditorSurfaceMode();
+  }
   traceStateMutation({
     reason: "openFullscreenEditorFromPayload:syncStatusAfterOpen",
     trigger: "scope-navigation",
@@ -9736,6 +9741,11 @@ function replaceActiveEditorNow(payload) {
     enforceSource: "replaceActiveEditor",
     setPrimaryEditorActive: true,
   });
+
+  applyFieldAttributes(primaryEditor, fieldType, fieldName);
+  if (editorContainer) {
+    editorContainer.setAttribute("data-field-type", fieldType);
+  }
 
   revokeRuntimeProjectionAuthorityForEditor(
     primaryEditor,
@@ -9888,7 +9898,6 @@ function openFullscreenEditorForElement(target) {
         payload.fieldName,
       );
       const forceSchemaRebuild =
-        !isRawSurfaceActive() &&
         Boolean(primaryEditor) &&
         currentSingleBlock !== incomingSingleBlock;
       const forceNewWindow = forceScopeWindow || forceSchemaRebuild;
