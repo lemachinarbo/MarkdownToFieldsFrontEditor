@@ -1070,7 +1070,10 @@ body.mfe-split-resizing {
   border-radius: 7px;
   font-size: 13px;
   font-weight: 600;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    box-shadow 0.12s ease;
   white-space: nowrap;
   color: #6b7280;
   text-align: center;
