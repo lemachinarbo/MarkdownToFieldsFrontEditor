@@ -309,6 +309,11 @@ let saveStatusEl = null;
 let refreshToolbarState = null;
 let fullscreenPaneMode = "edit";
 let pendingSavePromise = null;
+const fullscreenTransitionQueue = [];
+let fullscreenTransitionQueueDraining = false;
+let transitionInFlight = false;
+let saveInFlight = false;
+const queuedSaveWaiters = [];
 let activeTarget = null;
 let activeFieldName = null;
 let activeFieldType = null; // "tag" or "container"
@@ -326,6 +331,7 @@ const scopeSessionByStateId = new Map();
 let activeSession = null;
 let scopedModeMarkdown = null;
 let scopedModeTarget = null;
+// Deprecated mirror: canonical authority lives in DocumentState draft/persisted.
 let documentDraftMarkdown = "";
 let editorViewMode = "scoped";
 let editorSurfaceMode = "rich";
@@ -438,6 +444,106 @@ function getScopeSessionForState(stateId) {
   const key = String(stateId || "");
   if (!key) return null;
   return scopeSessionByStateId.get(key) || null;
+}
+
+function queueSaveRequestWhileTransitionInFlight() {
+  return new Promise((resolve, reject) => {
+    queuedSaveWaiters.push({ resolve, reject });
+  });
+}
+
+async function flushQueuedSaveRequestsAfterTransition() {
+  if (
+    transitionInFlight ||
+    saveInFlight ||
+    fullscreenTransitionQueueDraining ||
+    fullscreenTransitionQueue.length > 0 ||
+    queuedSaveWaiters.length === 0
+  ) {
+    return;
+  }
+  const waiters = queuedSaveWaiters.splice(0, queuedSaveWaiters.length);
+  try {
+    const result = await saveAllEditors();
+    for (const waiter of waiters) {
+      waiter.resolve(result);
+    }
+  } catch (error) {
+    for (const waiter of waiters) {
+      waiter.reject(error);
+    }
+  }
+}
+
+async function runFullscreenTransitionOperation(reason, run) {
+  transitionInFlight = true;
+  try {
+    return await run();
+  } finally {
+    transitionInFlight = false;
+    void flushQueuedSaveRequestsAfterTransition();
+  }
+}
+
+function drainFullscreenTransitionQueue() {
+  if (fullscreenTransitionQueueDraining) return;
+  fullscreenTransitionQueueDraining = true;
+  void (async () => {
+    try {
+      while (fullscreenTransitionQueue.length > 0) {
+        const item = fullscreenTransitionQueue.shift();
+        if (!item) continue;
+        if (saveInFlight) {
+          fullscreenTransitionQueue.unshift(item);
+          break;
+        }
+        try {
+          const result = await runFullscreenTransitionOperation(
+            item.reason,
+            item.run,
+          );
+          item.resolve(result);
+        } catch (error) {
+          item.reject(error);
+        }
+      }
+    } finally {
+      fullscreenTransitionQueueDraining = false;
+    }
+  })();
+}
+
+function enqueueFullscreenTransition(reason, run) {
+  return new Promise((resolve, reject) => {
+    fullscreenTransitionQueue.push({
+      reason: String(reason || "scope-transition"),
+      run,
+      resolve,
+      reject,
+    });
+    drainFullscreenTransitionQueue();
+  });
+}
+
+function requestFullscreenTransition(reason, run) {
+  if (saveInFlight) {
+    emitDocStateLog("MFE_SCOPE_NAV_BLOCKED_SAVE_IN_FLIGHT", {
+      stateId: activeDocumentState?.id || "",
+      language: activeDocumentState?.lang || "",
+      originKey: activeDocumentState?.originKey || "",
+      currentScope: activeFieldScope || "",
+      reason: String(reason || "scope-transition"),
+      trigger: "scope-navigation",
+    });
+    return enqueueFullscreenTransition(
+      `${String(reason || "scope-transition")}:queuedWhileSaveInFlight`,
+      run,
+    );
+  }
+  if (transitionInFlight || fullscreenTransitionQueue.length > 0) {
+    return enqueueFullscreenTransition(reason, run);
+  }
+  return runFullscreenTransitionOperation(reason, run);
 }
 
 const SAVE_SAFETY_BLOCKED_MESSAGE =
@@ -1158,21 +1264,11 @@ function setDocumentDraftFromMarkdown(markdown) {
       );
       const currentLang = normalizeLangValue(getLanguagesConfig().current);
       const state = getStateForLanguage(currentLang) || activeDocumentState;
-      const nextDocumentDraft = composeDocumentMarkdownForSave(
-        nextDocumentBody,
-        {
-          lang: currentLang,
-          state,
-        },
-      );
-      if (
-        normalizeComparableMarkdown(nextDocumentDraft) ===
-        normalizeComparableMarkdown(getDocumentConfigMarkdownRaw())
-      ) {
-        documentDraftMarkdown = "";
-        return;
-      }
-      documentDraftMarkdown = nextDocumentDraft;
+      if (!state) return;
+      state.setDocumentMarkdown(nextDocumentBody, {
+        reason: "setDocumentDraftFromMarkdown",
+        trigger: "user-edit-transaction",
+      });
     },
   });
 }
@@ -1366,26 +1462,7 @@ function applyPrimaryMarkdownToCanonical(markdown, reason, trigger) {
     );
   }
 
-  const nextDocumentDraft = primaryState.recomposeMarkdownForSave(
-    primaryState.getDraft(),
-  );
-  if (
-    normalizeComparableMarkdown(nextDocumentDraft) ===
-    normalizeComparableMarkdown(getDocumentConfigMarkdownRaw())
-  ) {
-    documentDraftMarkdown = "";
-  } else {
-    documentDraftMarkdown = nextDocumentDraft;
-  }
-
   if (!isDocumentScopeActive()) {
-    const scopedKey = getActiveScopedHtmlKey();
-    if (scopedKey) {
-      draftMarkdownByScopedKey.set(scopedKey, markdown);
-    }
-    if (activeFieldId) {
-      primaryDraftsByFieldId.set(activeFieldId, markdown);
-    }
     scopedModeMarkdown = markdown;
   }
 
@@ -1448,7 +1525,7 @@ function reopenActiveScopeForRichSurface() {
   if (!(activeTarget instanceof Element)) return false;
   const payloadMeta = getPayloadFromElement(activeTarget);
   if (!payloadMeta) return false;
-  openFullscreenEditorFromPayload(hydrateCanonicalPayload(payloadMeta));
+  void openFullscreenEditorFromPayload(hydrateCanonicalPayload(payloadMeta));
   return true;
 }
 
@@ -2072,7 +2149,7 @@ async function reconcileExternalChangeFromFullscreen(options = {}) {
     if (!payloadMeta) {
       throw new Error("Failed to resolve active document context");
     }
-    replaceActiveEditor({
+    await replaceActiveEditor({
       ...payloadMeta,
       markdownContent: persistedMarkdown,
       canonicalHydrated: true,
@@ -2386,7 +2463,7 @@ function applyRestoredDocumentMarkdown(markdownB64) {
     activeTarget.setAttribute("data-markdown-b64", restoredB64);
     const payloadMeta = getPayloadFromElement(activeTarget);
     if (payloadMeta) {
-      replaceActiveEditor({
+      void replaceActiveEditor({
         ...payloadMeta,
         markdownContent: restoredMarkdown,
         canonicalHydrated: true,
@@ -4138,14 +4215,17 @@ function createEditorInstance(element, fieldType, fieldName) {
       }
       const persistedMarkdown = getDocumentConfigMarkdown();
       const persistedHash = hashStateIdentity(persistedMarkdown);
-      const scopedKeyBefore = getActiveScopedHtmlKey();
-      const currentScopedDraftBefore = isDocumentScopeActive()
-        ? String(documentDraftMarkdown || "")
-        : String(
-            scopedKeyBefore
-              ? draftMarkdownByScopedKey.get(scopedKeyBefore) || ""
-              : "",
-          );
+      const currentScopedDraftBefore = (() => {
+        if (!activeDocumentState) return "";
+        const stateDraft = String(activeDocumentState.getDraft() || "");
+        if (isDocumentScopeActive()) {
+          return stateDraft;
+        }
+        const scopeMeta = captureExplicitApplyScopeMeta(
+          "editor:update:primary:before",
+        );
+        return String(readScopeSliceFromMarkdown(stateDraft, scopeMeta) || "");
+      })();
       const currentScopedDraftHashBefore = hashStateIdentity(
         currentScopedDraftBefore,
       );
@@ -4184,14 +4264,19 @@ function createEditorInstance(element, fieldType, fieldName) {
           );
         },
         details: () => {
-          const scopedKeyAfter = getActiveScopedHtmlKey();
-          const currentScopedDraftAfter = isDocumentScopeActive()
-            ? String(documentDraftMarkdown || "")
-            : String(
-                scopedKeyAfter
-                  ? draftMarkdownByScopedKey.get(scopedKeyAfter) || ""
-                  : "",
-              );
+          const currentScopedDraftAfter = (() => {
+            if (!activeDocumentState) return "";
+            const stateDraft = String(activeDocumentState.getDraft() || "");
+            if (isDocumentScopeActive()) {
+              return stateDraft;
+            }
+            const scopeMeta = captureExplicitApplyScopeMeta(
+              "editor:update:primary:after",
+            );
+            return String(
+              readScopeSliceFromMarkdown(stateDraft, scopeMeta) || "",
+            );
+          })();
           const currentScopedDraftHashAfter = hashStateIdentity(
             currentScopedDraftAfter,
           );
@@ -4288,7 +4373,7 @@ function createEditorInstance(element, fieldType, fieldName) {
   return editor;
 }
 
-function saveAllEditors() {
+function saveAllEditorsNow() {
   if (isReadOnlySyntheticSectionScope() && !isRawSurfaceActive()) {
     debugWarn(
       "[mfe:save] blocked read-only synthetic section scope",
@@ -4308,7 +4393,9 @@ function saveAllEditors() {
   const currentLang = normalizeLangValue(getLanguagesConfig().current);
   const sessionStateKey = getActiveSessionStateKey();
   const sessionStates = listStatesForActiveSession(sessionStateKey);
-  const applyScopeMeta = captureExplicitApplyScopeMeta("saveAllEditors");
+  const applyScopeMeta = Object.freeze({
+    ...captureExplicitApplyScopeMeta("saveAllEditors:atomicScopeSnapshot"),
+  });
   const activeSaveScopeKind = applyScopeMeta.scopeKind || activeFieldScope;
   const structuralStrictScopeActive = isStructuralStrictScope(
     activeSaveScopeKind || "field",
@@ -5967,9 +6054,7 @@ function saveAllEditors() {
             draftMarkdownByScopedKey,
             getActiveScopedHtmlKey,
             syncDirtyStatusForActiveField,
-            setDocumentDraftMarkdown: (value) => {
-              documentDraftMarkdown = value;
-            },
+            setDocumentDraftMarkdown: () => {},
             traceStateMutation,
             writeDocumentMarkdownCache,
             requestRenderedFragments: (params) =>
@@ -6158,6 +6243,29 @@ function saveAllEditors() {
     },
   });
   return pendingSavePromise;
+}
+
+function saveAllEditors() {
+  if (transitionInFlight || fullscreenTransitionQueue.length > 0) {
+    emitDocStateLog("MFE_SAVE_QUEUED_FOR_TRANSITION", {
+      stateId: activeDocumentState?.id || "",
+      language: activeDocumentState?.lang || "",
+      originKey: activeDocumentState?.originKey || "",
+      currentScope: activeFieldScope || "",
+      reason: "saveAllEditors:queuedForTransition",
+      trigger: "save-commit",
+    });
+    return queueSaveRequestWhileTransitionInFlight();
+  }
+  if (saveInFlight && pendingSavePromise) {
+    return pendingSavePromise;
+  }
+  saveInFlight = true;
+  return Promise.resolve(saveAllEditorsNow()).finally(() => {
+    saveInFlight = false;
+    drainFullscreenTransitionQueue();
+    void flushQueuedSaveRequestsAfterTransition();
+  });
 }
 
 /**
@@ -7648,9 +7756,7 @@ function openImagePicker(initialData = null, imagePos = null) {
     applyMarkdownToStateForReferenceScope,
     normalizeComparableMarkdown,
     getDocumentConfigMarkdownRaw,
-    setDocumentDraftMarkdown: (value) => {
-      documentDraftMarkdown = value;
-    },
+    setDocumentDraftMarkdown: () => {},
     getActiveScopedHtmlKey,
     draftMarkdownByScopedKey,
     activeFieldId,
@@ -8910,10 +9016,15 @@ function decodeMaybeB64(value) {
 }
 
 function getCanonicalMarkdownState() {
-  const documentDraft =
-    typeof documentDraftMarkdown === "string" ? documentDraftMarkdown : "";
+  const currentLang = normalizeLangValue(getLanguagesConfig().current);
+  const currentState = getStateForLanguage(currentLang) || activeDocumentState;
+  const documentDraft = currentState
+    ? String(
+        currentState.recomposeMarkdownForSave(currentState.getDraft()) || "",
+      )
+    : "";
   const configDocument = getDocumentConfigMarkdownRaw();
-  const scopedDraftEntries = Array.from(draftMarkdownByScopedKey.entries());
+  const scopedDraftEntries = [];
 
   const canonicalState = computeCanonicalMarkdownStateFromInputs({
     documentDraft,
@@ -9290,36 +9401,53 @@ function applyScopedDraftForTarget(target, markdown) {
       }
       return false;
     }
+    const currentLang = normalizeLangValue(getLanguagesConfig().current);
+    const state = getDocumentStateForActiveField(currentLang, {
+      reason: "applyScopedDraftForTarget:document:bind",
+      trigger: "scope-navigation",
+    });
+    if (!state) return false;
     traceStateMutation({
       reason: "applyScopedDraftForTarget:document",
       trigger: "external-apply",
       mutate: () => {
-        documentDraftMarkdown = nextMarkdown;
+        const nextBody = String(splitLeadingFrontmatter(nextMarkdown).body || "");
+        state.setDocumentMarkdown(nextBody, {
+          reason: "applyScopedDraftForTarget:document",
+          trigger: "external-apply",
+        });
       },
     });
     getCanonicalMarkdownState();
     return true;
   }
 
-  const scopeKey = scopedHtmlKeyFromMeta(scope, section, subsection, name);
-  if (!scopeKey) {
-    throw new Error(
-      "[mfe] canonical: failed to resolve scope key for scoped draft",
-    );
-  }
-  const fieldId = buildPayloadFieldId({
-    pageId,
-    fieldScope: scope,
-    fieldSection: section,
-    fieldSubsection: subsection,
-    fieldName: name,
+  const currentLang = normalizeLangValue(getLanguagesConfig().current);
+  const state = getDocumentStateForActiveField(currentLang, {
+    reason: "applyScopedDraftForTarget:scoped:bind",
+    trigger: "scope-navigation",
   });
+  if (!state) return false;
   traceStateMutation({
     reason: "applyScopedDraftForTarget:scoped",
     trigger: "external-apply",
     mutate: () => {
-      primaryDraftsByFieldId.set(fieldId, nextMarkdown);
-      draftMarkdownByScopedKey.set(scopeKey, nextMarkdown);
+      applyMarkdownToStateForReferenceScope(
+        state,
+        nextMarkdown,
+        scope,
+        "applyScopedDraftForTarget:scoped",
+        {
+          trigger: "external-apply",
+          applyScopeMeta: {
+            scopeKind: scope,
+            section,
+            subsection,
+            name,
+          },
+          requireExplicitScope: true,
+        },
+      );
     },
   });
   getCanonicalMarkdownState();
@@ -9492,7 +9620,14 @@ async function handleBreadcrumbClick(e) {
   }
 }
 
-function openFullscreenEditorFromPayload(payload) {
+async function openFullscreenEditorFromPayload(payload) {
+  return requestFullscreenTransition(
+    "openFullscreenEditorFromPayload",
+    async () => openFullscreenEditorFromPayloadNow(payload),
+  );
+}
+
+function openFullscreenEditorFromPayloadNow(payload) {
   if (!payload || !payload.element) return;
   assertExclusiveActiveHost("fullscreen:openFromPayload");
   assertCanonicalPayloadSchema(payload, "fullscreen:openFromPayload");
@@ -9632,7 +9767,14 @@ function getPayloadFromElement(target) {
   };
 }
 
-function replaceActiveEditor(payload) {
+async function replaceActiveEditor(payload) {
+  return requestFullscreenTransition(
+    "replaceActiveEditor",
+    async () => replaceActiveEditorNow(payload),
+  );
+}
+
+function replaceActiveEditorNow(payload) {
   if (!payload || !primaryEditor) return false;
   assertExclusiveActiveHost("fullscreen:replaceActiveEditor");
   assertCanonicalPayloadSchema(payload, "fullscreen:replaceActiveEditor");
@@ -9661,9 +9803,6 @@ function replaceActiveEditor(payload) {
     primaryEditor,
     "replaceActiveEditor:scopeRebind",
   );
-
-  // Store original markdown for losslessness validation (only if no draft was loaded)
-  originalMarkdownByFieldId.set(activeFieldId, effectiveMarkdown);
 
   const html = syntheticSectionPreviewHtml || "";
   const previousSelection = primaryEditor.state.selection;
@@ -9797,7 +9936,7 @@ function openFullscreenEditorForElement(target) {
     const buildCanonicalPayload = () =>
       hydrateCanonicalPayload(payloadMetaWithOrigin);
 
-    const continueOpen = (payload) => {
+    const continueOpen = async (payload) => {
       const forceScopeWindow =
         (payload.fieldScope === "section" ||
           payload.fieldScope === "subsection") &&
@@ -9822,7 +9961,7 @@ function openFullscreenEditorForElement(target) {
       const hasOpenWindow = Boolean(
         overlayEl && overlayEl.isConnected && primaryEditor,
       );
-      if (hasOpenWindow && replaceActiveEditor(payload)) {
+      if (hasOpenWindow && (await replaceActiveEditor(payload))) {
         return;
       }
       return openFullscreenEditorFromPayload(payload);
@@ -9837,11 +9976,11 @@ function openFullscreenEditorForElement(target) {
     if (hasActiveEditorSession) {
       const ok = await Promise.resolve(keepPendingChangesBeforeSwitch());
       if (!ok) return;
-      continueOpen(buildCanonicalPayload());
+      await continueOpen(buildCanonicalPayload());
       return;
     }
 
-    continueOpen(buildCanonicalPayload());
+    await continueOpen(buildCanonicalPayload());
   }).catch((error) => {
     debugWarn("[mfe] fullscreen open lock failed", String(error || ""));
   });
@@ -10010,7 +10149,7 @@ window.MarkdownFrontEditor = {
         payloadMeta,
         checkedCanonical,
       );
-      openFullscreenEditorFromPayload({
+      void openFullscreenEditorFromPayload({
         ...payloadMeta,
         markdownContent: markdown,
         canonicalHydrated: true,
