@@ -5214,9 +5214,10 @@ function saveAllEditorsNow() {
             "",
         );
         const rawPreComposeMarkdownForHash = isDocumentSaveScope
-          ? typeof state.recomposeMarkdownForSave === "function"
-            ? String(state.recomposeMarkdownForSave(finalCanonicalBody) || "")
-            : String(finalCanonicalBody || "")
+          ? composeDocumentMarkdownForSave(finalCanonicalBody, {
+              lang: state.lang,
+              state,
+            })
           : scopedMarkdownForSave;
         const preComposeComparableMarkdownForHash = normalizeLineEndingsToLf(
           restoreEscapedMarkdownSyntaxForScopedSave(
