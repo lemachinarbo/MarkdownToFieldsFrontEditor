@@ -426,9 +426,7 @@ export function openImagePicker({
   applyMarkdownToStateForReferenceScope,
   normalizeComparableMarkdown,
   getDocumentConfigMarkdownRaw,
-  setDocumentDraftMarkdown,
   getActiveScopedHtmlKey,
-  draftMarkdownByScopedKey,
   activeFieldId,
   afterNextPaint,
 }) {
@@ -517,24 +515,6 @@ export function openImagePicker({
                   applyScopeMeta,
                   requireExplicitScope: true,
                 },
-              );
-              const nextDocumentDraft = primaryState.recomposeMarkdownForSave(
-                primaryState.getDraft(),
-              );
-              if (
-                normalizeComparableMarkdown(nextDocumentDraft) ===
-                normalizeComparableMarkdown(getDocumentConfigMarkdownRaw())
-              ) {
-                setDocumentDraftMarkdown("");
-              } else {
-                setDocumentDraftMarkdown(nextDocumentDraft);
-              }
-            }
-            const scopedKey = getActiveScopedHtmlKey();
-            if (scopedKey) {
-              draftMarkdownByScopedKey.set(
-                scopedKey,
-                getMarkdownFromEditor(activeEditor),
               );
             }
             if (activeFieldId) {

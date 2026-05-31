@@ -331,8 +331,6 @@ const scopeSessionByStateId = new Map();
 let activeSession = null;
 let scopedModeMarkdown = null;
 let scopedModeTarget = null;
-// Deprecated mirror: canonical authority lives in DocumentState draft/persisted.
-let documentDraftMarkdown = "";
 let editorViewMode = "scoped";
 let editorSurfaceMode = "rich";
 let outlinePersistForSession = false;
@@ -579,9 +577,6 @@ function createSaveSafetyBlockedError() {
 
 let suppressNextCloseConfirm = false;
 let skipOutlineResetDuringClose = false;
-const primaryDraftsByFieldId = new Map();
-const originalMarkdownByFieldId = new Map();
-const draftMarkdownByScopedKey = new Map();
 const markerBaselineCountByStateId = new Map();
 let suppressDirtyTracking = 0;
 let allowSystemTransactionDepth = 0;
@@ -631,15 +626,13 @@ function getPersistedIdentityHashForTrace() {
 }
 
 function getCanonicalDraftIdentityHashForTrace() {
-  if (stateTraceSnapshotDepth > 0) {
-    return hashStateIdentity(documentDraftMarkdown || "");
-  }
+  if (stateTraceSnapshotDepth > 0) return hashStateIdentity("");
   stateTraceSnapshotDepth += 1;
   try {
     const canonical = getCanonicalMarkdownState();
     return hashStateIdentity(canonical?.markdown || "");
   } catch (_error) {
-    return hashStateIdentity(documentDraftMarkdown || "");
+    return hashStateIdentity("");
   } finally {
     stateTraceSnapshotDepth = Math.max(0, stateTraceSnapshotDepth - 1);
   }
@@ -2137,9 +2130,6 @@ async function reconcileExternalChangeFromFullscreen(options = {}) {
       throw new Error("Failed to load external markdown");
     }
     const persistedB64 = encodeMarkdownBase64(persistedMarkdown);
-    draftMarkdownByScopedKey.clear();
-    primaryDraftsByFieldId.clear();
-    documentDraftMarkdown = "";
     writeDocumentMarkdownCache({
       markdownB64: persistedB64,
       source: "external-reconcile",
@@ -2452,9 +2442,6 @@ function applyRestoredDocumentMarkdown(markdownB64) {
       trigger: "system-rehydrate",
     });
   }
-  draftMarkdownByScopedKey.clear();
-  primaryDraftsByFieldId.clear();
-  documentDraftMarkdown = "";
   writeDocumentMarkdownCache({
     markdownB64: restoredB64,
     source: "snapshot-restore",
@@ -4039,9 +4026,6 @@ function confirmDiscardUnsavedChanges() {
       reason: "confirmDiscardUnsavedChanges:discard",
       trigger: "explicit-discard",
       mutate: () => {
-        primaryDraftsByFieldId.clear();
-        draftMarkdownByScopedKey.clear();
-        documentDraftMarkdown = "";
         for (const state of listDocumentStates(documentStates)) {
           state.clearDraft({
             reason: "confirmDiscardUnsavedChanges:clearDraft",
@@ -6050,11 +6034,8 @@ function saveAllEditorsNow() {
             activeTarget,
             primaryEditor,
             statusManager,
-            primaryDraftsByFieldId,
-            draftMarkdownByScopedKey,
             getActiveScopedHtmlKey,
             syncDirtyStatusForActiveField,
-            setDocumentDraftMarkdown: () => {},
             traceStateMutation,
             writeDocumentMarkdownCache,
             requestRenderedFragments: (params) =>
@@ -6068,7 +6049,7 @@ function saveAllEditorsNow() {
                 debugWarn,
                 debugInfo,
                 isInlineOpen,
-                draftScopedKeys: Array.from(draftMarkdownByScopedKey.keys()),
+                draftScopedKeys: [],
               }),
             setLastCompileReport: (value) => {
               lastCompileReport = value;
@@ -7756,9 +7737,7 @@ function openImagePicker(initialData = null, imagePos = null) {
     applyMarkdownToStateForReferenceScope,
     normalizeComparableMarkdown,
     getDocumentConfigMarkdownRaw,
-    setDocumentDraftMarkdown: () => {},
     getActiveScopedHtmlKey,
-    draftMarkdownByScopedKey,
     activeFieldId,
     afterNextPaint,
   });

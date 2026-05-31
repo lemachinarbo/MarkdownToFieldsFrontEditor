@@ -9,7 +9,6 @@ import {
   buildFragmentStaleScopeEventDetail,
   sortCanonicalScopedKeys,
 } from "./fragment-stale-scope-event.js";
-import { clearDraftsCoveredByChangedKeys } from "./draft-utils.js";
 import {
   fetchCsrfToken,
   getFragmentsUrl,
@@ -437,11 +436,8 @@ export async function handlePrimarySaveResponse({
   activeTarget,
   primaryEditor,
   statusManager,
-  primaryDraftsByFieldId,
-  draftMarkdownByScopedKey,
   getActiveScopedHtmlKey,
   syncDirtyStatusForActiveField,
-  setDocumentDraftMarkdown,
   traceStateMutation,
   writeDocumentMarkdownCache,
   requestRenderedFragments,
@@ -524,22 +520,9 @@ export async function handlePrimarySaveResponse({
     trigger: "save-commit",
     mutate: () => {
       if (resolvedSavedScopeKind === "document") {
-        primaryDraftsByFieldId.clear();
-        draftMarkdownByScopedKey.clear();
-        setDocumentDraftMarkdown("");
-      } else {
-        clearDraftsCoveredByChangedKeys({
-          changedKeys,
-          draftMarkdownByScopedKey,
-          primaryDraftsByFieldId,
-          clearDirtyByFieldId: (fieldId) => statusManager.clearDirty(fieldId),
-        });
-        if (activeFieldId) {
-          primaryDraftsByFieldId.delete(activeFieldId);
-        }
-        if (activeScopedKey) {
-          draftMarkdownByScopedKey.delete(activeScopedKey);
-        }
+        statusManager.clearAllDirty();
+      } else if (activeFieldId) {
+        statusManager.clearDirty(activeFieldId);
       }
       syncDirtyStatusForActiveField();
     },
