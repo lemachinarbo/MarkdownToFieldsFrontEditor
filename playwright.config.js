@@ -18,6 +18,7 @@ export default defineConfig({
     baseURL: e2e.baseUrl,
     storageState: "./tests/e2e/.auth/storage-state.json",
     ignoreHTTPSErrors: true,
+    headless: true,
     trace: "on-first-retry",
   },
 });
