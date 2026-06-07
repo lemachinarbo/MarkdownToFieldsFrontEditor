@@ -1301,29 +1301,37 @@ function syncActiveSessionView() {
   });
 }
 
+// The primary/raw surface always reflects the current (primary) language.
+// Resolve it from the source of truth — getLanguagesConfig().current — rather
+// than the mutable activeDocumentState pointer, so a drifted pointer can never
+// bleed a secondary language into the markdown editor.
+function getPrimaryDocumentState() {
+  return getStateForLanguage(getLanguagesConfig().current) || activeDocumentState;
+}
+
 function getPrimaryDisplayMarkdownFromState() {
-  if (!activeDocumentState) return "";
+  const primaryState = getPrimaryDocumentState();
+  if (!primaryState) return "";
   if (isDocumentScopeActive()) {
-    return String(activeDocumentState.getDraft() || "");
+    return String(primaryState.getDraft() || "");
   }
   const applyScopeMeta = captureExplicitApplyScopeMeta(
     "getPrimaryDisplayMarkdownFromState",
   );
   return String(
     readScopeSliceFromMarkdown(
-      String(activeDocumentState.getDraft() || ""),
+      String(primaryState.getDraft() || ""),
       applyScopeMeta,
     ) || "",
   );
 }
 
 function getCurrentRawMarkdownFromState() {
-  if (!activeDocumentState) return "";
+  const primaryState = getPrimaryDocumentState();
+  if (!primaryState) return "";
   if (isDocumentScopeActive()) {
     return String(
-      activeDocumentState.recomposeMarkdownForSave(
-        activeDocumentState.getDraft(),
-      ) || "",
+      primaryState.recomposeMarkdownForSave(primaryState.getDraft()) || "",
     );
   }
   return getPrimaryDisplayMarkdownFromState();
@@ -1654,7 +1662,7 @@ function getSnapshotPageId() {
   const state =
     activeDocumentState ||
     (currentLang
-      ? getDocumentStateForActiveField(currentLang, {
+      ? resolveDocumentStateForActiveField(currentLang, {
           reason: "snapshot:getPageId",
           trigger: "scope-navigation",
         })
@@ -3820,7 +3828,7 @@ function ensureLanguageMarkerBaseline(state, _reason = "", options = {}) {
   return markerCount;
 }
 
-function rebindActiveDocumentState(payloadMeta, lang, options = {}) {
+function resolveDocumentStateForField(payloadMeta, lang, options = {}) {
   const normalizedLang = normalizeLangValue(lang);
   const identity = resolveSessionIdentityEnvelope(payloadMeta, {
     sessionId: options.sessionId,
@@ -3883,25 +3891,40 @@ function rebindActiveDocumentState(payloadMeta, lang, options = {}) {
     reason: options.reason,
     currentScope: options.currentScope,
   });
-  activeDocumentState = state;
-  activeSessionStateId = sessionStateId;
-  lockScopeSessionV2ForState(
-    state,
-    {
-      scopeKind: options.currentScope || payloadMeta?.fieldScope || "field",
-      section: payloadMeta?.fieldSection || "",
-      subsection: payloadMeta?.fieldSubsection || "",
-      name: payloadMeta?.fieldName || "",
-    },
-    options.reason || "state-rebind",
-  );
-  return state;
+  const scopeMeta = {
+    scopeKind: options.currentScope || payloadMeta?.fieldScope || "field",
+    section: payloadMeta?.fieldSection || "",
+    subsection: payloadMeta?.fieldSubsection || "",
+    name: payloadMeta?.fieldName || "",
+  };
+  // The scope-session lock is keyed per stateId (scopeSessionByStateId), not a
+  // shared/global pointer, so it is per-state setup — not ownership. Every
+  // resolved state (primary or secondary) needs its own scope session locked
+  // or save cannot route it (saveAllEditors:scopeSessionMissing).
+  lockScopeSessionV2ForState(state, scopeMeta, options.reason || "state-rebind");
+  return { state, sessionStateId, scopeMeta };
 }
 
-function getDocumentStateForActiveField(lang, options = {}) {
+// The single ownership boundary. This is the ONLY place that promotes a state
+// to the active (primary-owned) document state by writing activeDocumentState /
+// activeSessionStateId. Reads must never go through here — use
+// resolveDocumentStateForActiveField, which resolves a state without ownership.
+function bindActiveDocumentState(resolved) {
+  if (!resolved?.state) return null;
+  activeDocumentState = resolved.state;
+  activeSessionStateId = resolved.sessionStateId;
+  return resolved.state;
+}
+
+function rebindActiveDocumentState(payloadMeta, lang, options = {}) {
+  const resolved = resolveDocumentStateForField(payloadMeta, lang, options);
+  return bindActiveDocumentState(resolved);
+}
+
+function resolveActiveFieldStateBundle(lang, options = {}) {
   const payloadMeta = getActivePayloadMeta();
   if (!payloadMeta) return null;
-  const state = rebindActiveDocumentState(payloadMeta, lang, {
+  const resolved = resolveDocumentStateForField(payloadMeta, lang, {
     reason: options.reason || "active-field-bind",
     trigger: options.trigger || "scope-navigation",
     viewScope: options.currentScope || payloadMeta.fieldScope,
@@ -3909,21 +3932,28 @@ function getDocumentStateForActiveField(lang, options = {}) {
     initialPersistedMarkdown: options.initialPersistedMarkdown,
     initialDraftMarkdown: options.initialDraftMarkdown,
   });
-  ensureLanguageMarkerBaseline(state, options.reason || "active-field-bind");
-  return state;
+  ensureLanguageMarkerBaseline(
+    resolved.state,
+    options.reason || "active-field-bind",
+  );
+  return resolved;
 }
 
-// Reading a state through getDocumentStateForActiveField rebinds it as the
-// active (primary-owned) document state. Secondary-language reads must never
-// steal that ownership, or the side pane bleeds into the primary/raw surface
-// (see commit e50272c). Use this for any secondary-language state access.
-function getSecondaryDocumentStateForActiveField(lang, options = {}) {
-  const previousActiveDocumentState = activeDocumentState;
-  const previousSessionStateId = activeSessionStateId;
-  const state = getDocumentStateForActiveField(lang, options);
-  activeDocumentState = previousActiveDocumentState;
-  activeSessionStateId = previousSessionStateId;
-  return state;
+// Pure read: resolve/ensure the state for a language WITHOUT taking primary
+// ownership. Safe for any language, including secondary-pane reads — there is
+// nothing to undo because nothing is bound.
+function resolveDocumentStateForActiveField(lang, options = {}) {
+  return resolveActiveFieldStateBundle(lang, options)?.state || null;
+}
+
+// Binding read: resolve AND promote to the active primary state. Use only when
+// the caller genuinely owns the primary surface for `lang` (the current
+// language), e.g. primary edits and scope-navigation binds.
+function getDocumentStateForActiveField(lang, options = {}) {
+  const resolved = resolveActiveFieldStateBundle(lang, options);
+  if (!resolved) return null;
+  bindActiveDocumentState(resolved);
+  return resolved.state;
 }
 
 const statusManager = createStatusManager();
@@ -4329,7 +4359,7 @@ function createEditorInstance(element, fieldType, fieldName) {
         return;
       }
       const secondaryState =
-        getSecondaryDocumentStateForActiveField(secondaryLang);
+        resolveDocumentStateForActiveField(secondaryLang);
       if (secondaryState) {
         const applyScopeMeta = captureExplicitApplyScopeMeta(
           "editor:update:secondary",
@@ -6258,7 +6288,7 @@ function hydrateTranslationsForActiveScope(reasonPrefix = "openSplit") {
     getLanguagesConfig,
     fetchTranslations,
     isStateTraceEnabled,
-    getDocumentStateForActiveField: getSecondaryDocumentStateForActiveField,
+    getDocumentStateForActiveField: resolveDocumentStateForActiveField,
     ingestDocumentStateMarkdown,
   });
 }
@@ -6383,7 +6413,7 @@ function setSecondaryLanguage(lang) {
     secondaryEditor,
     "setSecondaryLanguage:scopeRebind",
   );
-  const secondaryState = getSecondaryDocumentStateForActiveField(lang, {
+  const secondaryState = resolveDocumentStateForActiveField(lang, {
     reason: "setSecondaryLanguage:bind",
     trigger: "scope-navigation",
     initialPersistedMarkdown: "",
@@ -6700,8 +6730,8 @@ function readScopeSliceForScopeMeta(lang, scopeMeta, reason = "") {
       "[mfe] routing invariant: explicit scope metadata required for scope read",
     );
   }
-  const state = getDocumentStateForActiveField(lang, {
-    reason: `${reason || "readScopeSliceForScopeMeta"}:bind`,
+  const state = resolveDocumentStateForActiveField(lang, {
+    reason: `${reason || "readScopeSliceForScopeMeta"}:read`,
     trigger: "scope-navigation",
   });
   if (!state) return "";
@@ -7695,6 +7725,7 @@ function openImagePicker(initialData = null, imagePos = null) {
     getLanguagesConfig,
     captureExplicitApplyScopeMeta,
     getDocumentStateForActiveField,
+    resolveDocumentStateForActiveField,
     getMarkdownFromEditor,
     applyMarkdownToStateForReferenceScope,
     normalizeComparableMarkdown,

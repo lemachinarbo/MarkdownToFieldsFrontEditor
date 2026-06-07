@@ -422,6 +422,7 @@ export function openImagePicker({
   getLanguagesConfig,
   captureExplicitApplyScopeMeta,
   getDocumentStateForActiveField,
+  resolveDocumentStateForActiveField,
   getMarkdownFromEditor,
   applyMarkdownToStateForReferenceScope,
   normalizeComparableMarkdown,
@@ -525,7 +526,7 @@ export function openImagePicker({
       }
       if (activeEditor === getSecondaryEditor() && getSecondaryLang()) {
         const secondaryState =
-          getDocumentStateForActiveField(getSecondaryLang());
+          resolveDocumentStateForActiveField(getSecondaryLang());
         const applyScopeMeta = captureExplicitApplyScopeMeta(
           "openImagePicker:onSelect:secondary",
         );
