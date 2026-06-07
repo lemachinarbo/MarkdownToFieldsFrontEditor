@@ -20,6 +20,13 @@ This file tracks the active development tracks for Jules and other agents in Mar
   - [ ] Decide whether scope rebinds should always derive editor contracts from active scope instead of relying on mismatch-triggered refresh.
   - [ ] Add regression coverage for any lifecycle simplification chosen during the review.
 
+- [ ] **Refactor: Split getDocumentStateForActiveField read from ownership transfer**
+  - [ ] Context: follow-up to commit c712a26 (and the earlier e50272c). `getDocumentStateForActiveField` (src/editor-fullscreen.js ~3901) conflates a pure read with a side effect — it assigns `activeDocumentState = state` (~line 3886). Every secondary-language read therefore steals primary ownership unless the caller manually undoes it. Three secondary-read sites each needed a guard and one (the secondary editor onChange, ~line 4318) was missed, corrupting the primary language when a user edited the secondary pane then switched to the markdown surface. The shipped fix added `getSecondaryDocumentStateForActiveField` to centralize the undo, but the underlying hazard remains.
+  - [ ] Split read from bind: introduce a pure `getDocumentStateForLang(lang)` with no `activeDocumentState` mutation, plus an explicit `bindPrimaryDocumentState(state)`. Secondary reads call the pure one (nothing to guard); convert each primary site (~1429, ~1657, ~9346, ~9367) deliberately since they currently depend on the side effect.
+  - [ ] Defense in depth: seed the raw surface from the source of truth, not the mutable pointer — resolve the primary language via `getLanguagesConfig().current` inside `getCurrentRawMarkdownFromState` / `getPrimaryDisplayMarkdownFromState` so a drifted `activeDocumentState` cannot bleed into the markdown editor.
+  - [ ] Treat as its own review — high blast radius in the invariant/projection-authority paths; do not ride it on a bugfix.
+  - [ ] Add e2e coverage in tests/e2e/document-save-roundtrip.spec.js for the edit-secondary-then-switch-to-markdown path.
+
 ## Completed
 
 - [x] **Code Health: Remove commented out console.warn in emitStrictWithoutClassification** (Integrated: 8282192295177662674)
