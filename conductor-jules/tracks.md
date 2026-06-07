@@ -20,14 +20,14 @@ This file tracks the active development tracks for Jules and other agents in Mar
   - [ ] Decide whether scope rebinds should always derive editor contracts from active scope instead of relying on mismatch-triggered refresh.
   - [ ] Add regression coverage for any lifecycle simplification chosen during the review.
 
-- [ ] **Refactor: Split getDocumentStateForActiveField read from ownership transfer**
-  - [ ] Context: follow-up to commit c712a26 (and the earlier e50272c). `getDocumentStateForActiveField` (src/editor-fullscreen.js ~3901) conflates a pure read with a side effect — it assigns `activeDocumentState = state` (~line 3886). Every secondary-language read therefore steals primary ownership unless the caller manually undoes it. Three secondary-read sites each needed a guard and one (the secondary editor onChange, ~line 4318) was missed, corrupting the primary language when a user edited the secondary pane then switched to the markdown surface. The shipped fix added `getSecondaryDocumentStateForActiveField` to centralize the undo, but the underlying hazard remains.
-  - [ ] Split read from bind: introduce a pure `getDocumentStateForLang(lang)` with no `activeDocumentState` mutation, plus an explicit `bindPrimaryDocumentState(state)`. Secondary reads call the pure one (nothing to guard); convert each primary site (~1429, ~1657, ~9346, ~9367) deliberately since they currently depend on the side effect.
-  - [ ] Defense in depth: seed the raw surface from the source of truth, not the mutable pointer — resolve the primary language via `getLanguagesConfig().current` inside `getCurrentRawMarkdownFromState` / `getPrimaryDisplayMarkdownFromState` so a drifted `activeDocumentState` cannot bleed into the markdown editor.
-  - [ ] Treat as its own review — high blast radius in the invariant/projection-authority paths; do not ride it on a bugfix.
-  - [ ] Add e2e coverage in tests/e2e/document-save-roundtrip.spec.js for the edit-secondary-then-switch-to-markdown path.
-
 ## Completed
+
+- [x] **Refactor: Split getDocumentStateForActiveField read from ownership transfer** (Integrated: a6b5cd2)
+  - [x] Pure core `resolveDocumentStateForField` + single ownership door `bindActiveDocumentState`; reads go through `resolveDocumentStateForActiveField` and never take primary ownership.
+  - [x] Routed all five leak sites (secondary onChange, setSecondaryLanguage, translation hydrate, snapshot, scope-slice) plus the secondary image insert in fullscreen-chrome-controls.js through the pure resolver.
+  - [x] Primary markdown surface now derives from `getLanguagesConfig().current` instead of the mutable `activeDocumentState` pointer.
+  - [x] Removed the `getSecondaryDocumentStateForActiveField` save/restore workaround. `activeDocumentState` is now written only in `bindActiveDocumentState`, the fullscreen reset, and scope-navigation setup.
+  - [x] 420 unit tests pass. Deferred: a dedicated e2e for the secondary image-picker path needs new upload fixtures; the existing edit-secondary-then-markdown e2e exercises the shared resolver.
 
 - [x] **Code Health: Remove commented out console.warn in emitStrictWithoutClassification** (Integrated: 8282192295177662674)
   - [x] Remove commented-out console.warn and its containing conditional block in src/document-state.js
