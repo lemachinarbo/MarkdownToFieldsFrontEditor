@@ -3913,6 +3913,19 @@ function getDocumentStateForActiveField(lang, options = {}) {
   return state;
 }
 
+// Reading a state through getDocumentStateForActiveField rebinds it as the
+// active (primary-owned) document state. Secondary-language reads must never
+// steal that ownership, or the side pane bleeds into the primary/raw surface
+// (see commit e50272c). Use this for any secondary-language state access.
+function getSecondaryDocumentStateForActiveField(lang, options = {}) {
+  const previousActiveDocumentState = activeDocumentState;
+  const previousSessionStateId = activeSessionStateId;
+  const state = getDocumentStateForActiveField(lang, options);
+  activeDocumentState = previousActiveDocumentState;
+  activeSessionStateId = previousSessionStateId;
+  return state;
+}
+
 const statusManager = createStatusManager();
 
 const fullscreenEventRegistry = createEventRegistry();
@@ -4315,7 +4328,8 @@ function createEditorInstance(element, fieldType, fieldName) {
         });
         return;
       }
-      const secondaryState = getDocumentStateForActiveField(secondaryLang);
+      const secondaryState =
+        getSecondaryDocumentStateForActiveField(secondaryLang);
       if (secondaryState) {
         const applyScopeMeta = captureExplicitApplyScopeMeta(
           "editor:update:secondary",
@@ -6244,14 +6258,7 @@ function hydrateTranslationsForActiveScope(reasonPrefix = "openSplit") {
     getLanguagesConfig,
     fetchTranslations,
     isStateTraceEnabled,
-    getDocumentStateForActiveField: (lang, options = {}) => {
-      const previousActiveDocumentState = activeDocumentState;
-      const previousSessionStateId = activeSessionStateId;
-      const state = getDocumentStateForActiveField(lang, options);
-      activeDocumentState = previousActiveDocumentState;
-      activeSessionStateId = previousSessionStateId;
-      return state;
-    },
+    getDocumentStateForActiveField: getSecondaryDocumentStateForActiveField,
     ingestDocumentStateMarkdown,
   });
 }
@@ -6376,16 +6383,12 @@ function setSecondaryLanguage(lang) {
     secondaryEditor,
     "setSecondaryLanguage:scopeRebind",
   );
-  const previousActiveDocumentState = activeDocumentState;
-  const previousSessionStateId = activeSessionStateId;
-  const secondaryState = getDocumentStateForActiveField(lang, {
+  const secondaryState = getSecondaryDocumentStateForActiveField(lang, {
     reason: "setSecondaryLanguage:bind",
     trigger: "scope-navigation",
     initialPersistedMarkdown: "",
     initialDraftMarkdown: "",
   });
-  activeDocumentState = previousActiveDocumentState;
-  activeSessionStateId = previousSessionStateId;
   const activeScopeMeta = captureExplicitApplyScopeMeta("setSecondaryLanguage");
   const canonicalScopeMeta = buildCanonicalSessionScopeMeta({
     scopeKind: activeScopeMeta.scopeKind || activeFieldScope || "field",

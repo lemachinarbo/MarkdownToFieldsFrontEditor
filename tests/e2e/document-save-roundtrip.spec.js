@@ -2406,6 +2406,63 @@ test.describe("document save roundtrip", () => {
     );
   });
 
+  test("edited split secondary language does not leak into primary markdown surface", async ({
+    page,
+  }) => {
+    // Regression: editing the secondary pane left activeDocumentState bound to
+    // the secondary language (unguarded getDocumentStateForActiveField in the
+    // secondary onChange), so switching to the markdown surface seeded — and
+    // saved — the primary language with the secondary's content.
+    await resetHomesFromFixtures();
+
+    const authenticated = await ensureAuthenticated(page);
+    expect(authenticated, "admin login unavailable in this runtime").toBe(true);
+
+    await page.goto("/");
+    const opened = await openFullscreenEditor(page);
+    expect(
+      opened,
+      "frontend editor window could not be opened in this runtime",
+    ).toBe(true);
+
+    await ensureSplitLanguageSelected(page, "Spanish");
+    await waitForSecondaryEditorTextContains(page, "La granja");
+
+    // The edit is what triggered the leak — the prior test skipped it.
+    const esToken = `es-${Date.now()}`;
+    await appendTokenInSecondaryEditor(page, esToken);
+    await waitForSecondaryEditorTextContains(page, esToken);
+
+    const markdownToggle = page
+      .getByRole("button", { name: /Edit markdown/i })
+      .first();
+    await expect(markdownToggle).toBeVisible();
+    await markdownToggle.click();
+
+    // Markdown surface must show the primary (English) content, never the
+    // edited Spanish text.
+    await waitForRawEditorTextContains(page, "The Urban");
+    await expect
+      .poll(
+        async () =>
+          String((await getActiveRawEditor(page).textContent()) || ""),
+        { timeout: 10000 },
+      )
+      .not.toContain("La granja");
+    await expect
+      .poll(
+        async () =>
+          String((await getActiveRawEditor(page).textContent()) || ""),
+        { timeout: 10000 },
+      )
+      .not.toContain(esToken);
+
+    await assertNoCriticalDocStateEvents(
+      page,
+      "edited-split-secondary-language-primary-markdown-surface",
+    );
+  });
+
   test("document split lens keeps unsaved edits across scopes and languages", async ({
     page,
   }) => {
