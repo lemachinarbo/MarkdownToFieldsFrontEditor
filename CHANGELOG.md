@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.2](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.10.1...v0.10.2) (2026-06-07)
+
+
+### Bug Fixes
+
+* isolate split secondary language ownership ([abf529a](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/abf529acdb1457d7bc2fb00197b8d8299fc5c1c0))
+
+
+### Miscellaneous Chores
+
+* add backlog track for state read/bind split ([d2e0864](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/d2e08640e348db3707233938692d3b0b90b0d4bd))
+* mark document-state read/bind split track complete ([586276d](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/586276dc5d26f64eb1e6dd2e4784ea8c75c8d4c5))
+
 ## [0.10.1](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.10.0...v0.10.1) (2026-05-31)
 
 
