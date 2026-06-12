@@ -11,3 +11,5 @@ tests/e2e/.auth/
 tests/test-results/
 test-results/
 .env
+conductor-audits/
+docs/audit-ledger.md

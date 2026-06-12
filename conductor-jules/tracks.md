@@ -6,7 +6,7 @@ This file tracks the active development tracks for Jules and other agents in Mar
   - [x] Type: Review-Only (no code changes)
   - [x] Status: Complete
   - [x] Verdict: Merge after fixes
-  - [x] Ledger: conductor-audits/2026-05-30-main/audit-ledger.md
+  - [x] Ledger: (local-only, not committed)
   - [x] Open issues: 1 critical, 1 high, 3 medium, 0 low
 
 - [ ] **Performance: Cache snapshot index file reads** (Session: 12712479203828006873)
