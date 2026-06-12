@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.3](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.10.2...v0.10.3) (2026-06-12)
+
+
+### Bug Fixes
+
+* remove audit files and fix module version ([76af504](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/commit/76af504adf3095cdf3b169d5ba4c4da0abcf89be))
+
 ## [0.10.2](https://github.com/lemachinarbo/MarkdownToFieldsFrontEditor/compare/v0.10.1...v0.10.2) (2026-06-07)
 
 
